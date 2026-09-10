@@ -172,6 +172,7 @@ class CliIntegrationTest(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             plan = json.loads(result.stdout)
             self.assertEqual("delegated", plan["application"]["mode"])
+            self.assertEqual("stdin", plan["application"]["prompt_delivery"])
             arguments = plan["application"]["cli_arguments"]
             self.assertIn("read-only", arguments)
             self.assertIn("tools.web_search=false", arguments)
@@ -270,6 +271,7 @@ outputs:
             self.assertTrue(any("Bash(.ai-evo/bin/ai-evo-git-read *)" in argument for argument in arguments))
             self.assertNotIn("--restricted", arguments)
             application = json.loads(result.stdout)["application"]
+            self.assertEqual("stdin", application["prompt_delivery"])
             self.assertTrue(application["policy_instructions"])
 
     def test_read_only_git_wrapper_rejects_git_output_options(self):
@@ -359,6 +361,26 @@ outputs:
             (root / ".ai-evo").symlink_to(engine, target_is_directory=True)
             self.initialize(root, "codex")
             self.assertEqual(0, self.run_cli(root, "validate").returncode)
+
+    def test_configured_adapter_rejects_invalid_prompt_delivery(self):
+        with tempfile.TemporaryDirectory(prefix="ai-evo-adapter-test.") as temporary:
+            base = Path(temporary)
+            engine = base / "engine"
+            shutil.copytree(
+                ENGINE,
+                engine,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__"),
+            )
+            adapter = engine / "adapters/codex.yaml"
+            adapter.write_text(adapter.read_text().replace("prompt-delivery: stdin", "prompt-delivery: invalid"))
+            root = base / "repository"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".ai-evo").symlink_to(engine, target_is_directory=True)
+            result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("prompt-delivery", result.stderr)
 
     def test_unconfigured_executor_may_remain_dormant_in_catalog(self):
         temporary, root = self.repository()

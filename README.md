@@ -131,9 +131,9 @@ flowchart LR
    It removes obsolete managed links and refuses to overwrite unrelated files, directories or links.
 3. A developer invokes a native skill, such as `$abc-review` in Codex or `/abc-review` in Claude Code.
 4. The AI reads `SKILL.md` and calls `.ai-evo/bin/ai-evo-skills command plan` or `recipe plan`.
-5. The planner resolves inputs, defaults, effort profile, executor, worktree root and native CLI restrictions, then
-   returns JSON for the AI to execute. References to prior step results remain typed runtime placeholders.
-   Developers normally do not need to read this internal JSON.
+5. The planner resolves inputs, defaults, effort profile, executor, worktree root, prompt delivery and native CLI
+   restrictions, then returns JSON for the AI to execute. References to prior step results remain typed runtime
+   placeholders. Developers normally do not need to read this internal JSON.
 6. Recipe steps run sequentially and stop at the first failure. A recipe can resolve a child from the canonical
    catalog even when that child is executed by a different adapter.
 
@@ -249,6 +249,12 @@ only for `.ai-evo/bin/ai-evo-git-read`. That wrapper offers argument-safe `statu
 `rev-parse`, `merge-base` and `ls-files` operations. This preserves branch and diff inspection without exposing
 arbitrary shell commands. Network-disabled commands also disable web tools and unconfigured MCP servers while
 retaining native edit tools when the workspace policy is read-write.
+
+Built-in adapters declare `prompt-delivery: stdin`. The execution plan exposes this as
+`application.prompt_delivery`; the coordinating AI starts the returned command with its CLI arguments and sends
+the complete prompt through standard input. It must not append that prompt as a positional argument. This avoids
+variadic options such as Claude Code's `--disallowedTools <tools...>` consuming the prompt. Custom adapters may
+instead declare `argument-before-options` or `argument-after-options` when their CLI requires a positional prompt.
 
 ## Recipe contract
 

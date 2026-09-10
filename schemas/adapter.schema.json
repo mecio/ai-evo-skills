@@ -23,7 +23,11 @@
       "type": "object", "additionalProperties": false, "required": ["example", "command"],
       "properties": {
         "example": { "type": "string", "minLength": 1 },
-        "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "prompt-delivery": {
+          "type": "string",
+          "enum": ["stdin", "argument-before-options", "argument-after-options"]
+        }
       }
     },
     "profile-translation": {

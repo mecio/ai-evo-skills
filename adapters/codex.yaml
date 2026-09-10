@@ -11,6 +11,7 @@ project-entrypoint:
 invocation:
   example: "$<skill-name> key=value"
   command: [codex, exec]
+  prompt-delivery: stdin
 
 profile-translation:
   application: instruction

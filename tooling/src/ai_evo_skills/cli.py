@@ -605,6 +605,7 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
         "executor": adapter_id,
         "mode": "delegated" if delegated else "current",
         "command": adapter["invocation"]["command"],
+        "prompt_delivery": adapter["invocation"].get("prompt-delivery", "argument-after-options"),
         "working_directory": str(context.repo),
         "cli_arguments": arguments,
         "policy_instructions": list(dict.fromkeys(policy_instructions)),

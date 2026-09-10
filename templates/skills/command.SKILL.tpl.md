@@ -27,8 +27,9 @@ inputs: {}
 1. Run `.ai-evo/bin/ai-evo-skills command plan <namespace>-<skill-name>` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
 2. Stop if planning or validation fails.
-3. Apply the returned working directory, execution mode, native CLI arguments, policy instructions and profile
-   instructions.
+3. Apply the returned working directory, execution mode, native CLI arguments, prompt delivery, policy
+   instructions and profile instructions. When `prompt_delivery` is `stdin`, send the complete prompt through
+   standard input and never append it to the CLI arguments.
 4. TODO
 
 ## Expected output
