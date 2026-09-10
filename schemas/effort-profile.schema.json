@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-evo-skills:schema:effort-profile:1.0",
+  "title": "AI Evo Skills effort profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "description", "reasoning", "resources", "execution", "output", "tests", "context", "report"],
+  "properties": {
+    "version": { "const": "1.0" },
+    "name": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "description": { "type": "string", "minLength": 1 },
+    "reasoning": {
+      "type": "object", "additionalProperties": false, "required": ["level"],
+      "properties": { "level": { "enum": ["low", "medium", "high"] } }
+    },
+    "resources": {
+      "type": "object", "additionalProperties": false, "required": ["subagents", "network"],
+      "properties": {
+        "subagents": { "$ref": "#/$defs/resourceMode" },
+        "network": { "$ref": "#/$defs/resourceMode" }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["concurrent-on-same-worktree", "reuse-session"],
+      "properties": {
+        "concurrent-on-same-worktree": { "type": "boolean" },
+        "reuse-session": { "enum": ["never", "correction-only", "always"] }
+      }
+    },
+    "output": {
+      "type": "object", "additionalProperties": false, "required": ["delivery", "verbose-logs"],
+      "properties": {
+        "delivery": { "enum": ["final-only", "streaming"] },
+        "verbose-logs": { "enum": ["full", "summarize", "errors-only"] }
+      }
+    },
+    "tests": {
+      "type": "object", "additionalProperties": false, "required": ["strategy", "repeat-passed"],
+      "properties": {
+        "strategy": { "enum": ["minimal", "necessary", "full"] },
+        "repeat-passed": { "type": "boolean" }
+      }
+    },
+    "context": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repeat-readable-content", "repository-exploration"],
+      "properties": {
+        "repeat-readable-content": { "type": "boolean" },
+        "repository-exploration": { "enum": ["targeted", "auto", "exhaustive"] }
+      }
+    },
+    "report": {
+      "type": "object", "additionalProperties": false, "required": ["profile-application"],
+      "properties": { "profile-application": { "enum": ["none", "summary", "full"] } }
+    }
+  },
+  "$defs": {
+    "resourceMode": { "enum": ["disabled", "enabled", "auto"] }
+  }
+}

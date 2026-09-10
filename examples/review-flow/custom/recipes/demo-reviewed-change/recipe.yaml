@@ -1,0 +1,23 @@
+version: "1.0"
+name: demo-reviewed-change
+executor: current
+
+inputs:
+  target:
+    description: Git branch, commit or diff to review.
+    required: true
+
+steps:
+  - id: review
+    uses: demo-review
+    with:
+      target: "${{ inputs.target }}"
+  - id: verify
+    uses: demo-verify
+    with:
+      review: "${{ steps.review.output }}"
+      target: "${{ inputs.target }}"
+
+outputs:
+  result:
+    value: "${{ steps.verify.output }}"

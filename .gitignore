@@ -1,0 +1,6 @@
+.venv/
+tooling/.venv/
+tooling/src/*.egg-info/
+tooling/src/*/__pycache__/
+tests/__pycache__/
+*.pyc

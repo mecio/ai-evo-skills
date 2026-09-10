@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-evo-skills:schema:recipe:1.0",
+  "title": "AI Evo Skills recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "executor", "inputs", "steps", "outputs"],
+  "properties": {
+    "version": { "const": "1.0" },
+    "name": { "$ref": "#/$defs/skillName" },
+    "executor": {
+      "type": "string",
+      "pattern": "^(current|[a-z][a-z0-9-]*)$"
+    },
+    "inputs": { "$ref": "#/$defs/inputs" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "uses"],
+        "properties": {
+          "id": { "$ref": "#/$defs/identifier" },
+          "uses": { "$ref": "#/$defs/skillName" },
+          "with": {
+            "type": "object",
+            "propertyNames": { "$ref": "#/$defs/identifier" },
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result"],
+      "properties": {
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value"],
+          "properties": {
+            "value": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "skillName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "required": { "const": true },
+        "default": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["required"], "not": { "required": ["default"] } },
+        { "required": ["default"], "not": { "required": ["required"] } }
+      ]
+    },
+    "inputs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/input" }
+    }
+  }
+}

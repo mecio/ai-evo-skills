@@ -1,0 +1,39 @@
+version: "1.0"
+id: codex
+display-name: Codex
+project-skill-path: .agents/skills
+
+project-entrypoint:
+  path: AGENTS.md
+  template: templates/adapters/codex/AGENTS.tpl.md
+  must-reference: .ai-evo-prj/entrypoint.md
+
+invocation:
+  example: "$<skill-name> key=value"
+  command: [codex, exec]
+
+profile-translation:
+  application: instruction
+  delegated-cli: null
+
+execution-policy-translation:
+  workspace-read-only:
+    enforcement: native
+    cli-arguments: ["--sandbox", "read-only", "--ephemeral"]
+  network-disabled:
+    enforcement: native
+    cli-arguments:
+      - --ignore-user-config
+      - --strict-config
+      - -c
+      - tools.web_search=false
+      - -c
+      - sandbox_workspace_write.network_access=false
+      - -c
+      - mcp_servers={}
+      - --disable
+      - apps
+      - --disable
+      - browser_use
+      - --disable
+      - browser_use_external

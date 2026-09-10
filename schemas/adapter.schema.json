@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-evo-skills:schema:adapter:1.0",
+  "title": "AI Evo Skills adapter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "display-name", "project-skill-path", "project-entrypoint", "invocation", "profile-translation", "execution-policy-translation"],
+  "properties": {
+    "version": { "const": "1.0" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "display-name": { "type": "string", "minLength": 1 },
+    "project-skill-path": { "type": "string", "minLength": 1 },
+    "project-entrypoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "template", "must-reference"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "template": { "type": "string", "minLength": 1 },
+        "must-reference": { "type": "string", "minLength": 1 }
+      }
+    },
+    "invocation": {
+      "type": "object", "additionalProperties": false, "required": ["example", "command"],
+      "properties": {
+        "example": { "type": "string", "minLength": 1 },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "profile-translation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["application", "delegated-cli"],
+      "properties": {
+        "application": { "const": "instruction" },
+        "delegated-cli": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["reasoning-option", "disallowed-tools-option", "resource-tools"],
+          "properties": {
+            "reasoning-option": { "type": "string", "minLength": 1 },
+            "disallowed-tools-option": { "type": "string", "minLength": 1 },
+            "resource-tools": {
+              "type": "object", "additionalProperties": false,
+              "required": ["subagents", "network"],
+              "properties": {
+                "subagents": { "type": "array", "items": { "type": "string" } },
+                "network": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution-policy-translation": {
+      "type": "object", "additionalProperties": false, "required": ["workspace-read-only", "network-disabled"],
+      "properties": {
+        "workspace-read-only": { "$ref": "#/$defs/policyTranslation" },
+        "network-disabled": { "$ref": "#/$defs/policyTranslation" }
+      }
+    }
+  },
+  "$defs": {
+    "policyTranslation": {
+      "type": "object", "additionalProperties": false, "required": ["enforcement", "cli-arguments"],
+      "properties": {
+        "enforcement": { "const": "native" },
+        "cli-arguments": { "type": "array", "items": { "type": "string" } },
+        "instructions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

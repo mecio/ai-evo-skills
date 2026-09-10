@@ -1,0 +1,13 @@
+version: "1.0"
+name: <namespace>-<skill-name>
+executor: current
+
+inputs: {}
+
+steps:
+  - id: TODO
+    uses: <namespace>-TODO
+
+outputs:
+  result:
+    value: "${{ steps.TODO.output }}"

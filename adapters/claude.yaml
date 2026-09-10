@@ -1,0 +1,58 @@
+version: "1.0"
+id: claude
+display-name: Claude Code
+project-skill-path: .claude/skills
+
+project-entrypoint:
+  path: CLAUDE.md
+  template: templates/adapters/claude/CLAUDE.tpl.md
+  must-reference: .ai-evo-prj/entrypoint.md
+
+invocation:
+  example: "/<skill-name> key=value"
+  command: [claude, -p]
+
+profile-translation:
+  application: instruction
+  delegated-cli:
+    reasoning-option: --effort
+    disallowed-tools-option: --disallowedTools
+    resource-tools:
+      subagents:
+        - Agent
+      network:
+        - WebSearch
+        - WebFetch
+
+execution-policy-translation:
+  workspace-read-only:
+    enforcement: native
+    cli-arguments:
+      - --permission-mode
+      - dontAsk
+      - --permission-prompts
+      - none
+      - --tools
+      - Read,Glob,Grep,Bash,WebSearch,WebFetch
+      - --allowedTools
+      - Read,Glob,Grep,WebSearch,WebFetch,Bash(.ai-evo/bin/ai-evo-git-read *)
+      - --disallowedTools
+      - Edit,Write,NotebookEdit,MultiEdit
+    instructions:
+      - Use .ai-evo/bin/ai-evo-git-read for Git inspection; arbitrary shell commands are unavailable.
+  network-disabled:
+    enforcement: native
+    cli-arguments:
+      - --permission-mode
+      - dontAsk
+      - --permission-prompts
+      - none
+      - --tools
+      - Read,Glob,Grep,Edit,Write,NotebookEdit,Bash
+      - --allowedTools
+      - Read,Glob,Grep,Edit,Write,NotebookEdit,Bash(.ai-evo/bin/ai-evo-git-read *)
+      - --strict-mcp-config
+      - --disallowedTools
+      - WebSearch,WebFetch
+    instructions:
+      - Use .ai-evo/bin/ai-evo-git-read for Git inspection; arbitrary shell and network commands are unavailable.

@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Expose a small, argument-safe, read-only Git interface to restricted adapters."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+
+def fail(message: str) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def positional(value: str, label: str) -> str:
+    if not value or value.startswith("-") or "\0" in value:
+        fail(f"invalid {label}")
+    return value
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        fail("expected status, diff, show, log, rev-parse, merge-base or ls-files")
+    operation, arguments = sys.argv[1], sys.argv[2:]
+    environment = {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_PAGER": "cat",
+        "PAGER": "cat",
+    }
+    prefix = ["git", "--no-pager", "-c", "core.fsmonitor=false"]
+
+    if operation == "status" and not arguments:
+        command = [*prefix, "status", "--short", "--branch", "--untracked-files=all"]
+    elif operation == "diff" and len(arguments) <= 1:
+        command = [*prefix, "diff", "--no-ext-diff", "--no-textconv"]
+        if arguments:
+            command.append(positional(arguments[0], "diff target"))
+    elif operation == "show" and len(arguments) == 1:
+        command = [
+            *prefix,
+            "show",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--end-of-options",
+            positional(arguments[0], "revision"),
+        ]
+    elif operation == "log" and len(arguments) <= 1:
+        command = [*prefix, "log", "--max-count=50", "--no-ext-diff"]
+        if arguments:
+            command.extend(["--end-of-options", positional(arguments[0], "revision")])
+    elif operation == "rev-parse" and len(arguments) == 1:
+        revision = positional(arguments[0], "revision")
+        command = [*prefix, "rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"]
+    elif operation == "merge-base" and len(arguments) == 2:
+        command = [
+            *prefix,
+            "merge-base",
+            "--",
+            positional(arguments[0], "first revision"),
+            positional(arguments[1], "second revision"),
+        ]
+    elif operation == "ls-files" and len(arguments) <= 1:
+        command = [*prefix, "ls-files"]
+        if arguments:
+            command.extend(["--", positional(arguments[0], "pathspec")])
+    else:
+        fail(f"unsupported arguments for {operation!r}")
+
+    result = subprocess.run(command, env=environment, check=False)
+    raise SystemExit(result.returncode)
+
+
+if __name__ == "__main__":
+    main()

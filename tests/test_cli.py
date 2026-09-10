@@ -1,0 +1,519 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+
+ENGINE = Path(__file__).resolve().parents[1]
+CLI_ENV = {**os.environ, "PYTHONPATH": str(ENGINE / "tooling/src")}
+COMMAND = ["python3", "-m", "ai_evo_skills.cli"]
+VALID_COMMAND = """---
+name: abc-inspect
+description: Inspect a target and report the result.
+metadata:
+  ai-evo-kind: command
+  ai-evo-version: "1.0"
+---
+
+# Inspect
+
+## Purpose
+Inspect a target.
+## Interface
+```yaml ai-evo-interface
+executor: current
+execution-policy:
+  workspace: read-only
+  network: disabled
+inputs: {}
+```
+## Procedure
+1. Inspect.
+## Expected output
+A report.
+## Constraints
+- Do not write.
+## Success criteria
+- A report exists.
+## Examples
+```text
+/abc-inspect
+```
+"""
+VALID_RECIPE_SKILL = """---
+name: abc-loop
+description: Demonstrates a recipe that is structurally valid but cyclic.
+metadata:
+  ai-evo-kind: recipe
+  ai-evo-version: "1.0"
+---
+
+# Cyclic recipe
+
+## Purpose
+Demonstrate cycle detection.
+## Interface
+The formal interface is defined in `recipe.yaml`.
+## Procedure
+1. Plan the recipe.
+## Expected output
+A result.
+## Constraints
+- Run sequentially.
+## Success criteria
+- A result exists.
+## Examples
+```text
+/abc-loop
+```
+"""
+VALID_FLOW_SKILL = """---
+name: abc-flow
+description: Coordinates an example command with a specific adapter.
+metadata:
+  ai-evo-kind: recipe
+  ai-evo-version: "1.0"
+---
+
+# Adapter-specific flow
+
+## Purpose
+Coordinate an example command.
+## Interface
+The formal interface is defined in `recipe.yaml`.
+## Procedure
+1. Plan and run the recipe.
+## Expected output
+A command result.
+## Constraints
+- Run sequentially.
+## Success criteria
+- The command completes.
+## Examples
+```text
+/abc-flow
+```
+"""
+
+
+class CliIntegrationTest(unittest.TestCase):
+    def repository(self):
+        temporary = tempfile.TemporaryDirectory(prefix="ai-evo-test.")
+        root = Path(temporary.name)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / ".ai-evo").symlink_to(ENGINE, target_is_directory=True)
+        return temporary, root
+
+    def run_cli(self, root, *arguments):
+        return subprocess.run(COMMAND + list(arguments), cwd=root, env=CLI_ENV, text=True, capture_output=True)
+
+    def initialize(self, root, *adapters):
+        arguments = ["init", "--namespace", "abc"]
+        for adapter in adapters:
+            arguments.extend(["--adapter", adapter])
+        result = self.run_cli(root, *arguments)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_version_reports_beta_release(self):
+        result = subprocess.run(COMMAND + ["--version"], env=CLI_ENV, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("ai-evo-skills 0.1.0-beta.1", result.stdout.strip())
+
+    def add_command(self, root):
+        path = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(VALID_COMMAND)
+
+    def test_init_creates_minimum_valid_project(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.assertTrue((root / ".ai-evo-prj/entrypoint.md").is_file())
+            self.assertTrue((root / ".ai-evo-prj/skills/config/effort-profiles/abc-default.yaml").is_file())
+            self.assertIn("!AGENTS.md", (root / ".gitignore").read_text())
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+
+    def test_missing_entrypoint_is_invalid(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            (root / ".ai-evo-prj/entrypoint.md").unlink()
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("missing project entrypoint", result.stderr)
+
+    def test_disabling_target_removes_managed_links(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex", "claude")
+            self.add_command(root)
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            link = root / ".claude/skills/abc-inspect"
+            self.assertTrue(link.is_symlink())
+            config_path = root / ".ai-evo-skills.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            next(target for target in config["targets"] if target["adapter"] == "claude")["enabled"] = False
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertFalse(link.is_symlink())
+
+    def test_command_plan_enforces_restrictive_policy_with_delegation(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.add_command(root)
+            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "codex")
+            self.assertEqual(0, result.returncode, result.stderr)
+            plan = json.loads(result.stdout)
+            self.assertEqual("delegated", plan["application"]["mode"])
+            arguments = plan["application"]["cli_arguments"]
+            self.assertIn("read-only", arguments)
+            self.assertIn("tools.web_search=false", arguments)
+
+    def test_init_rejects_incompatible_entrypoint_without_partial_files(self):
+        temporary, root = self.repository()
+        with temporary:
+            (root / "AGENTS.md").write_text("unrelated instructions\n")
+            result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse((root / ".ai-evo-skills.yaml").exists())
+            self.assertFalse((root / ".ai-evo-prj").exists())
+
+    def test_sync_refuses_unmanaged_collision(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.add_command(root)
+            collision = root / ".agents/skills/abc-inspect"
+            collision.parent.mkdir(parents=True)
+            collision.write_text("unmanaged\n")
+            result = self.run_cli(root, "sync")
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual("unmanaged\n", collision.read_text())
+
+    def test_validate_rejects_recipe_cycle(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            recipe = root / ".ai-evo-prj/skills/custom/recipes/abc-loop"
+            recipe.mkdir(parents=True)
+            (recipe / "SKILL.md").write_text(VALID_RECIPE_SKILL)
+            (recipe / "recipe.yaml").write_text("""version: "1.0"
+name: abc-loop
+executor: current
+inputs: {}
+steps:
+  - id: recurse
+    uses: abc-loop
+outputs:
+  result:
+    value: "${{ steps.recurse.output }}"
+""")
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("recipe cycle: abc-loop -> abc-loop", result.stderr)
+
+    def test_recipe_is_published_only_to_its_coordinator(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex", "claude")
+            self.add_command(root)
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe.mkdir(parents=True)
+            (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+            (recipe / "recipe.yaml").write_text("""version: "1.0"
+name: abc-flow
+executor: codex
+inputs: {}
+steps:
+  - id: inspect
+    uses: abc-inspect
+outputs:
+  result:
+    value: "${{ steps.inspect.output }}"
+""")
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertTrue((root / ".agents/skills/abc-flow").is_symlink())
+            self.assertFalse((root / ".claude/skills/abc-flow").exists())
+            rejected = self.run_cli(root, "recipe", "plan", "abc-flow", "--adapter", "claude")
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("requires coordinator adapter codex", rejected.stderr)
+
+    def test_command_is_published_only_to_its_executor(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex", "claude")
+            self.add_command(root)
+            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            command.write_text(command.read_text().replace("executor: current", "executor: codex"))
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertTrue((root / ".agents/skills/abc-inspect").is_symlink())
+            self.assertFalse((root / ".claude/skills/abc-inspect").exists())
+
+    def test_claude_read_only_policy_preserves_git_command_access(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex", "claude")
+            self.add_command(root)
+            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
+            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "codex")
+            self.assertEqual(0, result.returncode, result.stderr)
+            arguments = json.loads(result.stdout)["application"]["cli_arguments"]
+            self.assertIn("dontAsk", arguments)
+            self.assertTrue(any("Bash(.ai-evo/bin/ai-evo-git-read *)" in argument for argument in arguments))
+            self.assertNotIn("--restricted", arguments)
+            application = json.loads(result.stdout)["application"]
+            self.assertTrue(application["policy_instructions"])
+
+    def test_read_only_git_wrapper_rejects_git_output_options(self):
+        status = subprocess.run(
+            [str(ENGINE / "bin/ai-evo-git-read"), "status"],
+            cwd=ENGINE,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(0, status.returncode, status.stderr)
+        with tempfile.TemporaryDirectory(prefix="ai-evo-git-read-test.") as temporary:
+            output = Path(temporary) / "forbidden"
+            rejected = subprocess.run(
+                [str(ENGINE / "bin/ai-evo-git-read"), "diff", f"--output={output}"],
+                cwd=ENGINE,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertFalse(output.exists())
+
+    def test_init_reuses_shared_project_configuration_across_worktrees(self):
+        with tempfile.TemporaryDirectory(prefix="ai-evo-shared-test.") as temporary:
+            base = Path(temporary)
+            project = base / "project-specs"
+            project.mkdir()
+            repositories = []
+            for name in ("first", "second"):
+                root = base / name
+                root.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+                (root / ".ai-evo").symlink_to(ENGINE, target_is_directory=True)
+                (root / ".ai-evo-prj").symlink_to(project, target_is_directory=True)
+                repositories.append(root)
+            self.initialize(repositories[0], "codex")
+            profile = project / "skills/config/effort-profiles/abc-default.yaml"
+            original = profile.read_text()
+            self.initialize(repositories[1], "codex")
+            self.assertEqual(original, profile.read_text())
+            self.assertEqual(0, self.run_cli(repositories[1], "validate").returncode)
+
+    def test_published_recipe_rejects_a_disabled_command_executor(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex", "claude")
+            self.add_command(root)
+            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe.mkdir(parents=True)
+            (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+            (recipe / "recipe.yaml").write_text("""version: "1.0"
+name: abc-flow
+executor: codex
+inputs: {}
+steps:
+  - id: inspect
+    uses: abc-inspect
+outputs:
+  result:
+    value: "${{ steps.inspect.output }}"
+""")
+            config_path = root / ".ai-evo-skills.yaml"
+            config = yaml.safe_load(config_path.read_text())
+            next(target for target in config["targets"] if target["adapter"] == "claude")["enabled"] = False
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("requires disabled adapter claude", result.stderr)
+            self.assertNotEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertFalse((root / ".agents/skills/abc-flow").exists())
+
+    def test_validate_ignores_unconfigured_adapter_files(self):
+        with tempfile.TemporaryDirectory(prefix="ai-evo-adapter-test.") as temporary:
+            base = Path(temporary)
+            engine = base / "engine"
+            shutil.copytree(
+                ENGINE,
+                engine,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__"),
+            )
+            (engine / "adapters/unused.yaml").write_text('version: "1.0"\nid: unused\n')
+            root = base / "repository"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".ai-evo").symlink_to(engine, target_is_directory=True)
+            self.initialize(root, "codex")
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+
+    def test_unconfigured_executor_may_remain_dormant_in_catalog(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.add_command(root)
+            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertFalse((root / ".agents/skills/abc-inspect").exists())
+
+    def test_validate_rejects_symbolic_skill_directories(self):
+        temporary, root = self.repository()
+        with temporary, tempfile.TemporaryDirectory(prefix="ai-evo-outside-test.") as outside:
+            self.initialize(root, "codex")
+            external = Path(outside) / "abc-inspect"
+            external.mkdir()
+            (external / "SKILL.md").write_text(VALID_COMMAND)
+            catalog = root / ".ai-evo-prj/skills/catalog/commands"
+            (catalog / "abc-inspect").symlink_to(external, target_is_directory=True)
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("skill directories may not be symbolic links", result.stderr)
+            self.assertNotEqual(0, self.run_cli(root, "sync").returncode)
+            self.assertFalse((root / ".agents/skills/abc-inspect").exists())
+
+    def test_validate_rejects_symbolic_catalog_directories(self):
+        temporary, root = self.repository()
+        with temporary, tempfile.TemporaryDirectory(prefix="ai-evo-catalog-test.") as outside:
+            self.initialize(root, "codex")
+            commands = root / ".ai-evo-prj/skills/catalog/commands"
+            commands.rmdir()
+            commands.symlink_to(Path(outside), target_is_directory=True)
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("canonical skill directory", result.stderr)
+
+    def test_create_reads_every_template_before_writing(self):
+        with tempfile.TemporaryDirectory(prefix="ai-evo-create-test.") as temporary:
+            base = Path(temporary)
+            engine = base / "engine"
+            shutil.copytree(
+                ENGINE,
+                engine,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__"),
+            )
+            root = base / "repository"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".ai-evo").symlink_to(engine, target_is_directory=True)
+            self.initialize(root, "codex")
+            (engine / "templates/skills/recipe.tpl.yaml").unlink()
+            result = self.run_cli(root, "create", "recipe", "flow")
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse((root / ".ai-evo-prj/skills/custom/recipes/abc-flow").exists())
+
+    def test_recipe_plan_uses_typed_step_output_references(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            command = VALID_COMMAND.replace(
+                "inputs: {}",
+                "inputs:\n  value:\n    description: Value to inspect.\n    default: initial",
+            )
+            path = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            path.parent.mkdir(parents=True)
+            path.write_text(command)
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe.mkdir(parents=True)
+            (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+            (recipe / "recipe.yaml").write_text("""version: "1.0"
+name: abc-flow
+executor: codex
+inputs: {}
+steps:
+  - id: first
+    uses: abc-inspect
+  - id: second
+    uses: abc-inspect
+    with:
+      value: "${{ steps.first.output }}"
+outputs:
+  result:
+    value: "${{ steps.second.output }}"
+""")
+            result = self.run_cli(root, "recipe", "plan", "abc-flow", "--adapter", "codex")
+            self.assertEqual(0, result.returncode, result.stderr)
+            plan = json.loads(result.stdout)
+            reference = {"type": "ai-evo-step-output", "step": "first"}
+            self.assertEqual(reference, plan["execution"]["steps"][1]["with"]["value"])
+            self.assertEqual(
+                {"type": "ai-evo-step-output", "step": "second"}, plan["result"]
+            )
+
+    def test_init_preflights_structural_collisions(self):
+        temporary, root = self.repository()
+        with temporary:
+            project = root / ".ai-evo-prj"
+            project.mkdir()
+            (project / "skills").write_text("collision\n")
+            result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse((project / "entrypoint.md").exists())
+            self.assertFalse((project / "README.md").exists())
+            self.assertFalse((root / ".ai-evo-skills.yaml").exists())
+
+    def test_init_rejects_project_subdirectories_that_escape_through_symlinks(self):
+        temporary, root = self.repository()
+        with temporary, tempfile.TemporaryDirectory(prefix="ai-evo-init-outside-test.") as outside:
+            project = root / ".ai-evo-prj"
+            project.mkdir()
+            (project / "skills").symlink_to(Path(outside), target_is_directory=True)
+            result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("resolves outside the project area", result.stderr)
+            self.assertFalse((project / "entrypoint.md").exists())
+            self.assertFalse((root / ".ai-evo-skills.yaml").exists())
+
+    def test_init_rolls_back_when_a_late_write_fails(self):
+        temporary, root = self.repository()
+        with temporary:
+            project = root / ".ai-evo-prj"
+            project.mkdir()
+            project_ignore = project / ".gitignore"
+            project_ignore.write_text("existing\n")
+            project_ignore.chmod(0o400)
+            try:
+                result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            finally:
+                project_ignore.chmod(0o600)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual("existing\n", project_ignore.read_text())
+            self.assertFalse((project / "entrypoint.md").exists())
+            self.assertFalse((root / "AGENTS.md").exists())
+            self.assertFalse((root / ".ai-evo-skills.yaml").exists())
+            self.assertFalse((root / ".gitignore").exists())
+
+    def test_agent_skills_compatibility_field_is_validated(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.add_command(root)
+            skill = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            skill.write_text(skill.read_text().replace(
+                "description: Inspect a target and report the result.",
+                "description: Inspect a target and report the result.\ncompatibility: Requires Git.",
+            ))
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+            skill.write_text(skill.read_text().replace("compatibility: Requires Git.", "compatibility: [Git]"))
+            result = self.run_cli(root, "validate")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("compatibility must be a non-empty string", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
