@@ -241,6 +241,35 @@ outputs:
             self.assertNotEqual(0, result.returncode)
             self.assertIn("recipe cycle: abc-loop -> abc-loop", result.stderr)
 
+    def test_malformed_child_inputs_report_validation_errors_without_traceback(self):
+        for definition in ("broken", "null", "[]", "42"):
+            with self.subTest(definition=definition):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex")
+                    self.add_command(root)
+                    command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+                    command.write_text(VALID_COMMAND.replace(
+                        "inputs: {}", f"inputs:\n  target: {definition}"
+                    ))
+                    recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+                    recipe.mkdir()
+                    (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+                    (recipe / "recipe.yaml").write_text(yaml.safe_dump({
+                        "version": "1.0", "name": "abc-flow", "executor": "current",
+                        "inputs": {}, "steps": [{"id": "inspect", "uses": "abc-inspect"}],
+                        "outputs": {"result": {"value": "${{ steps.inspect.output }}"}},
+                    }))
+                    for arguments in (
+                        ("validate",), ("sync",),
+                        ("recipe", "plan", "abc-flow", "--adapter", "codex"),
+                    ):
+                        result = self.run_cli(root, *arguments)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("target: definition must be a mapping", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                    self.assertFalse((root / ".agents/skills").exists())
+
     def test_recipe_is_published_only_to_its_coordinator(self):
         temporary, root = self.repository()
         with temporary:

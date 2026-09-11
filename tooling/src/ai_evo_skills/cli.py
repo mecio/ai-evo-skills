@@ -429,6 +429,10 @@ def validate_recipes(context: Context) -> list[str]:
             for name in sorted(unknown):
                 errors.append(f"{skill.name}.{sid}: unknown child input {name}")
             for name, spec in child.inputs.items():
+                if not isinstance(spec, dict):
+                    # Structural validation already reports this definition;
+                    # keep collecting recipe errors without dereferencing it.
+                    continue
                 if spec.get("required") is True and name not in supplied:
                     errors.append(f"{skill.name}.{sid}: required child input {name} is not mapped")
             for key, value in supplied.items():
