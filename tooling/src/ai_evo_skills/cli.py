@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -15,7 +16,7 @@ from jsonschema.exceptions import SchemaError
 import yaml
 
 from . import __version__
-from .execution import ExecutionError, validate_plan
+from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -1068,11 +1069,12 @@ def cmd_command_execute(args: argparse.Namespace) -> None:
         argv = [*command, prompt, *argv[len(command):]]
     elif delivery == "argument-after-options":
         argv.append(prompt)
-    result = subprocess.run(
+    status = run_delegated(
         argv, cwd=directory, env={**os.environ, "AI_EVO_EXECUTION_HANDOFF": "resolved"},
-        input=prompt if delivery == "stdin" else None, text=True, check=False,
+        prompt=prompt if delivery == "stdin" else None, timeout=args.timeout,
     )
-    raise SystemExit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+    raise SystemExit(status)
+
 
 
 def cmd_command_plan(args: argparse.Namespace) -> None:
@@ -1132,6 +1134,16 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def positive_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("timeout must be a positive finite number of seconds") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("timeout must be a positive finite number of seconds")
+    return timeout
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="ai-evo-skills")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -1147,7 +1159,7 @@ def parser() -> argparse.ArgumentParser:
     resolve = profile_sub.add_parser("resolve"); resolve.add_argument("--adapter", required=True); resolve.add_argument("--ai-effort-profile", dest="profile"); resolve.set_defaults(func=cmd_profile_resolve)
     command_root = sub.add_parser("command"); command_sub = command_root.add_subparsers(dest="command_command", required=True)
     command_plan = command_sub.add_parser("plan"); command_plan.add_argument("name"); command_plan.add_argument("--adapter", required=True); command_plan.add_argument("--ai-effort-profile", dest="profile"); command_plan.add_argument("--input", action="append", default=[]); command_plan.set_defaults(func=cmd_command_plan)
-    execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.set_defaults(func=cmd_command_execute)
+    execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.add_argument("--timeout", type=positive_timeout, default=900.0); execute.set_defaults(func=cmd_command_execute)
     recipe_root = sub.add_parser("recipe"); recipe_sub = recipe_root.add_subparsers(dest="recipe_command", required=True)
     plan = recipe_sub.add_parser("plan"); plan.add_argument("name"); plan.add_argument("--adapter", required=True); plan.add_argument("--ai-effort-profile", dest="profile"); plan.add_argument("--input", action="append", default=[]); plan.set_defaults(func=cmd_recipe_plan)
     return root
@@ -1161,7 +1173,7 @@ def main() -> None:
         args.func(args)
     except (EvoError, ExecutionError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        raise SystemExit(124 if isinstance(exc, ExecutionTimeout) else 1) from exc
 
 
 if __name__ == "__main__":
