@@ -26,11 +26,11 @@ inputs: {}
 
 1. If a resolved execution handoff is supplied, perform its task directly; do not call the planner.
 2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan enabu-detect-php-context` with the current adapter and inputs, then apply the returned execution mode, policy and profile.
-3. Read `composer.json` and its `config.platform.php` declaration. Return exactly `php72` for a 7.2 version or exactly `php83` for an 8.3 version. Return only that token, with no whitespace, newline or Markdown. If the declaration is absent or unsupported, report failure instead of guessing.
+3. Read `composer.json` and its `config.platform.php` declaration. Return `php72` for a 7.2 version or `php83` for an 8.3 version. Return only that token, without explanations or Markdown. The recipe's explicit `normalize: trim` tolerates a trailing newline added by the native client. If the declaration is absent or unsupported, report failure instead of guessing.
 
 ## Expected output
 
-Exactly `php72` or `php83`, without whitespace.
+The token `php72` or `php83`; the native client may append a newline.
 
 ## Constraints
 

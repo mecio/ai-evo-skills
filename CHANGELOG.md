@@ -7,6 +7,10 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Allow explicit `when.normalize: trim` to compare native CLI outputs with outer whitespace while preserving
+  exact equality by default. Keep original outputs, journals and downstream inputs unchanged. The PHP example
+  now selects Unit tests for `php83` even when the client appends a newline.
+
 - Calculate published relative links from the physical client directory, including symbolic client paths.
 - Reject publication targets overlapping canonical or personal skill sources before any sync writes.
 - Reject empty CLI argument strings in adapter policy translations, consistently with execution plans.

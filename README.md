@@ -315,11 +315,14 @@ Steps may declare an exact conditional comparison:
     uses: enabu-test-unit
     when:
       value: "${{ steps.php_context.output }}"
+      normalize: trim
       equals: "php83"
 ```
 
 `value` must be a complete reference to an existing recipe input or a previous step's output. No partial
-interpolation or additional operators are allowed. Equality preserves whitespace, case and newlines.
+interpolation or additional operators are allowed. Equality preserves whitespace, case and newlines by default.
+Optional `normalize: trim` removes only outer whitespace from the compared value, allowing native CLI output
+such as `php83\n` to match `php83`. The expected literal and the original output remain unchanged.
 All branches are validated and planned, even when a condition is false. Nested recipe conditions gate
 every descendant. See the [complete PHP 7.2 / PHP 8.3 example](examples/php-context/README.md).
 

@@ -12,15 +12,33 @@ when:
   equals: "php83"
 ```
 
-`when` is optional and contains exactly `value` and `equals`. `value` must be a complete reference to an
+`when` is optional and requires `value` and `equals`, with optional `normalize: trim`. `value` must be a complete reference to an
 existing recipe input (`${{ inputs.php }}`) or the output of a strictly earlier step. `equals` is a literal
 string, including the empty string; it is never interpreted as an expression. No other operators, partial
 interpolation, Boolean expressions, regular expressions or executable expressions are supported.
 
-The comparison is exact equality of decoded Unicode strings. There is no trimming, newline conversion,
+By default the comparison is exact equality of decoded Unicode strings. There is no trimming, newline conversion,
 case folding or Unicode normalization. `php83`, `php83\n` and ` php83` differ. JSON escape spelling does not
 matter: `"php83"` and `"\u0070hp83"` decode to the same string. Preserve complete successful step outputs.
-A detector for the example must return exactly `php83` or `php72`, without whitespace or Markdown fences.
+
+To tolerate client-added outer whitespace, declare normalization explicitly:
+
+```yaml
+when:
+  value: "${{ steps.php_context.output }}"
+  normalize: trim
+  equals: "php83"
+```
+
+`trim` removes leading and trailing Unicode whitespace from the compared value (Python `str.strip()`),
+including spaces, tabs, CR and LF. It does not change `equals`, internal whitespace, case or Unicode
+normalization. The original output, journal, downstream inputs and final result remain unchanged. Without
+`normalize`, comparison retains the exact previous behavior. Other normalization values are rejected during
+authoring and runtime validation. Each nested condition applies only its own normalization; skipped states
+remain structured and never become strings for comparison.
+
+The PHP example opts into `trim`: both `php83` and the native CLI output `php83\n` select Unit tests.
+The detector must still return only `php83` or `php72`, without explanations or Markdown fences.
 
 Both `validate` and `recipe plan` check references used by `when`. Strictly earlier output references exclude
 self-dependencies, forward dependencies and all step dependency cycles, including cycles mixing `with` and
@@ -139,4 +157,6 @@ no migration. Plans without conditions retain their existing fields and behavior
 continue their old loop for those plans. Older engines reject `when` under their strict authoring schema;
 they cannot safely run conditional recipes. Update the engine and coordinator instructions together when
 adopting this capability. This is an unreleased compatible engine extension, not a newly published release.
+`normalize` is another optional extension within this capability. Earlier engines reject that field through
+their strict schemas rather than silently ignoring it; they must be updated to use conditions with `trim`.
 Package version and Git tags remain unchanged until an explicit release request.

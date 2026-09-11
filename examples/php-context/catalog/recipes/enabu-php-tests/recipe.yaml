@@ -12,6 +12,7 @@ steps:
   when:
     value: ${{ steps.php_context.output }}
     equals: php83
+    normalize: trim
 - id: summary
   uses: enabu-aggregate-php-tests
   with:

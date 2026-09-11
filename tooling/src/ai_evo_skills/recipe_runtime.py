@@ -78,6 +78,8 @@ def resolve_output(value: Any, outputs: dict[str, Any]) -> Any:
 def condition_matches(step: dict[str, Any], outputs: dict[str, Any]) -> bool:
     for clause in step.get('when', {}).get('all', []):
         value = resolve_output(clause['value'], outputs)
+        if isinstance(value, str) and clause.get('normalize') == 'trim':
+            value = value.strip()
         # A skipped output is a state, never the stringification of that state.
         # Evaluate outer guards first; a false guard suppresses inner evaluation.
         if not isinstance(value, str) or value != clause['equals']:

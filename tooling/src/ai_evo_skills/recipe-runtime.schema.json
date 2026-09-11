@@ -90,6 +90,9 @@
               },
               "equals": {
                 "type": "string"
+              },
+              "normalize": {
+                "const": "trim"
               }
             }
           }

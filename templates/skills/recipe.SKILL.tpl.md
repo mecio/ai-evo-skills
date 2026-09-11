@@ -23,7 +23,7 @@ The formal interface is defined in `recipe.yaml`.
 2. Keep the complete plan and an initially empty ordered `results` array. Before each step, send
    `{"plan": <complete plan>, "results": <recorded results>}` as JSON on stdin to
    `.ai-evo/bin/ai-evo-skills recipe advance`. The core resolves typed output references and evaluates `when`
-   using exact string equality; never trim output or evaluate conditions yourself.
+   using exact string equality and any explicit `normalize: trim`; never alter recorded output or evaluate conditions yourself.
 3. On `skipped`, append the returned `result` unchanged and continue without invoking the command.
    On `ready`, execute only the returned `step`: send it to `.ai-evo/bin/ai-evo-skills command execute` on stdin
    for delegated mode, or apply its resolved handoff directly for current mode. Do not replan children.

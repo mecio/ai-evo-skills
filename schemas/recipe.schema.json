@@ -32,7 +32,8 @@
                 "type": "string",
                 "pattern": "^\\$\\{\\{ (inputs\\.[a-z][a-z0-9_]*|steps\\.[a-z][a-z0-9_]*\\.output) \\}\\}$"
               },
-              "equals": { "type": "string" }
+              "equals": { "type": "string" },
+              "normalize": { "const": "trim" }
             }
           },
           "with": {

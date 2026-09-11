@@ -27,6 +27,7 @@ steps:
     uses: enabu-test-unit
     when:
       value: "${{ steps.php_context.output }}"
+      normalize: trim
       equals: "php83"
   - id: summary
     uses: enabu-aggregate-php-tests
@@ -51,7 +52,9 @@ executed test suite fails, fail-fast stops the recipe before the summary. Skippi
 stop the recipe. A final result could instead reference `unit_tests`; PHP 7.2 would then return the structured
 skip object as the final output.
 
-Comparison is exact. `php83\n` differs from `php83`: detectors and coordinators must honor the complete-output
-contract, and coordinators must not trim or guess a value. The example's automated tests validate both plans
+This example uses `normalize: trim`, so `php83\n` matches `php83` despite the native client's trailing newline.
+The coordinator must preserve complete outputs; the core trims only the compared value, without modifying
+the journal, downstream inputs or final output. Conditions without `normalize` still compare exactly.
+The example's automated tests validate both plans
 and exercise both branches using controlled local executors; they do not run an application's real PHP suites.
 See [the runtime protocol](../../docs/recipe-runtime.md) for journal shapes and error behavior.

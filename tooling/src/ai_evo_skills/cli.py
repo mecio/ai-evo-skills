@@ -1155,6 +1155,8 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
             if "when" in step:
                 guards.append({"value": resolve_value(step["when"]["value"], values, outputs),
                                "equals": step["when"]["equals"]})
+                if "normalize" in step["when"]:
+                    guards[-1]["normalize"] = step["when"]["normalize"]
             if child.kind == "recipe":
                 outputs[step["id"]] = expand(child, child_values, full_id, guards)
             else:

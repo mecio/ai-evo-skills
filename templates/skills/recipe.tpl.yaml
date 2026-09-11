@@ -11,6 +11,7 @@ steps:
     # when:
     #   value: "${{ inputs.context }}"
     #   equals: "php83"
+    #   normalize: trim  # Optional: ignore outer whitespace in the compared value only.
 
 outputs:
   result:

@@ -99,6 +99,54 @@ class RecipeConditionsTest(unittest.TestCase):
                     self.assertNotIn('when', transition['step'])
                     validate_plan(transition['step'])
 
+    def test_trim_is_explicit_preserves_outputs_and_only_normalizes_value(self):
+        with self.project() as (root, path, data):
+            for source in ('${{ inputs.php }}', '${{ steps.detect.output }}'):
+                for adapter in ('codex', 'claude'):
+                    data['steps'][2]['when'] = {'value': source, 'normalize': 'trim', 'equals': 'php83'}
+                    plan = self.plan(root, path, data, adapter, '--input', 'php= \tphp83\r\n')
+                    self.assertEqual('trim', plan['execution']['steps'][2]['when']['all'][0]['normalize'])
+                    for value, expected in (('php83', 'ready'), ('php83\n', 'ready'),
+                                            (' \tphp83\r\n', 'ready'), ('\u00a0php83\u00a0', 'ready'),
+                                            ('php 83', 'skipped'), ('PHP83', 'skipped'),
+                                            ('Failure: php83', 'skipped'), ('php72\n', 'skipped'), (' \n', 'skipped')):
+                        with self.subTest(source=source, adapter=adapter, value=value):
+                            snapshot = deepcopy(plan)
+                            if source.startswith('${{ inputs.'):
+                                snapshot['execution']['steps'][2]['when']['all'][0]['value'] = value
+                            records = [self.result('detect', value), self.result('legacy', '')]
+                            before = deepcopy((snapshot, records))
+                            transition = advance_recipe({'plan': snapshot, 'results': records})
+                            self.assertEqual(expected, transition['status'])
+                            self.assertEqual(before, (snapshot, records))
+                    # The expected literal is not trimmed, and neither are downstream outputs.
+                    plan['execution']['steps'][2]['when']['all'][0]['equals'] = ' php83 '
+                    records = [self.result('detect', ' php83 '), self.result('legacy', '')]
+                    self.assertEqual('skipped', advance_recipe({'plan': plan, 'results': records})['status'])
+            data['steps'][3]['with']['unit'] = '${{ steps.detect.output }}'
+            plan = self.plan(root, path, data)
+            records = [self.result('detect', 'php83\n'), self.result('legacy', ''), self.result('unit', 'ok')]
+            self.assertEqual('php83\n', advance_recipe({'plan': plan, 'results': records})['step']['with']['unit'])
+            plan['result']['step'] = 'detect'
+            records.append(self.result('aggregate', 'ok'))
+            self.assertEqual('php83\n', advance_recipe({'plan': plan, 'results': records})['output'])
+
+    def test_invalid_normalization_is_rejected_in_authoring_and_runtime(self):
+        with self.project() as (root, path, data):
+            valid_plan = self.plan(root, path, data)
+            for normalize in ('lower', 'none', True, None, {}, ['trim']):
+                with self.subTest(normalize=normalize):
+                    data['steps'][2]['when']['normalize'] = normalize
+                    path.write_text(yaml.safe_dump(data))
+                    for args in (('validate',), ('recipe', 'plan', 'abc-flow', '--adapter', 'codex')):
+                        result = self.run_cli(root, *args)
+                        self.assertEqual(1, result.returncode)
+                        self.assertIn('normalize', result.stderr)
+                    snapshot = deepcopy(valid_plan)
+                    snapshot['execution']['steps'][2]['when']['all'][0]['normalize'] = normalize
+                    with self.assertRaises(ExecutionError):
+                        advance_recipe({'plan': snapshot, 'results': []})
+
     def test_unknown_forward_self_and_cyclic_references_are_rejected(self):
         with self.project() as (root, path, data):
             for value in ('${{ inputs.missing }}', '${{ steps.missing.output }}',
@@ -152,7 +200,7 @@ class RecipeConditionsTest(unittest.TestCase):
 
     def test_condition_on_skipped_output_is_false_not_magic_string_equality(self):
         with self.project() as (root, path, data):
-            data['steps'][3]['when'] = {'value': '${{ steps.unit.output }}', 'equals': json.dumps(skipped_output('unit'))}
+            data['steps'][3]['when'] = {'value': '${{ steps.unit.output }}', 'normalize': 'trim', 'equals': json.dumps(skipped_output('unit'))}
             plan = self.plan(root, path, data)
             results = [self.result('detect', 'php72'), self.result('legacy', '')]
             results.append(advance_recipe({'plan': plan, 'results': results})['result'])
@@ -203,12 +251,15 @@ class RecipeConditionsTest(unittest.TestCase):
                 'outputs': {'result': {'value': '${{ steps.second.output }}'}},
             }))
             data['steps'][2]['uses'] = 'abc-nested'
+            data['steps'][2]['when']['normalize'] = 'trim'
             plan = self.plan(root, path, data)
             self.assertEqual(['detect', 'legacy', 'unit.first', 'unit.second', 'aggregate'], [s['id'] for s in plan['execution']['steps']])
             self.assertEqual(2, len(plan['execution']['steps'][3]['when']['all']))
             for context, child_output, statuses in (('php72', '', ['skipped', 'skipped']),
                                                      ('php83', 'go', ['ready', 'ready']),
-                                                     ('php83', 'stop', ['ready', 'skipped'])):
+                                                     ('php83', 'stop', ['ready', 'skipped']),
+                                                     ('php83\n', 'go', ['ready', 'ready']),
+                                                     ('php83\n', 'go\n', ['ready', 'skipped'])):
                 records = [self.result('detect', context), self.result('legacy', '')]
                 for sid, status in zip(('unit.first', 'unit.second'), statuses):
                     transition = advance_recipe({'plan': plan, 'results': records})
@@ -317,7 +368,7 @@ class RecipeConditionsTest(unittest.TestCase):
                         if step['id'] == 'summary' and context == 'php72':
                             self.assertEqual(skipped_output('unit_tests'), json.loads(step['with']['unit']))
                         validate_plan(step)
-                        step['application']['command'] = [sys.executable, '-c', 'import sys; sys.stdout.write(' + repr(context if step['id'] == 'php_context' else step['id']) + ')']
+                        step['application']['command'] = [sys.executable, '-c', 'import sys; sys.stdout.write(' + repr(context + '\n' if step['id'] == 'php_context' else step['id']) + ')']
                         result = subprocess.run(fixtures.COMMAND + ['command', 'execute'], cwd=root,
                                                 env=fixtures.CLI_ENV, input=json.dumps(step), text=True, capture_output=True)
                         self.assertEqual(0, result.returncode, result.stderr)
