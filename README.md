@@ -1,6 +1,6 @@
 # AI Evo Skills
 
-**Release:** `0.1.0-beta.3` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
+**Release:** `0.1.0-beta.4` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
 
 AI Evo Skills is a small, project-local orchestration layer for AI coding skills. It keeps one canonical catalog
 of reusable commands, lets developers compose those commands into validated sequential recipes, and publishes
@@ -143,7 +143,7 @@ identifies the AI that coordinates the workflow.
 
 ## Requirements
 
-Version `0.1.0-beta.3` targets Linux and requires:
+Version `0.1.0-beta.4` targets Linux and requires:
 
 - Git and symbolic-link support;
 - Python 3.11 or newer;
@@ -159,7 +159,7 @@ compatible newer versions and review adapter changes when vendor flags change. W
 Clone a released engine once, then link it from an application repository:
 
 ```bash
-git clone --branch v0.1.0-beta.3 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
+git clone --branch v0.1.0-beta.4 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
 cd /path/to/project
 ln -s /chosen/path/ai-evo-skills .ai-evo
 ./.ai-evo/bin/ai-evo-skills init --namespace abc --adapter codex --adapter claude
@@ -221,6 +221,9 @@ explicit `enabled` value. Disabled targets remain documented, while `sync` remov
 Commands are always created in the shared catalog. Recipes default to the local, Git-ignored
 `skills/custom/recipes`; `--catalog` makes them shared. Templates live under `.ai-evo/templates/`, organized by
 artifact type. Generated `TODO` markers must be completed before validation and synchronization can succeed.
+Creation validates project integration, storage and reserved names, but allows incomplete draft content.
+You can create several commands, recipes and profiles before completing them. All generated YAML is parsable;
+`validate`, `sync` and planners still reject unresolved TODOs and invalid contracts.
 Examples under `.ai-evo/examples/` are documentation and are never installed by `init`.
 
 ## Command contract
@@ -247,7 +250,8 @@ contain spaces.
 
 `execution-policy.workspace` accepts `read-only` or `read-write`. `execution-policy.network` accepts `disabled`,
 `enabled` or `auto`. Read-only workspace access and disabled network access are mandatory: the selected adapter
-must translate them into native CLI controls or planning stops. `auto` delegates the choice to the executor.
+must translate them into native CLI controls or planning stops. Codex explicitly maps workspace `read-write`
+to `--sandbox workspace-write`, preserving the network restriction independently. `auto` delegates the choice to the executor.
 
 For Claude Code, read-only commands use non-interactive permission denial, disable editing tools and expose Bash
 only for `.ai-evo/bin/ai-evo-git-read`. That wrapper offers argument-safe `status`, `diff`, `show`, `log`,
@@ -343,7 +347,10 @@ resolved planning status, `allow_planning: false` and a snapshot of the skill. I
 fields are the authoritative inputs, directory, execution policy, profile and native CLI arguments.
 After replacing runtime output references in `with`, the coordinator sends the complete delegated step JSON
 to `.ai-evo/bin/ai-evo-skills command execute` on stdin. This command consumes a trusted local plan; it does
-not load or revalidate the catalog and must not be used with untrusted execution JSON.
+not load or revalidate the catalog and must not be used with untrusted execution JSON. It validates the full
+snapshot against the packaged `execution-plan.schema.json`, including policy, profile and session metadata,
+and checks cross-field consistency before spawning a process. Regenerate older plans after upgrading;
+runtime snapshots are release-specific even though the on-disk project protocol remains `1.0`.
 
 `command execute` constructs the structured `ai-evo-execution-handoff` prompt and sets
 `AI_EVO_EXECUTION_HANDOFF=resolved` for the child. Core CLI calls to `command plan`, `recipe plan` or nested
@@ -351,6 +358,10 @@ not load or revalidate the catalog and must not be used with untrusted execution
 planning instructions in existing skill text. This prevents accidental replanning through the supported
 handoff; it is not an OS security boundary against an executor deliberately removing the marker.
 Child stdout/stderr and exit status are preserved, so the coordinator stops the recipe on failure.
+`command execute --timeout <seconds>` sets a positive finite deadline (default: 900 seconds). Timeout exits
+with status 124; SIGINT/SIGTERM exit with 130/143. The core terminates the delegated process group and
+force-kills remaining descendants after a grace period of at most two seconds. This also applies to resume.
+A hard kill of the core process itself cannot be intercepted; use normal cancellation signals.
 
 Codex session persistence is independent of workspace permissions:
 
@@ -365,7 +376,9 @@ Capture the native session id from the CLI output. For a failed Codex step, pass
 With `always`, `--correction` is optional. The coordinator is responsible for associating the id with the
 original step and for deciding that a correction is justified. The native CLI needs writable session storage
 outside the read-only worktree when persistence is enabled. Adapters declare optional `session-translation`
-and `invocation.resume-arguments`; the bundled Codex adapter defines both.
+and `invocation.resume-arguments`; the bundled Codex adapter defines both. Session metadata distinguishes
+`resume_permitted` (profile), `resume_supported` (adapter) and `resume_allowed` (both). The bundled Claude
+adapter currently does not implement resume through `command execute` and reports it as unavailable.
 
 A restrictive command is delegated even when its executor matches the coordinating AI, because a fresh native
 CLI invocation is required to enforce its sandbox and network policy.
@@ -397,6 +410,8 @@ and adapters when upgrading an AI CLI whose flags may have changed.
 
 The software release and file protocol use separate versions:
 
+- `0.1.0-beta.4` fixes Codex write permissions, resume capability reporting and draft creation; validates
+  complete execution snapshots and adds bounded process-group execution and native policy probes.
 - `0.1.0-beta.3` fixes read-only planner launch, makes Codex persistence follow the reuse profile and adds
   structured execution handoffs. See [CHANGELOG.md](CHANGELOG.md). On-disk protocol `1.0` is unchanged;
   execution handoff and adapter fields are additive. Regenerate plans to use `command execute`.
@@ -407,8 +422,8 @@ The software release and file protocol use separate versions:
 - `1.0` is the current on-disk protocol used by project configuration, adapters, skills, recipes and effort
   profiles. A protocol change requires validator and migration support independently of the package release.
 
-The Python package uses the PEP 440 equivalent `0.1.0b3`; Git releases use the SemVer tag
-`v0.1.0-beta.3`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
+The Python package uses the PEP 440 equivalent `0.1.0b4`; Git releases use the SemVer tag
+`v0.1.0-beta.4`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
 schemas and templates come from the engine clone linked as `.ai-evo`.
 
 ## Maintainer verification
@@ -417,7 +432,11 @@ Run `uv run --frozen python -m unittest discover -s tests -v` for offline regres
 sandbox test uses Linux Landlock to deny filesystem writes (except `/dev/null`) and skips if unavailable.
 Run `AI_EVO_LIVE_TESTS=1 uv run --frozen python -m unittest discover -s tests -p test_live_execution.py -v`
 with authenticated Claude and Codex CLIs to verify sequential read-only execution and correction resume
-against the same native session id. This opt-in test makes model requests.
+against the same native session id, and Claude native write/network-tool permissions. This opt-in test
+makes model requests. Run `AI_EVO_NATIVE_SANDBOX_TESTS=1 uv run --frozen python -m unittest discover -s tests
+-p test_native_policy.py -v` to exercise actual Codex sandbox writes and loopback network access without
+model requests. These checks skip with an explicit reason when the host forbids the required namespaces;
+a skip does not verify enforcement. The read-write case must successfully create a marker.
 
 ## License
 
