@@ -690,7 +690,18 @@ def cmd_validate(_: argparse.Namespace) -> None:
 def managed_link(path: Path, source_roots: list[Path]) -> bool:
     if not path.is_symlink():
         return False
-    target = (path.parent / os.readlink(path)).resolve(strict=False)
+    try:
+        target = path.parent / os.readlink(path)
+        try:
+            # Strict resolution detects loops even on Python versions where
+            # strict=False returns an unresolved path instead of raising.
+            target = target.resolve(strict=True)
+        except FileNotFoundError:
+            # Deleted catalog entries still leave managed links to remove.
+            target = target.resolve(strict=False)
+    except (OSError, RuntimeError):
+        # Ownership cannot be established: preserve the link as unmanaged.
+        return False
     return any(target == root or root in target.parents for root in source_roots)
 
 

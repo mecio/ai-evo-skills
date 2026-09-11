@@ -7,6 +7,10 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Preserve cyclic or otherwise unresolvable unmanaged links during synchronization without blocking
+  unrelated skills. Report collisions with desired skill names before writes, and retain removal of
+  dangling managed links whose catalog entries were deleted.
+
 - Allow explicit `when.normalize: trim` to compare native CLI outputs with outer whitespace while preserving
   exact equality by default. Keep original outputs, journals and downstream inputs unchanged. The PHP example
   now selects Unit tests for `php83` even when the client appends a newline.
