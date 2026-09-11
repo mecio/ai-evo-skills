@@ -719,6 +719,9 @@ def cmd_create(args: argparse.Namespace) -> None:
     namespace, short = context.config["namespace"], args.name
     ensure_short_name(short, namespace)
     name = f"{namespace}-{short}"
+    if args.create_kind in {"command", "recipe"} and name in context.registry:
+        existing = context.registry[name]
+        raise EvoError(f"skill name {name} is already used by {existing.path.parent}")
     replacements = {"namespace": namespace, "skill-name": short, "profile-name": short}
     if args.create_kind == "command":
         destination = context.skills / "catalog/commands" / name

@@ -609,6 +609,42 @@ outputs:
             self.assertNotEqual(0, result.returncode)
             self.assertIn("canonical skill directory", result.stderr)
 
+    def test_create_rejects_names_used_in_other_skill_collections(self):
+        cases = (
+            ("catalog/recipes", ("recipe", "inspect")),
+            ("catalog/recipes", ("recipe", "inspect", "--catalog")),
+            ("catalog/recipes", ("command", "flow")),
+            ("catalog/recipes", ("recipe", "flow")),
+            ("custom/recipes", ("recipe", "flow", "--catalog")),
+        )
+        for collection, arguments in cases:
+            with self.subTest(collection=collection, arguments=arguments):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex")
+                    self.add_command(root)
+                    skills = root / ".ai-evo-prj/skills"
+                    recipe = skills / collection / "abc-flow"
+                    recipe.mkdir()
+                    (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+                    (recipe / "recipe.yaml").write_text(yaml.safe_dump({
+                        "version": "1.0", "name": "abc-flow", "executor": "current",
+                        "inputs": {}, "steps": [{"id": "run", "uses": "abc-inspect"}],
+                        "outputs": {"result": {"value": "${{ steps.run.output }}"}},
+                    }))
+                    def snapshot():
+                        return {
+                            str(path.relative_to(skills)): path.read_bytes() if path.is_file() else None
+                            for path in skills.rglob("*")
+                        }
+                    before = snapshot()
+                    result = self.run_cli(root, "create", *arguments)
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertIn("already used", result.stderr)
+                    self.assertEqual(before, snapshot())
+                    self.assertEqual(0, self.run_cli(root, "validate").returncode)
+                    self.assertEqual(0, self.run_cli(root, "create", "recipe", "fresh").returncode)
+
     def test_create_reads_every_template_before_writing(self):
         with tempfile.TemporaryDirectory(prefix="ai-evo-create-test.") as temporary:
             base = Path(temporary)
