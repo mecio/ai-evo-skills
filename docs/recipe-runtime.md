@@ -161,7 +161,7 @@ migration. The separate mandatory recipe naming rule does require the migration 
 Plans without conditions retain their existing fields and behavior; existing coordinators may
 continue their old loop for those plans. Older engines reject `when` under their strict authoring schema;
 they cannot safely run conditional recipes. Update the engine and coordinator instructions together when
-adopting this capability. This is an unreleased compatible engine extension, not a newly published release.
+adopting this capability, available in engine `0.1.0-beta.3`.
 `normalize` is another optional extension within this capability. Earlier engines reject that field through
 their strict schemas rather than silently ignoring it; they must be updated to use conditions with `trim`.
-Package version and Git tags remain unchanged until an explicit release request.
+The release keeps on-disk protocol `1.0`; regenerate execution snapshots when upgrading the engine.

@@ -2,8 +2,8 @@
 
 All shared and personal recipes now use `<namespace>-recipe-<name>`. Commands keep `<namespace>-<name>`.
 This beta change intentionally rejects old recipe names. It does not introduce aliases, install two names,
-or silently rewrite files. Version and release tags remain unchanged until an explicit release request;
-the change is recorded under `Unreleased`.
+or silently rewrite files. The change is released in engine `0.1.0-beta.3`; see the
+[release changelog](../CHANGELOG.md#010-beta3).
 
 ## Manual migration
 
@@ -61,4 +61,4 @@ This is a stricter engine naming rule within the current beta, not a new wire or
 field shapes and on-disk protocol `1.0` are unchanged. Older engines can read the new names, but only the updated
 engine enforces the convention. New engines reject legacy recipe names, including already planned recipe
 snapshots. There is no implicit migration based on a protocol number. Adopt the engine, renamed sources and
-updated coordinator instructions together; include this breaking validation change in the next release notes.
+updated coordinator instructions together when upgrading to `0.1.0-beta.3`.

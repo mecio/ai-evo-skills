@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Maintenance changes since `0.1.0-beta.2`; no new release or tag has been created.
+No unreleased changes.
+
+## 0.1.0-beta.3
+
+Changes since `0.1.0-beta.2`.
 On-disk project protocol remains `1.0`. Regenerate execution snapshots when adopting these changes.
 
 ### Documentation
@@ -29,9 +33,11 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 - Apply the recipe naming convention to bundled examples, schemas, templates, coordinator guidance,
   fixtures and regression tests. See the [migration guide](docs/recipe-naming-migration.md).
 - Keep protocol `1.0`: field structures are unchanged; this is an intentionally incompatible beta naming
-  validation change. Engine version and tags remain unchanged until an explicitly requested release.
+  validation change released in engine `0.1.0-beta.3`. Migrate legacy recipe names and regenerate execution plans.
 
 ### Fixed
+
+- Ignore local JetBrains `.idea` metadata in Git.
 
 - Reject cyclic publication directories and parent aliases with a path-specific CLI diagnostic instead
   of a traceback during initialization, validation, planning and synchronization, before any writes.
@@ -107,12 +113,12 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
   validates a sequential result journal with explicit skipped states and fail-fast behavior. Aggregation
   inputs receive skipped-state JSON text; final results preserve structured skips. Conditional plans declare
   `exact-equals-v1`; recipes without conditions retain their existing plan shape and on-disk protocol `1.0`.
-- A packaged runtime schema, coordinator instructions, PHP 7.2 / PHP 8.3 example and condition regression tests.
+- A packaged runtime schema, coordinator instructions, an Acme conditional-review example and condition regression tests.
 
 - A packaged execution-plan schema requiring the complete policy, profile, handoff and session contract,
   plus cross-field consistency checks before any delegated process starts.
 - A 900-second default execution deadline, adjustable with `--timeout`. Timeout exits 124 and kills the
-  process group; SIGINT/SIGTERM cancel with 130/143 and terminate descendants, including those ignoring TERM.
+  delegated process tree; SIGINT/SIGTERM cancel with 130/143 and terminate descendants, including those ignoring TERM.
 - Native policy probes: Codex read-only/read-write filesystem and network checks, plus authenticated Claude
   edit and network-tool permission checks. Namespace-unavailable skips are explicitly reported, not passes.
 - Structured resolved handoffs with skill snapshots, explicit planning status and policy/session data.
