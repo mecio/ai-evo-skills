@@ -588,6 +588,8 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
     payload = profile_payload(context, profile_name, adapter_id)
     adapter = context.adapters[adapter_id]
     arguments = list(payload["delegated_cli_arguments"])
+    reuse = context.profiles[payload["profile"]]["execution"]["reuse-session"]
+    arguments.extend(adapter.get("session-translation", {}).get(reuse, []))
     policy_instructions: list[str] = []
     policy = skill.execution_policy or {}
     for dimension, value in policy.items():
@@ -619,6 +621,13 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
         "prompt_delivery": adapter["invocation"].get("prompt-delivery", "argument-after-options"),
         "working_directory": str(context.repo),
         "cli_arguments": arguments,
+        "execution_policy": policy,
+        "session": {
+            "reuse": reuse,
+            "resume_allowed": reuse != "never",
+            "corrections_only": reuse == "correction-only",
+            "resume_arguments": adapter["invocation"].get("resume-arguments"),
+        },
         "policy_instructions": list(dict.fromkeys(policy_instructions)),
         "profile": payload,
     }

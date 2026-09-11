@@ -12,15 +12,21 @@ invocation:
   example: "$<skill-name> key=value"
   command: [codex, exec]
   prompt-delivery: stdin
+  resume-arguments: [resume, "<session-id>", "-"]
 
 profile-translation:
   application: instruction
   delegated-cli: null
 
+session-translation:
+  never: ["--ephemeral"]
+  correction-only: []
+  always: []
+
 execution-policy-translation:
   workspace-read-only:
     enforcement: native
-    cli-arguments: ["--sandbox", "read-only", "--ephemeral"]
+    cli-arguments: ["--sandbox", "read-only"]
   network-disabled:
     enforcement: native
     cli-arguments:
