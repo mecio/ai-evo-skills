@@ -102,7 +102,12 @@ def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], str,
     policy = data.get("execution-policy")
     if not isinstance(data.get("inputs"), dict) or not isinstance(data.get("executor"), str) or not isinstance(policy, dict):
         raise EvoError(f"{path}: malformed command interface")
-    if set(policy) != {"workspace", "network"} or policy.get("workspace") not in {"read-only", "read-write"} or policy.get("network") not in {"disabled", "enabled", "auto"}:
+    if (
+        set(policy) != {"workspace", "network"}
+        or not all(isinstance(value, str) for value in policy.values())
+        or policy["workspace"] not in {"read-only", "read-write"}
+        or policy["network"] not in {"disabled", "enabled", "auto"}
+    ):
         raise EvoError(f"{path}: invalid execution-policy")
     return data["inputs"], data["executor"], policy
 
@@ -296,7 +301,7 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
                         recipe = load_yaml(recipe_path)
                         recipe_validation = schema_errors(recipe, engine / "schemas/recipe.schema.json", recipe_path)
                         errors += recipe_validation
-                        if isinstance(recipe, dict):
+                        if not recipe_validation and isinstance(recipe, dict):
                             inputs = recipe.get("inputs", {})
                             if isinstance(recipe.get("executor"), str):
                                 executor = recipe["executor"]

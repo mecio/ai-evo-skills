@@ -270,6 +270,52 @@ outputs:
                         self.assertNotIn("Traceback", result.stderr)
                     self.assertFalse((root / ".agents/skills").exists())
 
+    def test_invalid_policy_value_types_report_errors_without_traceback(self):
+        for dimension, original in (("workspace", "read-only"), ("network", "disabled")):
+            for value in ("[]", "{}", "null", "true", "42"):
+                with self.subTest(dimension=dimension, value=value):
+                    temporary, root = self.repository()
+                    with temporary:
+                        self.initialize(root, "codex")
+                        self.add_command(root)
+                        command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+                        command.write_text(VALID_COMMAND.replace(
+                            f"{dimension}: {original}", f"{dimension}: {value}"
+                        ))
+                        result = self.run_cli(root, "validate")
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("invalid execution-policy", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+
+    def test_invalid_nested_recipe_inputs_preserve_schema_diagnostics(self):
+        for inputs in ([], None, "broken", 42, {"target": []}):
+            with self.subTest(inputs=inputs):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex")
+                    self.add_command(root)
+                    for name, used, definitions in (
+                        ("abc-flow", "abc-inspect", inputs),
+                        ("abc-outer", "abc-flow", {}),
+                    ):
+                        recipe = root / ".ai-evo-prj/skills/catalog/recipes" / name
+                        recipe.mkdir()
+                        (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL.replace("abc-flow", name))
+                        (recipe / "recipe.yaml").write_text(yaml.safe_dump({
+                            "version": "1.0", "name": name, "executor": "current",
+                            "inputs": definitions, "steps": [{"id": "run", "uses": used}],
+                            "outputs": {"result": {"value": "${{ steps.run.output }}"}},
+                        }))
+                    for arguments in (
+                        ("validate",), ("sync",),
+                        ("recipe", "plan", "abc-outer", "--adapter", "codex"),
+                    ):
+                        result = self.run_cli(root, *arguments)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("recipe.yaml:inputs", result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                    self.assertFalse((root / ".agents/skills").exists())
+
     def test_recipe_is_published_only_to_its_coordinator(self):
         temporary, root = self.repository()
         with temporary:
