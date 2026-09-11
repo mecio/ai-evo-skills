@@ -163,6 +163,54 @@ class CliIntegrationTest(unittest.TestCase):
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
             self.assertFalse(link.is_symlink())
 
+    def test_nested_targets_are_rejected_without_changing_the_catalog(self):
+        for reverse, alias in ((False, False), (True, False), (False, True)):
+            with self.subTest(reverse=reverse, alias=alias):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, 'codex', 'claude')
+                    self.add_command(root)
+                    if alias:
+                        (root / '.shared').mkdir()
+                        (root / '.alias').symlink_to('.shared', target_is_directory=True)
+                    path = root / '.ai-evo-skills.yaml'
+                    config = yaml.safe_load(path.read_text())
+                    config['targets'][0]['path'] = '.shared'
+                    config['targets'][1]['path'] = ('.alias' if alias else '.shared') + '/abc-inspect/tools'
+                    if reverse:
+                        config['targets'].reverse()
+                    path.write_text(yaml.safe_dump(config))
+                    for args in (('validate',), ('sync', '--dry-run'), ('sync',)):
+                        result = self.run_cli(root, *args)
+                        self.assertEqual(1, result.returncode, result.stdout)
+                        self.assertIn('target paths must not overlap', result.stderr)
+                    source = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect'
+                    self.assertEqual(['SKILL.md'], sorted(p.name for p in source.iterdir()))
+                    self.assertEqual(VALID_COMMAND, (source / 'SKILL.md').read_text())
+                    self.assertFalse(os.path.lexists(root / '.shared/abc-inspect'))
+
+    def test_nested_targets_are_rejected_after_publication(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex', 'claude')
+            self.add_command(root)
+            path = root / '.ai-evo-skills.yaml'
+            config = yaml.safe_load(path.read_text())
+            config['targets'][0]['path'] = '.shared'
+            path.write_text(yaml.safe_dump(config))
+            self.assertEqual(0, self.run_cli(root, 'sync').returncode)
+            config['targets'][1]['path'] = '.shared/abc-inspect/tools'
+            path.write_text(yaml.safe_dump(config))
+            for args in (('validate',), ('sync', '--dry-run'), ('sync',)):
+                result = self.run_cli(root, *args)
+                self.assertEqual(1, result.returncode, result.stdout)
+                self.assertIn('target paths must not overlap', result.stderr)
+            source = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect'
+            self.assertEqual(['SKILL.md'], sorted(p.name for p in source.iterdir()))
+            self.assertEqual(VALID_COMMAND, (source / 'SKILL.md').read_text())
+            self.assertTrue((root / '.shared/abc-inspect').is_symlink())
+            self.assertTrue((root / '.claude/skills/abc-inspect').is_symlink())
+
     def test_equivalent_target_paths_fail_before_sync_writes(self):
         for alias in (".agents/./skills", ".agents/skills/", "alias/skills"):
             with self.subTest(alias=alias):
