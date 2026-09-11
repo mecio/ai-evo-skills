@@ -8,6 +8,7 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 ### Fixed
 
 - Calculate published relative links from the physical client directory, including symbolic client paths.
+- Reject publication targets overlapping canonical or personal skill sources before any sync writes.
 - Reject empty CLI argument strings in adapter policy translations, consistently with execution plans.
 
 - Reject overlapping publication targets, including filesystem aliases, before synchronization writes.

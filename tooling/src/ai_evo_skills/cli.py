@@ -411,6 +411,11 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
     # Keep lexical containment checks too: a previously published skill symlink
     # can resolve an otherwise nested target into a different directory tree.
     for index, path in enumerate(configured_target_paths):
+        for source in (skills / "catalog", skills / "custom"):
+            pairs = ((path, source), (target_paths[index], source.resolve(strict=False)))
+            if any(target == origin or target in origin.parents or origin in target.parents
+                   for target, origin in pairs):
+                errors.append(f"{config_path}: target path must not overlap skill sources: {path} and {source}")
         for other_index in range(index + 1, len(configured_target_paths)):
             other = configured_target_paths[other_index]
             resolved, resolved_other = target_paths[index], target_paths[other_index]

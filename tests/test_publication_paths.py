@@ -43,3 +43,28 @@ class PublicationPathsTest(unittest.TestCase):
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertFalse(os.path.lexists(link))
                     self.assertEqual(fixtures.VALID_COMMAND, (source / 'SKILL.md').read_text())
+
+    def test_targets_cannot_overlap_skill_sources(self):
+        for target in ('.ai-evo-prj/skills/catalog', '.ai-evo-prj/skills/catalog/recipes',
+                       '.ai-evo-prj/skills/catalog/commands/abc-inspect/tools',
+                       '.ai-evo-prj/skills/custom/recipes', '.ai-evo-prj/skills', '.alias'):
+            with self.subTest(target=target):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, 'codex')
+                    self.add_command(root)
+                    (root / '.alias').symlink_to('.ai-evo-prj/skills/catalog/recipes', target_is_directory=True)
+                    config_path = root / '.ai-evo-skills.yaml'
+                    config = yaml.safe_load(config_path.read_text())
+                    config['targets'][0]['path'] = target
+                    config_path.write_text(yaml.safe_dump(config))
+                    skills = root / '.ai-evo-prj/skills'
+                    def snapshot():
+                        return {str(p.relative_to(skills)): p.read_bytes() if p.is_file() else None
+                                for p in skills.rglob('*')}
+                    before = snapshot()
+                    for args in (('validate',), ('sync', '--dry-run'), ('sync',)):
+                        result = self.run_cli(root, *args)
+                        self.assertEqual(1, result.returncode, result.stdout)
+                        self.assertIn('target path must not overlap skill sources', result.stderr)
+                    self.assertEqual(before, snapshot())

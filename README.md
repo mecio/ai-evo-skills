@@ -210,6 +210,9 @@ targets:
 Every target keeps an expressive `id`, its engine `adapter`, a project-relative native skill `path` and an
 explicit `enabled` value. Disabled targets remain documented, while `sync` removes their managed links.
 Target paths must be distinct and must not contain one another, including after resolving symbolic links.
+They must also remain separate from `skills/catalog` and `skills/custom`: a target may not equal, contain
+or sit inside either source area. Client directories may use symbolic links within the worktree;
+published relative links are calculated from their physical directory.
 Validation rejects overlapping targets before synchronization can change the catalog.
 
 ## Create and maintain artifacts
