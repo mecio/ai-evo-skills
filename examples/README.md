@@ -13,3 +13,7 @@ The example also demonstrates both variable forms:
 - `${{ steps.review.output }}` reads the output of an earlier step.
 
 Step outputs can only be consumed by later steps. Forward references and cycles are validation errors.
+
+[`php-context/`](php-context/README.md) provides a complete conditional recipe: PHP 7.2 runs legacy tests;
+PHP 8.3 runs legacy and Unit tests. A final command aggregates both branches, including a structured skip
+serialized as a string input when Unit tests are omitted. It uses the core `recipe advance` coordinator loop.

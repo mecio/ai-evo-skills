@@ -23,6 +23,18 @@
         "properties": {
           "id": { "$ref": "#/$defs/identifier" },
           "uses": { "$ref": "#/$defs/skillName" },
+          "when": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "equals"],
+            "properties": {
+              "value": {
+                "type": "string",
+                "pattern": "^\\$\\{\\{ (inputs\\.[a-z][a-z0-9_]*|steps\\.[a-z][a-z0-9_]*\\.output) \\}\\}$"
+              },
+              "equals": { "type": "string" }
+            }
+          },
           "with": {
             "type": "object",
             "propertyNames": { "$ref": "#/$defs/identifier" },

@@ -19,11 +19,18 @@ class ExecutionTimeout(ExecutionError):
 
 
 def validate_plan(step: Any) -> None:
+    if isinstance(step, dict) and 'when' in step:
+        raise ExecutionError('when must be resolved by recipe advance before command execute')
     schema = json.loads(files('ai_evo_skills').joinpath('execution-plan.schema.json').read_text(encoding='utf-8'))
     errors = list(Draft202012Validator(schema).iter_errors(step))
     if errors:
         details = '\n'.join(f"- {'.'.join(map(str, error.absolute_path)) or 'plan'}: {error.message}" for error in errors)
         raise ExecutionError('invalid execution plan; resolve all step output references before execution:\n' + details)
+    validate_step_consistency(step)
+
+
+def validate_step_consistency(step: dict[str, Any]) -> None:
+    """Semantic checks shared by executable and not-yet-resolved recipe steps."""
     app, session = step['application'], step['application']['session']
     permitted = session['reuse'] != 'never'
     supported = bool(session['resume_arguments'])

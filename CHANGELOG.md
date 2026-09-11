@@ -39,6 +39,14 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Added
 
+- Optional recipe `when: {value, equals}` conditions using exact string equality and prior output/input
+  references. Nested conditions gate all descendants; every branch remains validated and planned.
+- `recipe advance` resolves typed placeholders, evaluates conditions immediately before execution and
+  validates a sequential result journal with explicit skipped states and fail-fast behavior. Aggregation
+  inputs receive skipped-state JSON text; final results preserve structured skips. Conditional plans declare
+  `exact-equals-v1`; recipes without conditions retain their existing plan shape and on-disk protocol `1.0`.
+- A packaged runtime schema, coordinator instructions, PHP 7.2 / PHP 8.3 example and condition regression tests.
+
 - A packaged execution-plan schema requiring the complete policy, profile, handoff and session contract,
   plus cross-field consistency checks before any delegated process starts.
 - A 900-second default execution deadline, adjustable with `--timeout`. Timeout exits 124 and kills the

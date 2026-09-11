@@ -308,6 +308,21 @@ Recipes form a DAG but execute in declared sequence. `${{ inputs.name }}` reads 
 duplicate step ids and direct or indirect cycles are validation errors. `outputs.result.value` is the single
 public recipe result.
 
+Steps may declare an exact conditional comparison:
+
+```yaml
+  - id: unit_tests
+    uses: enabu-test-unit
+    when:
+      value: "${{ steps.php_context.output }}"
+      equals: "php83"
+```
+
+`value` must be a complete reference to an existing recipe input or a previous step's output. No partial
+interpolation or additional operators are allowed. Equality preserves whitespace, case and newlines.
+All branches are validated and planned, even when a condition is false. Nested recipe conditions gate
+every descendant. See the [complete PHP 7.2 / PHP 8.3 example](examples/php-context/README.md).
+
 Because planning happens before execution, a prior step result appears in planner JSON as a typed placeholder:
 
 ```json
@@ -317,6 +332,18 @@ Because planning happens before execution, a prior step result appears in planne
 Immediately before running the consuming step, the coordinating AI replaces the complete placeholder object with
 the complete output produced by the named earlier step. Command inputs therefore remain strings when executed;
 the placeholder is part of the execution-plan protocol rather than a literal command input.
+
+For conditional recipes, use `recipe advance` before every step instead of resolving references manually.
+Send `{"plan": <complete plan object>, "results": <ordered result records>}` on stdin. Execute only a `ready`
+step. Append a `skipped` record without invoking its command, and continue; a skip is not a failure.
+Stop on `failed` or a runtime validation error, and return `complete.output` when finished.
+
+Skipped outputs are structured `ai-evo-step-skipped` states. Downstream command inputs receive their compact
+JSON serialization, allowing aggregation commands to report omitted branches explicitly; final recipe outputs
+retain the structured state. A condition reading a skipped output is false. Missing or non-string successful
+outputs are errors. The [runtime protocol](docs/recipe-runtime.md) defines the full journal, nested conditions,
+fail-fast behavior and compatibility rules. Conditional plans require `execution.conditions: exact-equals-v1`;
+existing recipes without `when` keep their previous behavior and plan shape.
 
 ## Effort profiles
 
@@ -349,6 +376,8 @@ These commands are designed primarily for AI consumption and return JSON:
 ./.ai-evo/bin/ai-evo-skills profile resolve --adapter codex
 ./.ai-evo/bin/ai-evo-skills command plan abc-inspect-diff --adapter codex --input target=HEAD
 ./.ai-evo/bin/ai-evo-skills recipe plan abc-my-review --adapter codex --input target=HEAD
+# With the complete plan and result journal supplied as JSON on stdin:
+./.ai-evo/bin/ai-evo-skills recipe advance
 ```
 
 Every command plan and expanded recipe step includes a `handoff` with type `ai-evo-resolved-command`,
@@ -360,9 +389,10 @@ not load or revalidate the catalog and must not be used with untrusted execution
 snapshot against the packaged `execution-plan.schema.json`, including policy, profile and session metadata,
 and checks cross-field consistency before spawning a process. Regenerate older plans after upgrading;
 runtime snapshots are release-specific even though the on-disk project protocol remains `1.0`.
+Conditional steps must first pass through `recipe advance`; `command execute` rejects an unresolved `when`.
 
 `command execute` constructs the structured `ai-evo-execution-handoff` prompt and sets
-`AI_EVO_EXECUTION_HANDOFF=resolved` for the child. Core CLI calls to `command plan`, `recipe plan` or nested
+`AI_EVO_EXECUTION_HANDOFF=resolved` for the child. Core CLI calls to `command plan`, `recipe plan`, `recipe advance` or nested
 `command execute` are rejected while that marker is present. Delegates perform the task directly, skipping
 planning instructions in existing skill text. This prevents accidental replanning through the supported
 handoff; it is not an OS security boundary against an executor deliberately removing the marker.

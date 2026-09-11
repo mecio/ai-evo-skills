@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ "${AI_EVO_EXECUTION_HANDOFF:-}" == resolved ]]; then
     case "${1:-} ${2:-}" in
-        "command plan"|"recipe plan"|"command execute")
+        "command plan"|"recipe plan"|"command execute"|"recipe advance")
             echo "error: handoff is already resolved: execute the supplied task without planning or delegating again" >&2
             exit 1
             ;;

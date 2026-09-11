@@ -1,16 +1,16 @@
 ---
-name: <namespace>-<skill-name>
-description: "TODO: explain when the AI must use this recipe and what final result it produces."
+name: enabu-php-tests
+description: "Run legacy tests for PHP 7.2 and legacy plus Unit tests for PHP 8.3, then summarize."
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
 ---
 
-# TODO: recipe title
+# Test the configured PHP context
 
 ## Purpose
 
-TODO
+Run the selected test suites and distinguish skipped suites from executed results.
 
 ## Interface
 
@@ -18,7 +18,7 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Procedure
 
-1. Run `.ai-evo/bin/ai-evo-skills recipe plan <namespace>-<skill-name>` with the current adapter, the received
+1. Run `.ai-evo/bin/ai-evo-skills recipe plan enabu-php-tests` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
 2. Keep the complete plan and an initially empty ordered `results` array. Before each step, send
    `{"plan": <complete plan>, "results": <recorded results>}` as JSON on stdin to
@@ -38,18 +38,18 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Expected output
 
-TODO
+Run the selected test suites and distinguish skipped suites from executed results.
 
 ## Constraints
 
-- TODO
+- Run the selected test suites and distinguish skipped suites from executed results.
 
 ## Success criteria
 
-- TODO
+- Run the selected test suites and distinguish skipped suites from executed results.
 
 ## Examples
 
 ```text
-/<namespace>-<skill-name>
+/enabu-php-tests
 ```

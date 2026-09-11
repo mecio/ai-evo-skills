@@ -9,12 +9,14 @@ source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
+    { name = "referencing" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = "==4.23.0" },
     { name = "pyyaml", specifier = "==6.0.2" },
+    { name = "referencing", specifier = "==0.37.0" },
 ]
 
 [[package]]

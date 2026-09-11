@@ -19,6 +19,7 @@ from . import __version__
 from .yaml_loading import load_strict_yaml
 from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
+from .recipe_runtime import advance_recipe, validate_recipe_snapshot
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -475,7 +476,10 @@ def validate_recipes(context: Context) -> list[str]:
                     continue
                 if spec.get("required") is True and name not in supplied:
                     errors.append(f"{skill.name}.{sid}: required child input {name} is not mapped")
-            for key, value in supplied.items():
+            references = dict(supplied)
+            if "when" in step:
+                references["when.value"] = step["when"]["value"]
+            for key, value in references.items():
                 variable = parse_variable(value)
                 if isinstance(value, str) and value.startswith("${{") and not variable:
                     errors.append(f"{skill.name}.{sid}.{key}: invalid variable expression")
@@ -1113,6 +1117,17 @@ def cmd_command_plan(args: argparse.Namespace) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def cmd_recipe_advance(_: argparse.Namespace) -> None:
+    try:
+        request = json.load(sys.stdin)
+    except (ValueError, OSError) as exc:
+        raise EvoError(f"invalid recipe runtime JSON: {exc}") from exc
+    transition = advance_recipe(request)
+    print(json.dumps(transition, ensure_ascii=False, indent=2))
+    if transition["status"] == "failed":
+        raise SystemExit(1)
+
+
 def cmd_recipe_plan(args: argparse.Namespace) -> None:
     context = validated_context()
     root = context.registry.get(args.name)
@@ -1123,7 +1138,7 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     initial = resolve_inputs(root.inputs, args.input)
     plan: list[dict[str, Any]] = []
 
-    def expand(skill: Skill, supplied: dict[str, Any], prefix: str) -> Any:
+    def expand(skill: Skill, supplied: dict[str, Any], prefix: str, inherited: list[dict[str, Any]]) -> Any:
         if skill.executor not in {"current", args.adapter}:
             raise EvoError(f"recipe {skill.name} requires coordinator adapter {skill.executor}, not {args.adapter}")
         values = {key: supplied.get(key, spec.get("default")) for key, spec in skill.inputs.items()}
@@ -1136,14 +1151,20 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
                 if key not in child_values and "default" in spec:
                     child_values[key] = spec["default"]
             full_id = f"{prefix}.{step['id']}" if prefix else step["id"]
+            guards = list(inherited)
+            if "when" in step:
+                guards.append({"value": resolve_value(step["when"]["value"], values, outputs),
+                               "equals": step["when"]["equals"]})
             if child.kind == "recipe":
-                outputs[step["id"]] = expand(child, child_values, full_id)
+                outputs[step["id"]] = expand(child, child_values, full_id, guards)
             else:
                 plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter), "handoff": resolved_handoff(child, recipe=True)})
+                if guards:
+                    plan[-1]["when"] = {"all": guards}
                 outputs[step["id"]] = step_output_reference(full_id)
         return resolve_value(skill.recipe["outputs"]["result"]["value"], values, outputs)
 
-    result = expand(root, initial, "")
+    result = expand(root, initial, "", [])
     payload = {
         "version": PROTOCOL_VERSION,
         "recipe": root.name,
@@ -1151,6 +1172,9 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
         "execution": {"mode": "sequential", "failure": "fail-fast", "steps": plan},
         "result": result,
     }
+    if any("when" in step for step in plan):
+        payload["execution"]["conditions"] = "exact-equals-v1"
+    validate_recipe_snapshot(payload)
     print(json.dumps(payload, indent=2))
 
 
@@ -1182,13 +1206,14 @@ def parser() -> argparse.ArgumentParser:
     execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.add_argument("--timeout", type=positive_timeout, default=900.0); execute.set_defaults(func=cmd_command_execute)
     recipe_root = sub.add_parser("recipe"); recipe_sub = recipe_root.add_subparsers(dest="recipe_command", required=True)
     plan = recipe_sub.add_parser("plan"); plan.add_argument("name"); plan.add_argument("--adapter", required=True); plan.add_argument("--ai-effort-profile", dest="profile"); plan.add_argument("--input", action="append", default=[]); plan.set_defaults(func=cmd_recipe_plan)
+    advance = recipe_sub.add_parser("advance"); advance.set_defaults(func=cmd_recipe_advance)
     return root
 
 
 def main() -> None:
     try:
         args = parser().parse_args()
-        if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute):
+        if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute, cmd_recipe_advance):
             raise EvoError("handoff is already resolved: execute the supplied task without planning or delegating again")
         args.func(args)
     except (EvoError, ExecutionError, ProcessTreeError, OSError, KeyError) as exc:
