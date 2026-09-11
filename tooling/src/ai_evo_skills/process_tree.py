@@ -37,13 +37,13 @@ class ProcessTree:
 
     Linux reparents orphan descendants to this subreaper even if they call setsid
     or double-fork. pidfds keep cleanup tied to process identities, not reused PIDs.
-    Children already present before the step, and their subtrees, are excluded.
+    The private supervisor starts without unrelated children; the caller's
+    existing children and their future descendants cannot be adopted here.
     """
 
     def __init__(self) -> None:
         self.owner = os.getpid()
         self.handles: dict[int, tuple[bytes, int]] = {}
-        self.existing = {pid: _birth(pid) for pid in _children(self.owner)}
         self.libc = ctypes.CDLL(None, use_errno=True)
         self.previous = ctypes.c_int()
         try:
@@ -65,7 +65,7 @@ class ProcessTree:
             seen.add(parent)
             for pid in _children(parent):
                 birth = _birth(pid)
-                if birth is None or (pid in self.existing and self.existing[pid] == birth):
+                if birth is None:
                     continue
                 pending.append(pid)
                 if pid in self.handles and self.handles[pid][0] != birth:

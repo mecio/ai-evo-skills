@@ -14,6 +14,50 @@ class AdapterContractTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
+    def test_init_rejects_mismatched_adapter_id_before_any_writes(self):
+        for adapter_id, arguments in (('codex', ['--adapter', 'codex']),
+                                      ('claude', ['--adapter', 'codex', '--adapter', 'claude'])):
+            for existing_ignores in (False, True):
+                with self.subTest(adapter=adapter_id, existing_ignores=existing_ignores):
+                    temporary, root = self.repository()
+                    with temporary:
+                        engine = root / 'engine'
+                        for directory in ('adapters', 'schemas', 'templates'):
+                            shutil.copytree(fixtures.ENGINE / directory, engine / directory)
+                        (root / '.ai-evo').unlink()
+                        (root / '.ai-evo').symlink_to(engine, target_is_directory=True)
+                        project = root / '.ai-evo-prj'
+                        if existing_ignores:
+                            project.mkdir()
+                            (root / '.gitignore').write_text('# Application rules\nlocal/\n')
+                            (project / '.gitignore').write_text('# Specification rules\nprivate/\n')
+                        adapter_path = engine / 'adapters' / f'{adapter_id}.yaml'
+                        original = adapter_path.read_text()
+                        data = yaml.safe_load(original)
+                        data['id'] = 'custom'
+                        adapter_path.write_text(yaml.safe_dump(data))
+                        def snapshot():
+                            return {str(p.relative_to(root)): p.read_bytes() if p.is_file() else None
+                                    for p in root.rglob('*') if '.git' not in p.relative_to(root).parts}
+                        before = snapshot()
+                        result = self.run_cli(root, 'init', '--namespace', 'abc', *arguments)
+                        self.assertEqual(1, result.returncode, result.stdout)
+                        self.assertIn('id must equal filename', result.stderr)
+                        self.assertIn(f'{adapter_id}.yaml', result.stderr)
+                        self.assertEqual('', result.stdout)
+                        self.assertEqual(before, snapshot())
+                        # Correcting the adapter must allow init to be retried without cleanup.
+                        adapter_path.write_text(original)
+                        result = self.run_cli(root, 'init', '--namespace', 'abc', *arguments)
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        self.assertEqual(0, self.run_cli(root, 'validate').returncode)
+                        self.add_command(root)
+                        adapter_path.write_text(yaml.safe_dump(data))
+                        for args in (('validate',), ('command', 'plan', 'abc-inspect', '--adapter', adapter_id)):
+                            result = self.run_cli(root, *args)
+                            self.assertEqual(1, result.returncode, result.stdout)
+                            self.assertIn('id must equal filename', result.stderr)
+
     def test_policy_arguments_match_execution_contract(self):
         temporary, root = self.repository()
         with temporary:

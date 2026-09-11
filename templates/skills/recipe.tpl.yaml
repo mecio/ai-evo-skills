@@ -1,5 +1,5 @@
 version: "1.0"
-name: <namespace>-<skill-name>
+name: <namespace>-recipe-<skill-name>
 executor: current
 
 inputs: {}

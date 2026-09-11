@@ -17,11 +17,53 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 - Move setup, authoring and execution details into dedicated guides; clarify mandatory policy enforcement
   and delegated prompt delivery, and keep release history in the changelog and release notes.
 
+### Changed — breaking recipe naming rule
+
+- Require `<namespace>-recipe-<name>` for shared, personal and nested recipes, including recipe names in
+  runtime snapshots. Atomic commands keep `<namespace>-<name>`; no `command-` prefix is added.
+- `create recipe <name>` adds the recipe marker in both collections and rejects already prefixed or
+  explicitly foreign full names with diagnostics. The complete name must remain at most 64 characters.
+- Reject legacy names without rewriting files or introducing aliases. Rename source directories, both
+  name fields, nested `uses` references and invocations manually, then regenerate plans and synchronize
+  each worktree. `sync` removes obsolete managed links and publishes the new names only.
+- Apply the recipe naming convention to bundled examples, schemas, templates, coordinator guidance,
+  fixtures and regression tests. See the [migration guide](docs/recipe-naming-migration.md).
+- Keep protocol `1.0`: field structures are unchanged; this is an intentionally incompatible beta naming
+  validation change. Engine version and tags remain unchanged until an explicitly requested release.
+
 ### Fixed
+
+- Reject cyclic publication directories and parent aliases with a path-specific CLI diagnostic instead
+  of a traceback during initialization, validation, planning and synchronization, before any writes.
 
 - Preserve cyclic or otherwise unresolvable unmanaged links during synchronization without blocking
   unrelated skills. Report collisions with desired skill names before writes, and retain removal of
   dangling managed links whose catalog entries were deleted.
+
+- Reject partial and malformed recipe `with` references wherever the `${{` marker occurs, before
+  planning or publication. Preserve complete typed references and ordinary literal inputs.
+- Validate command input `required` by presence and boolean type independently of `default`, consistently
+  with recipe input definitions. Reject invalid flags even when a fallback is supplied.
+
+- Deliver complete delegated prompts and supervisor requests even when pipe readers are slow.
+  Include supervisor startup and input transfer in the execution deadline, and honor cancellation
+  before native launch through an explicit startup gate. Preserve process-tree cleanup and caller isolation.
+
+- Share adapter schema and identity checks between `init` and ordinary validation. Reject an adapter ID
+  that differs from its filename before initialization writes any project files or ignore rules.
+
+- Apply shared publication-target validation during `init` before any writes, rejecting unusable paths,
+  external aliases and overlapping destinations without creating configuration or changing ignore files.
+
+- Maintain generated-link Git ignores for ordinary publication targets changed after `init`, as well
+  as symbolic targets. Preserve neighboring user files and read-only dry runs.
+- Reject external, non-directory and dangling publication targets during shared validation and planning,
+  before synchronization writes. Continue to allow missing directories with a usable parent.
+
+- Isolate delegated process supervision from the caller's child trees so unrelated descendants are
+  preserved even when created or orphaned during a step. Keep timeout, cancellation and orphan cleanup.
+- Ignore generated publications at the physical destination of symbolic client directories during
+  `sync`, including aliases added after initialization, without hiding neighboring user files.
 
 - Allow explicit `when.normalize: trim` to compare native CLI outputs with outer whitespace while preserving
   exact equality by default. Keep original outputs, journals and downstream inputs unchanged. The Acme example

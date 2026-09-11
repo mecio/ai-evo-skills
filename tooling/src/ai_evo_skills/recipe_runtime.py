@@ -11,6 +11,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
 from .execution import ExecutionError, validate_plan, validate_step_consistency
+from .naming import recipe_name_error
 
 
 @lru_cache(maxsize=1)
@@ -32,6 +33,10 @@ def runtime_validator() -> Draft202012Validator:
 
 
 def validate_request(request: Any) -> None:
+    if isinstance(request, dict) and isinstance(request.get('plan'), dict):
+        name = request['plan'].get('recipe')
+        if isinstance(name, str) and (diagnostic := recipe_name_error(name)):
+            raise ExecutionError(diagnostic)
     errors = list(runtime_validator().iter_errors(request))
     if errors:
         details = '\n'.join(f"- {'.'.join(map(str, e.absolute_path)) or 'request'}: {e.message}" for e in errors)

@@ -20,6 +20,7 @@ from .yaml_loading import load_strict_yaml
 from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 from .recipe_runtime import advance_recipe, validate_recipe_snapshot
+from .naming import recipe_name_error
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -86,6 +87,15 @@ def schema_errors(instance: Any, schema_path: Path, label: Path) -> list[str]:
     return errors
 
 
+def adapter_errors(data: Any, engine: Path, adapter_id: str) -> list[str]:
+    """Keep adapter schema and identity checks consistent across CLI entry points."""
+    path = engine / "adapters" / f"{adapter_id}.yaml"
+    errors = schema_errors(data, engine / "schemas/adapter.schema.json", path)
+    if not errors and data["id"] != adapter_id:
+        errors.append(f"{path}: id must equal filename (expected {adapter_id!r}, found {data['id']!r})")
+    return errors
+
+
 def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     text = path.read_text(encoding="utf-8")
     match = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.S)
@@ -133,7 +143,9 @@ def validate_inputs(inputs: Any, label: str) -> list[str]:
             errors.append(f"{label}.{name}: unsupported keys")
         if not isinstance(spec.get("description"), str) or not spec.get("description"):
             errors.append(f"{label}.{name}: description is required")
-        required, default = spec.get("required") is True, "default" in spec
+        required, default = "required" in spec, "default" in spec
+        if required and spec["required"] is not True:
+            errors.append(f"{label}.{name}: required must be the boolean true")
         if required == default:
             errors.append(f"{label}.{name}: declare exactly one of required: true or a string default")
         if default and not isinstance(spec["default"], str):
@@ -157,6 +169,46 @@ def is_within(path: Path, root: Path) -> bool:
     resolved_path = path.resolve(strict=False)
     resolved_root = root.resolve(strict=False)
     return resolved_path == resolved_root or resolved_root in resolved_path.parents
+
+
+def target_path_errors(repo: Path, skills: Path, targets: list[dict[str, Any]], config_path: Path) -> list[str]:
+    """Check publication destinations before init, planning or synchronization writes."""
+    errors: list[str] = []
+    target_ids = [target["id"] for target in targets]
+    configured_target_paths = [repo / target["path"] for target in targets]
+    target_paths: list[Path] = []
+    for path in configured_target_paths:
+        try:
+            # Check the existing prefix first: a cyclic alias is not a usable
+            # directory, even on Python versions with permissive resolve().
+            require_directory_path(path)
+            target_paths.append(path.resolve(strict=False))
+        except (EvoError, OSError, RuntimeError) as exc:
+            errors.append(f"{config_path}: invalid publication target {path}: {exc}")
+    if errors:
+        return errors
+    if len(target_ids) != len(set(target_ids)):
+        errors.append(f"{config_path}: target ids must be unique")
+    if len(target_paths) != len(set(target_paths)):
+        errors.append(f"{config_path}: target paths must be unique after resolving filesystem aliases")
+    # Keep lexical containment checks too: a previously published skill symlink
+    # can resolve an otherwise nested target into a different directory tree.
+    for index, path in enumerate(configured_target_paths):
+        if repo not in target_paths[index].parents:
+            errors.append(f"{path}: target directory resolves outside the Git worktree")
+        for source in (skills / "catalog", skills / "custom"):
+            pairs = ((path, source), (target_paths[index], source.resolve(strict=False)))
+            if any(target == origin or target in origin.parents or origin in target.parents
+                   for target, origin in pairs):
+                errors.append(f"{config_path}: target path must not overlap skill sources: {path} and {source}")
+        for other_index in range(index + 1, len(configured_target_paths)):
+            other = configured_target_paths[other_index]
+            resolved, resolved_other = target_paths[index], target_paths[other_index]
+            if (path in other.parents or other in path.parents
+                    or resolved in resolved_other.parents or resolved_other in resolved.parents):
+                errors.append(f"{config_path}: target paths must not overlap: {path} and {other}")
+
+    return errors
 
 
 def load_context(require_config: bool = True, *, for_creation: bool = False) -> tuple[Context | None, list[str]]:
@@ -224,6 +276,8 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 name = path.parent.name
                 if not NAME_RE.fullmatch(name) or len(name) > 64 or not name.startswith(namespace + "-"):
                     errors.append(f"{path.parent}: invalid namespaced skill name")
+                if root.name == "recipes" and (diagnostic := recipe_name_error(name, namespace)):
+                    errors.append(f"{path.parent}: {diagnostic}")
                 if name in registry:
                     errors.append(f"{path}: duplicate skill name {name}")
                 registry[name] = Skill(name, "command" if root.name == "commands" else "recipe", path, {})
@@ -237,6 +291,11 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             metadata = front.get("metadata") if isinstance(front.get("metadata"), dict) else {}
             kind = metadata.get("ai-evo-kind")
             expected_kind = "command" if root.name == "commands" else "recipe"
+            if expected_kind == "recipe":
+                candidates = dict.fromkeys((path.parent.name, name)) if isinstance(name, str) else (path.parent.name,)
+                for candidate in candidates:
+                    if diagnostic := recipe_name_error(candidate, namespace):
+                        errors.append(f"{path}: {diagnostic}")
             if name != path.parent.name:
                 errors.append(f"{path}: frontmatter name must equal directory name")
             if not isinstance(name, str) or not NAME_RE.fullmatch(name) or len(name) > 64:
@@ -316,6 +375,9 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 else:
                     try:
                         recipe = load_yaml(recipe_path)
+                        if isinstance(recipe, dict) and isinstance(recipe.get("name"), str):
+                            if diagnostic := recipe_name_error(recipe["name"], namespace):
+                                errors.append(f"{recipe_path}: {diagnostic}")
                         recipe_validation = schema_errors(recipe, engine / "schemas/recipe.schema.json", recipe_path)
                         errors += recipe_validation
                         if not recipe_validation and isinstance(recipe, dict):
@@ -375,15 +437,13 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             continue
         try:
             data = load_yaml(path)
-            validation = schema_errors(data, engine / "schemas/adapter.schema.json", path)
+            validation = adapter_errors(data, engine, adapter_id)
             errors += validation
             if isinstance(data, dict) and isinstance(data.get("id"), str) and not validation:
                 adapter_paths = [data["project-skill-path"], data["project-entrypoint"]["path"], data["project-entrypoint"]["template"]]
                 if any(Path(value).is_absolute() or ".." in Path(value).parts or Path(value) == Path(".") for value in adapter_paths):
                     errors.append(f"{path}: adapter paths must be relative child paths and may not contain ..")
                     continue
-                if data["id"] != adapter_id:
-                    errors.append(f"{path}: id must equal filename")
                 adapters[data["id"]] = data
         except EvoError as exc:
             errors.append(str(exc))
@@ -402,27 +462,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
         elif adapter["project-entrypoint"]["must-reference"] not in entry.read_text(encoding="utf-8"):
             errors.append(f"{entry}: must reference {adapter['project-entrypoint']['must-reference']}")
 
-    target_ids = [target["id"] for target in config["targets"]]
-    configured_target_paths = [repo / target["path"] for target in config["targets"]]
-    target_paths = [path.resolve(strict=False) for path in configured_target_paths]
-    if len(target_ids) != len(set(target_ids)):
-        errors.append(f"{config_path}: target ids must be unique")
-    if len(target_paths) != len(set(target_paths)):
-        errors.append(f"{config_path}: target paths must be unique after resolving filesystem aliases")
-    # Keep lexical containment checks too: a previously published skill symlink
-    # can resolve an otherwise nested target into a different directory tree.
-    for index, path in enumerate(configured_target_paths):
-        for source in (skills / "catalog", skills / "custom"):
-            pairs = ((path, source), (target_paths[index], source.resolve(strict=False)))
-            if any(target == origin or target in origin.parents or origin in target.parents
-                   for target, origin in pairs):
-                errors.append(f"{config_path}: target path must not overlap skill sources: {path} and {source}")
-        for other_index in range(index + 1, len(configured_target_paths)):
-            other = configured_target_paths[other_index]
-            resolved, resolved_other = target_paths[index], target_paths[other_index]
-            if (path in other.parents or other in path.parents
-                    or resolved in resolved_other.parents or resolved_other in resolved.parents):
-                errors.append(f"{config_path}: target paths must not overlap: {path} and {other}")
+    errors += target_path_errors(repo, skills, config["targets"], config_path)
 
     known_adapters = {path.stem for path in (engine / "adapters").glob("*.yaml")}
     for skill in registry.values():
@@ -461,7 +501,11 @@ def validate_recipes(context: Context) -> list[str]:
             seen.add(sid)
             child = context.registry.get(used)
             if not child:
-                errors.append(f"{skill.path.parent / 'recipe.yaml'}: unknown skill {used}")
+                suggestion = recipe_name_error(used, context.config["namespace"])
+                candidate = context.config["namespace"] + "-recipe-" + used.partition('-')[2].removeprefix('recipe-')
+                renamed = context.registry.get(candidate)
+                hint = f"; {suggestion}" if suggestion and renamed and renamed.kind == "recipe" else ""
+                errors.append(f"{skill.path.parent / 'recipe.yaml'}: unknown skill {used}{hint}")
                 continue
             if child.kind == "recipe":
                 graph[skill.name].append(child.name)
@@ -481,8 +525,9 @@ def validate_recipes(context: Context) -> list[str]:
                 references["when.value"] = step["when"]["value"]
             for key, value in references.items():
                 variable = parse_variable(value)
-                if isinstance(value, str) and value.startswith("${{") and not variable:
-                    errors.append(f"{skill.name}.{sid}.{key}: invalid variable expression")
+                if isinstance(value, str) and "${{" in value and not variable:
+                    errors.append(f"{skill.name}.{sid}.{key}: invalid variable expression; "
+                                  "references must occupy the entire value (partial interpolation is unsupported)")
                 elif variable and variable[0] == "inputs" and variable[1] not in skill.inputs:
                     errors.append(f"{skill.name}.{sid}.{key}: unknown recipe input {variable[1]}")
                 elif variable and variable[0] == "steps" and variable[1] not in prior:
@@ -709,6 +754,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     context = validated_context()
     source_roots = [(context.skills / "catalog").resolve(), (context.skills / "custom").resolve()]
     actions: list[tuple[str, Path, Path | None]] = []
+    physical_ignores: list[str] = []
     for target in context.config["targets"]:
         desired = {
             name: skill
@@ -718,10 +764,12 @@ def cmd_sync(args: argparse.Namespace) -> None:
         }
         directory = context.repo / target["path"]
         resolved_directory = directory.resolve(strict=False)
-        if context.repo.resolve() not in resolved_directory.parents:
-            raise EvoError(f"{directory}: target directory resolves outside the Git worktree")
-        if directory.exists() and not directory.is_dir():
-            raise EvoError(f"{directory}: target path is not a directory")
+        # Every configured target can change after init, with or without aliases.
+        # Ignore only generated entries and escape Git's pattern metacharacters.
+        for name in desired:
+            relative = (resolved_directory / name).relative_to(context.repo).as_posix()
+            escaped = ''.join('\\' + char if char in '\\*?[] ' else char for char in relative)
+            physical_ignores.append('/' + escaped)
         for existing in directory.iterdir() if directory.exists() else []:
             if managed_link(existing, source_roots) and existing.name not in desired:
                 actions.append(("remove", existing, None))
@@ -735,6 +783,8 @@ def cmd_sync(args: argparse.Namespace) -> None:
                 else:
                     raise EvoError(f"{link}: collision with unmanaged file, directory or symlink")
             actions.append(("link", link, skill.path.parent))
+    if physical_ignores and not args.dry_run:
+        append_ignore(context.repo / '.gitignore', physical_ignores)
     for operation, path, target in actions:
         if args.dry_run:
             print(f"would {operation}: {path}" + (f" -> {target}" if target else ""))
@@ -785,8 +835,24 @@ def ensure_short_name(name: str, namespace: str) -> None:
 def cmd_create(args: argparse.Namespace) -> None:
     context = validated_context(for_creation=True)
     namespace, short = context.config["namespace"], args.name
+    if args.create_kind == "recipe":
+        if short.startswith(namespace + "-"):
+            suggestion = short[len(namespace) + 1:]
+            while suggestion.startswith("recipe-"):
+                suggestion = suggestion[len("recipe-"):]
+            raise EvoError(f"pass the unprefixed recipe name {suggestion!r}; {namespace}-recipe- is added automatically")
+        if short == "recipe" or short.startswith("recipe-"):
+            suggestion = short
+            while suggestion.startswith("recipe-"):
+                suggestion = suggestion[len("recipe-"):]
+            suggestion = suggestion if suggestion and suggestion != "recipe" else "<name>"
+            raise EvoError(f"pass the unprefixed recipe name {suggestion!r}; {namespace}-recipe- is added automatically")
+        foreign = re.fullmatch(r"([a-z]{3,6})-recipe-(.+)", short)
+        if foreign:
+            raise EvoError(f"recipe namespace {foreign[1]!r} does not match project namespace {namespace!r}; "
+                           f"pass the unprefixed name {foreign[2]!r}")
     ensure_short_name(short, namespace)
-    name = f"{namespace}-{short}"
+    name = f"{namespace}-recipe-{short}" if args.create_kind == "recipe" else f"{namespace}-{short}"
     if len(name) > 64:
         raise EvoError("namespaced artifact name must not exceed 64 characters")
     if args.create_kind in {"command", "recipe"} and name in context.registry:
@@ -872,7 +938,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         if not path.exists():
             raise EvoError(f"unknown adapter {adapter_id}")
         adapter = load_yaml(path)
-        validation = schema_errors(adapter, engine / "schemas/adapter.schema.json", path)
+        validation = adapter_errors(adapter, engine, adapter_id)
         if validation:
             raise EvoError("invalid adapter:\n" + "\n".join(validation))
         for key in ("project-skill-path",):
@@ -896,6 +962,9 @@ def cmd_init(args: argparse.Namespace) -> None:
             if not template.is_file():
                 raise EvoError(f"{template}: missing adapter entrypoint template")
             entries_to_create.append((entry, template))
+    target_errors = target_path_errors(repo, skills, targets, config_path)
+    if target_errors:
+        raise EvoError("invalid publication targets:\n" + "\n".join(target_errors))
     profile = skills / "config/effort-profiles" / f"{namespace}-default.yaml"
     generated = [
         (project / "entrypoint.md", engine / "templates/project/entrypoint.tpl.md"),
@@ -1141,6 +1210,8 @@ def cmd_recipe_advance(_: argparse.Namespace) -> None:
 
 def cmd_recipe_plan(args: argparse.Namespace) -> None:
     context = validated_context()
+    if diagnostic := recipe_name_error(args.name, context.config["namespace"]):
+        raise EvoError(diagnostic)
     root = context.registry.get(args.name)
     if not root or root.kind != "recipe":
         raise EvoError(f"unknown recipe {args.name}")
@@ -1211,7 +1282,9 @@ def parser() -> argparse.ArgumentParser:
     create = sub.add_parser("create"); create_sub = create.add_subparsers(dest="create_kind", required=True)
     for kind in ("command", "effort-profile"):
         item = create_sub.add_parser(kind); item.add_argument("name"); item.set_defaults(func=cmd_create)
-    recipe = create_sub.add_parser("recipe"); recipe.add_argument("name"); recipe.add_argument("--catalog", action="store_true"); recipe.set_defaults(func=cmd_create)
+    recipe = create_sub.add_parser("recipe")
+    recipe.add_argument("name", help="short name only; <namespace>-recipe- is added automatically")
+    recipe.add_argument("--catalog", action="store_true"); recipe.set_defaults(func=cmd_create)
     profile = sub.add_parser("profile"); profile_sub = profile.add_subparsers(dest="profile_command", required=True)
     resolve = profile_sub.add_parser("resolve"); resolve.add_argument("--adapter", required=True); resolve.add_argument("--ai-effort-profile", dest="profile"); resolve.set_defaults(func=cmd_profile_resolve)
     command_root = sub.add_parser("command"); command_sub = command_root.add_subparsers(dest="command_command", required=True)

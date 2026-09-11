@@ -47,7 +47,7 @@ A report.
 ```
 """
 VALID_RECIPE_SKILL = """---
-name: abc-loop
+name: abc-recipe-loop
 description: Demonstrates a recipe that is structurally valid but cyclic.
 metadata:
   ai-evo-kind: recipe
@@ -70,11 +70,11 @@ A result.
 - A result exists.
 ## Examples
 ```text
-/abc-loop
+/abc-recipe-loop
 ```
 """
 VALID_FLOW_SKILL = """---
-name: abc-flow
+name: abc-recipe-flow
 description: Coordinates an example command with a specific adapter.
 metadata:
   ai-evo-kind: recipe
@@ -97,7 +97,7 @@ A command result.
 - The command completes.
 ## Examples
 ```text
-/abc-flow
+/abc-recipe-flow
 ```
 """
 
@@ -271,23 +271,23 @@ class CliIntegrationTest(unittest.TestCase):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex")
-            recipe = root / ".ai-evo-prj/skills/custom/recipes/abc-loop"
+            recipe = root / ".ai-evo-prj/skills/custom/recipes/abc-recipe-loop"
             recipe.mkdir(parents=True)
             (recipe / "SKILL.md").write_text(VALID_RECIPE_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
-name: abc-loop
+name: abc-recipe-loop
 executor: current
 inputs: {}
 steps:
   - id: recurse
-    uses: abc-loop
+    uses: abc-recipe-loop
 outputs:
   result:
     value: "${{ steps.recurse.output }}"
 """)
             result = self.run_cli(root, "validate")
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("recipe cycle: abc-loop -> abc-loop", result.stderr)
+            self.assertIn("recipe cycle: abc-recipe-loop -> abc-recipe-loop", result.stderr)
 
     def test_malformed_child_inputs_report_validation_errors_without_traceback(self):
         for definition in ("broken", "null", "[]", "42"):
@@ -300,17 +300,17 @@ outputs:
                     command.write_text(VALID_COMMAND.replace(
                         "inputs: {}", f"inputs:\n  target: {definition}"
                     ))
-                    recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+                    recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
                     recipe.mkdir()
                     (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
                     (recipe / "recipe.yaml").write_text(yaml.safe_dump({
-                        "version": "1.0", "name": "abc-flow", "executor": "current",
+                        "version": "1.0", "name": "abc-recipe-flow", "executor": "current",
                         "inputs": {}, "steps": [{"id": "inspect", "uses": "abc-inspect"}],
                         "outputs": {"result": {"value": "${{ steps.inspect.output }}"}},
                     }))
                     for arguments in (
                         ("validate",), ("sync",),
-                        ("recipe", "plan", "abc-flow", "--adapter", "codex"),
+                        ("recipe", "plan", "abc-recipe-flow", "--adapter", "codex"),
                     ):
                         result = self.run_cli(root, *arguments)
                         self.assertNotEqual(0, result.returncode)
@@ -343,12 +343,12 @@ outputs:
                     self.initialize(root, "codex")
                     self.add_command(root)
                     for name, used, definitions in (
-                        ("abc-flow", "abc-inspect", inputs),
-                        ("abc-outer", "abc-flow", {}),
+                        ("abc-recipe-flow", "abc-inspect", inputs),
+                        ("abc-recipe-outer", "abc-recipe-flow", {}),
                     ):
                         recipe = root / ".ai-evo-prj/skills/catalog/recipes" / name
                         recipe.mkdir()
-                        (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL.replace("abc-flow", name))
+                        (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL.replace("abc-recipe-flow", name))
                         (recipe / "recipe.yaml").write_text(yaml.safe_dump({
                             "version": "1.0", "name": name, "executor": "current",
                             "inputs": definitions, "steps": [{"id": "run", "uses": used}],
@@ -356,7 +356,7 @@ outputs:
                         }))
                     for arguments in (
                         ("validate",), ("sync",),
-                        ("recipe", "plan", "abc-outer", "--adapter", "codex"),
+                        ("recipe", "plan", "abc-recipe-outer", "--adapter", "codex"),
                     ):
                         result = self.run_cli(root, *arguments)
                         self.assertNotEqual(0, result.returncode)
@@ -369,11 +369,11 @@ outputs:
         with temporary:
             self.initialize(root, "codex", "claude")
             self.add_command(root)
-            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
             recipe.mkdir(parents=True)
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
-name: abc-flow
+name: abc-recipe-flow
 executor: codex
 inputs: {}
 steps:
@@ -384,9 +384,9 @@ outputs:
     value: "${{ steps.inspect.output }}"
 """)
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
-            self.assertTrue((root / ".agents/skills/abc-flow").is_symlink())
-            self.assertFalse((root / ".claude/skills/abc-flow").exists())
-            rejected = self.run_cli(root, "recipe", "plan", "abc-flow", "--adapter", "claude")
+            self.assertTrue((root / ".agents/skills/abc-recipe-flow").is_symlink())
+            self.assertFalse((root / ".claude/skills/abc-recipe-flow").exists())
+            rejected = self.run_cli(root, "recipe", "plan", "abc-recipe-flow", "--adapter", "claude")
             self.assertNotEqual(0, rejected.returncode)
             self.assertIn("requires coordinator adapter codex", rejected.stderr)
 
@@ -536,11 +536,11 @@ outputs:
             self.add_command(root)
             command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
             command.write_text(command.read_text().replace("executor: current", "executor: claude"))
-            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
             recipe.mkdir(parents=True)
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
-name: abc-flow
+name: abc-recipe-flow
 executor: codex
 inputs: {}
 steps:
@@ -558,7 +558,7 @@ outputs:
             self.assertNotEqual(0, result.returncode)
             self.assertIn("requires disabled adapter claude", result.stderr)
             self.assertNotEqual(0, self.run_cli(root, "sync").returncode)
-            self.assertFalse((root / ".agents/skills/abc-flow").exists())
+            self.assertFalse((root / ".agents/skills/abc-recipe-flow").exists())
 
     def test_validate_ignores_unconfigured_adapter_files(self):
         with tempfile.TemporaryDirectory(prefix="ai-evo-adapter-test.") as temporary:
@@ -661,7 +661,7 @@ outputs:
         cases = (
             ("catalog/recipes", ("recipe", "inspect")),
             ("catalog/recipes", ("recipe", "inspect", "--catalog")),
-            ("catalog/recipes", ("command", "flow")),
+            ("catalog/recipes", ("command", "recipe-flow")),
             ("catalog/recipes", ("recipe", "flow")),
             ("custom/recipes", ("recipe", "flow", "--catalog")),
         )
@@ -672,11 +672,14 @@ outputs:
                     self.initialize(root, "codex")
                     self.add_command(root)
                     skills = root / ".ai-evo-prj/skills"
-                    recipe = skills / collection / "abc-flow"
+                    collision_command = skills / "catalog/commands/abc-recipe-inspect"
+                    collision_command.mkdir()
+                    (collision_command / "SKILL.md").write_text(VALID_COMMAND.replace("abc-inspect", "abc-recipe-inspect"))
+                    recipe = skills / collection / "abc-recipe-flow"
                     recipe.mkdir()
                     (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
                     (recipe / "recipe.yaml").write_text(yaml.safe_dump({
-                        "version": "1.0", "name": "abc-flow", "executor": "current",
+                        "version": "1.0", "name": "abc-recipe-flow", "executor": "current",
                         "inputs": {}, "steps": [{"id": "run", "uses": "abc-inspect"}],
                         "outputs": {"result": {"value": "${{ steps.run.output }}"}},
                     }))
@@ -711,7 +714,7 @@ outputs:
             (engine / "templates/skills/recipe.tpl.yaml").unlink()
             result = self.run_cli(root, "create", "recipe", "flow")
             self.assertNotEqual(0, result.returncode)
-            self.assertFalse((root / ".ai-evo-prj/skills/custom/recipes/abc-flow").exists())
+            self.assertFalse((root / ".ai-evo-prj/skills/custom/recipes/abc-recipe-flow").exists())
 
     def test_recipe_plan_uses_typed_step_output_references(self):
         temporary, root = self.repository()
@@ -724,11 +727,11 @@ outputs:
             path = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
             path.parent.mkdir(parents=True)
             path.write_text(command)
-            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-flow"
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
             recipe.mkdir(parents=True)
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
-name: abc-flow
+name: abc-recipe-flow
 executor: codex
 inputs: {}
 steps:
@@ -742,7 +745,7 @@ outputs:
   result:
     value: "${{ steps.second.output }}"
 """)
-            result = self.run_cli(root, "recipe", "plan", "abc-flow", "--adapter", "codex")
+            result = self.run_cli(root, "recipe", "plan", "abc-recipe-flow", "--adapter", "codex")
             self.assertEqual(0, result.returncode, result.stderr)
             plan = json.loads(result.stdout)
             reference = {"type": "ai-evo-step-output", "step": "first"}

@@ -184,7 +184,8 @@
         },
         "recipe": {
           "type": "string",
-          "minLength": 1
+          "maxLength": 64,
+          "pattern": "^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$"
         },
         "profile": {
           "type": "object",

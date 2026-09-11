@@ -1,5 +1,5 @@
 ---
-name: <namespace>-<skill-name>
+name: <namespace>-recipe-<skill-name>
 description: "TODO: explain when the AI must use this recipe and what final result it produces."
 metadata:
   ai-evo-kind: recipe
@@ -18,7 +18,7 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Procedure
 
-1. Run `.ai-evo/bin/ai-evo-skills recipe plan <namespace>-<skill-name>` with the current adapter, the received
+1. Run `.ai-evo/bin/ai-evo-skills recipe plan <namespace>-recipe-<skill-name>` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
 2. Keep the complete plan and an initially empty ordered `results` array. Before each step, send
    `{"plan": <complete plan>, "results": <recorded results>}` as JSON on stdin to
@@ -51,5 +51,5 @@ TODO
 ## Examples
 
 ```text
-/<namespace>-<skill-name>
+/<namespace>-recipe-<skill-name>
 ```

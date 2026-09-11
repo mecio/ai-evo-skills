@@ -43,15 +43,15 @@ class LiveExecutionTest(unittest.TestCase):
             ).replace('inputs: {}', 'inputs:\n  review:\n    description: Prior result\n    required: true').replace(
                 '1. Inspect.', '1. Run `.ai-evo/bin/ai-evo-skills command plan abc-verify --adapter codex`.\n2. For this regression, return CORRECTION_REQUIRED on the initial turn. When the core handoff correction field is true, return exactly CODEX_OK if the review includes CLAUDE_OK.'
             ))
-            recipe = root / '.ai-evo-prj/skills/catalog/recipes/abc-flow'
+            recipe = root / '.ai-evo-prj/skills/catalog/recipes/abc-recipe-flow'
             recipe.mkdir()
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             (recipe / 'recipe.yaml').write_text(yaml.safe_dump({
-                'version': '1.0', 'name': 'abc-flow', 'executor': 'codex', 'inputs': {},
+                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'codex', 'inputs': {},
                 'steps': [{'id': 'review', 'uses': 'abc-inspect'}, {'id': 'verify', 'uses': 'abc-verify', 'with': {'review': '${{ steps.review.output }}'}}],
                 'outputs': {'result': {'value': '${{ steps.verify.output }}'}},
             }))
-            result = self.run_cli(root, 'recipe', 'plan', 'abc-flow', '--adapter', 'codex')
+            result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')
             self.assertEqual(0, result.returncode, result.stderr)
             steps = json.loads(result.stdout)['execution']['steps']
             before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}

@@ -31,11 +31,11 @@ class RecipeConditionsTest(unittest.TestCase):
                 if name == 'aggregate':
                     content = content.replace('inputs: {}', 'inputs:\n  unit:\n    description: Unit result or skipped marker JSON\n    required: true')
                 path.write_text(content)
-            recipe = root / '.ai-evo-prj/skills/catalog/recipes/abc-flow'
+            recipe = root / '.ai-evo-prj/skills/catalog/recipes/abc-recipe-flow'
             recipe.mkdir(parents=True)
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             data = {
-                'version': '1.0', 'name': 'abc-flow', 'executor': 'current',
+                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'current',
                 'inputs': {'php': {'description': 'PHP context', 'default': 'php83'}},
                 'steps': [{'id': 'detect', 'uses': 'abc-detect'},
                           {'id': 'legacy', 'uses': 'abc-legacy'},
@@ -49,7 +49,7 @@ class RecipeConditionsTest(unittest.TestCase):
 
     def plan(self, root, path, data, adapter='codex', *inputs):
         path.write_text(yaml.safe_dump(data))
-        result = self.run_cli(root, 'recipe', 'plan', 'abc-flow', '--adapter', adapter, *inputs)
+        result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', adapter, *inputs)
         self.assertEqual(0, result.returncode, result.stderr)
         return json.loads(result.stdout)
 
@@ -138,7 +138,7 @@ class RecipeConditionsTest(unittest.TestCase):
                 with self.subTest(normalize=normalize):
                     data['steps'][2]['when']['normalize'] = normalize
                     path.write_text(yaml.safe_dump(data))
-                    for args in (('validate',), ('recipe', 'plan', 'abc-flow', '--adapter', 'codex')):
+                    for args in (('validate',), ('recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')):
                         result = self.run_cli(root, *args)
                         self.assertEqual(1, result.returncode)
                         self.assertIn('normalize', result.stderr)
@@ -154,7 +154,7 @@ class RecipeConditionsTest(unittest.TestCase):
                 with self.subTest(value=value):
                     data['steps'][2]['when']['value'] = value
                     path.write_text(yaml.safe_dump(data))
-                    for args in (('validate',), ('recipe', 'plan', 'abc-flow', '--adapter', 'codex')):
+                    for args in (('validate',), ('recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')):
                         result = self.run_cli(root, *args)
                         self.assertEqual(1, result.returncode)
                         self.assertIn('when.value', result.stderr)
@@ -176,7 +176,7 @@ class RecipeConditionsTest(unittest.TestCase):
                 with self.subTest(guard=guard):
                     data['steps'][2]['when'] = guard
                     path.write_text(yaml.safe_dump(data))
-                    for args in (('validate',), ('recipe', 'plan', 'abc-flow', '--adapter', 'claude')):
+                    for args in (('validate',), ('recipe', 'plan', 'abc-recipe-flow', '--adapter', 'claude')):
                         result = self.run_cli(root, *args)
                         self.assertEqual(1, result.returncode)
                         self.assertIn('when', result.stderr)
@@ -230,10 +230,10 @@ class RecipeConditionsTest(unittest.TestCase):
             config['targets'][1]['enabled'] = False
             config_path.write_text(yaml.safe_dump(config))
             path.write_text(yaml.safe_dump(data))
-            result = self.run_cli(root, 'recipe', 'plan', 'abc-flow', '--adapter', 'codex')
+            result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')
             self.assertEqual(1, result.returncode)
             self.assertIn('disabled adapter claude', result.stderr)
-            data['steps'][2]['uses'] = 'abc-flow'
+            data['steps'][2]['uses'] = 'abc-recipe-flow'
             path.write_text(yaml.safe_dump(data))
             result = self.run_cli(root, 'validate')
             self.assertEqual(1, result.returncode)
@@ -241,16 +241,16 @@ class RecipeConditionsTest(unittest.TestCase):
 
     def test_nested_recipe_conditions_gate_every_descendant(self):
         with self.project() as (root, path, data):
-            nested = path.parent.parent / 'abc-nested'
+            nested = path.parent.parent / 'abc-recipe-nested'
             nested.mkdir()
-            (nested / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL.replace('abc-flow', 'abc-nested'))
+            (nested / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL.replace('abc-recipe-flow', 'abc-recipe-nested'))
             (nested / 'recipe.yaml').write_text(yaml.safe_dump({
-                'version': '1.0', 'name': 'abc-nested', 'executor': 'current', 'inputs': {},
+                'version': '1.0', 'name': 'abc-recipe-nested', 'executor': 'current', 'inputs': {},
                 'steps': [{'id': 'first', 'uses': 'abc-unit'},
                           {'id': 'second', 'uses': 'abc-unit', 'when': {'value': '${{ steps.first.output }}', 'equals': 'go'}}],
                 'outputs': {'result': {'value': '${{ steps.second.output }}'}},
             }))
-            data['steps'][2]['uses'] = 'abc-nested'
+            data['steps'][2]['uses'] = 'abc-recipe-nested'
             data['steps'][2]['when']['normalize'] = 'trim'
             plan = self.plan(root, path, data)
             self.assertEqual(['detect', 'legacy', 'unit.first', 'unit.second', 'aggregate'], [s['id'] for s in plan['execution']['steps']])

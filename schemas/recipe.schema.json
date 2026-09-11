@@ -7,7 +7,7 @@
   "required": ["version", "name", "executor", "inputs", "steps", "outputs"],
   "properties": {
     "version": { "const": "1.0" },
-    "name": { "$ref": "#/$defs/skillName" },
+    "name": { "$ref": "#/$defs/recipeName" },
     "executor": {
       "type": "string",
       "pattern": "^(current|[a-z][a-z0-9-]*)$"
@@ -61,6 +61,11 @@
     }
   },
   "$defs": {
+    "recipeName": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
     "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
     "skillName": {
       "type": "string",
