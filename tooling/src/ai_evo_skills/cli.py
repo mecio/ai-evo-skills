@@ -723,7 +723,8 @@ def cmd_sync(args: argparse.Namespace) -> None:
             path.unlink(missing_ok=True)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            relative = os.path.relpath(target, path.parent)
+            # Relative symlinks are interpreted from the physical parent directory.
+            relative = os.path.relpath(target, path.parent.resolve())
             path.symlink_to(relative, target_is_directory=True)
             print(f"linked: {path} -> {relative}")
     if not actions:
