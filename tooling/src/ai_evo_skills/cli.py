@@ -991,6 +991,88 @@ def cmd_profile_resolve(args: argparse.Namespace) -> None:
     print(json.dumps(profile_payload(context, args.profile, args.adapter), indent=2))
 
 
+def resolved_handoff(skill: Skill, recipe: bool) -> dict[str, Any]:
+    return {
+        "type": "ai-evo-resolved-command",
+        "version": PROTOCOL_VERSION,
+        "planning": {"command": "resolved", "recipe": "resolved" if recipe else "not-applicable"},
+        "allow_planning": False,
+        "skill_content": skill.path.read_text(encoding="utf-8"),
+    }
+
+
+def cmd_command_execute(args: argparse.Namespace) -> None:
+    """Consume a trusted local plan without reading or planning the catalog again."""
+    try:
+        step = json.load(sys.stdin)
+    except (ValueError, OSError) as exc:
+        raise EvoError(f"invalid execution plan JSON: {exc}") from exc
+    if not isinstance(step, dict):
+        raise EvoError("execution plan must be an object")
+    handoff, application, inputs = step.get("handoff"), step.get("application"), step.get("with")
+    if (
+        not isinstance(handoff, dict)
+        or handoff.get("type") != "ai-evo-resolved-command"
+        or handoff.get("version") != PROTOCOL_VERSION
+        or handoff.get("allow_planning") is not False
+        or handoff.get("planning") not in (
+            {"command": "resolved", "recipe": "resolved"},
+            {"command": "resolved", "recipe": "not-applicable"},
+        )
+        or not isinstance(handoff.get("skill_content"), str)
+    ):
+        raise EvoError("execution requires a resolved command handoff")
+    if not isinstance(inputs, dict) or not all(isinstance(value, str) for value in inputs.values()):
+        raise EvoError("resolve all step output references to string inputs before execution")
+    if not isinstance(application, dict) or application.get("mode") != "delegated":
+        raise EvoError("command execute requires a delegated application")
+    command, options = application.get("command"), application.get("cli_arguments")
+    if not all(isinstance(values, list) and all(isinstance(value, str) for value in values) for values in (command, options)) or not command:
+        raise EvoError("execution command and CLI arguments must be string arrays")
+    directory, delivery = application.get("working_directory"), application.get("prompt_delivery")
+    if not isinstance(directory, str) or not Path(directory).is_absolute():
+        raise EvoError("execution working directory must be absolute")
+    if delivery not in ("stdin", "argument-before-options", "argument-after-options"):
+        raise EvoError("invalid execution prompt delivery")
+    argv = [*command, *options]
+    if args.resume_session:
+        session = application.get("session", {})
+        if not isinstance(session, dict) or session.get("reuse") not in ("correction-only", "always"):
+            raise EvoError("the resolved profile forbids session reuse")
+        if session["reuse"] == "correction-only" and not args.correction:
+            raise EvoError("this profile permits resume only with --correction after a failed step")
+        resume = session.get("resume_arguments")
+        if not isinstance(resume, list) or not resume or not all(isinstance(value, str) for value in resume):
+            raise EvoError("this adapter does not define native session resume arguments")
+        if args.resume_session.startswith("-"):
+            raise EvoError("invalid session id")
+        argv.extend(value.replace("<session-id>", args.resume_session) for value in resume)
+    elif args.correction:
+        raise EvoError("--correction requires --resume-session")
+    envelope = {
+        "type": "ai-evo-execution-handoff",
+        "version": PROTOCOL_VERSION,
+        "instructions": [
+            "Execute this already planned command directly; do not invoke command plan or recipe plan.",
+            "The resolved plan supplies authoritative inputs, working directory, policy, profile and CLI arguments.",
+            "Skip planning and delegation instructions in skill_content; perform its task and return its result.",
+            "Do not remove AI_EVO_EXECUTION_HANDOFF or attempt to bypass the no-replanning guard.",
+        ],
+        "correction": args.correction,
+        "plan": step,
+    }
+    prompt = json.dumps(envelope, ensure_ascii=False)
+    if delivery == "argument-before-options":
+        argv = [*command, prompt, *argv[len(command):]]
+    elif delivery == "argument-after-options":
+        argv.append(prompt)
+    result = subprocess.run(
+        argv, cwd=directory, env={**os.environ, "AI_EVO_EXECUTION_HANDOFF": "resolved"},
+        input=prompt if delivery == "stdin" else None, text=True, check=False,
+    )
+    raise SystemExit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+
+
 def cmd_command_plan(args: argparse.Namespace) -> None:
     context = validated_context()
     skill = context.registry.get(args.name)
@@ -1002,6 +1084,7 @@ def cmd_command_plan(args: argparse.Namespace) -> None:
         "skill_path": str(skill.path),
         "with": resolve_inputs(skill.inputs, args.input),
         "application": command_application(context, skill, args.profile, args.adapter),
+        "handoff": resolved_handoff(skill, recipe=False),
     }
     print(json.dumps(payload, indent=2))
 
@@ -1032,7 +1115,7 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
             if child.kind == "recipe":
                 outputs[step["id"]] = expand(child, child_values, full_id)
             else:
-                plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter)})
+                plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter), "handoff": resolved_handoff(child, recipe=True)})
                 outputs[step["id"]] = step_output_reference(full_id)
         return resolve_value(skill.recipe["outputs"]["result"]["value"], values, outputs)
 
@@ -1062,6 +1145,7 @@ def parser() -> argparse.ArgumentParser:
     resolve = profile_sub.add_parser("resolve"); resolve.add_argument("--adapter", required=True); resolve.add_argument("--ai-effort-profile", dest="profile"); resolve.set_defaults(func=cmd_profile_resolve)
     command_root = sub.add_parser("command"); command_sub = command_root.add_subparsers(dest="command_command", required=True)
     command_plan = command_sub.add_parser("plan"); command_plan.add_argument("name"); command_plan.add_argument("--adapter", required=True); command_plan.add_argument("--ai-effort-profile", dest="profile"); command_plan.add_argument("--input", action="append", default=[]); command_plan.set_defaults(func=cmd_command_plan)
+    execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.set_defaults(func=cmd_command_execute)
     recipe_root = sub.add_parser("recipe"); recipe_sub = recipe_root.add_subparsers(dest="recipe_command", required=True)
     plan = recipe_sub.add_parser("plan"); plan.add_argument("name"); plan.add_argument("--adapter", required=True); plan.add_argument("--ai-effort-profile", dest="profile"); plan.add_argument("--input", action="append", default=[]); plan.set_defaults(func=cmd_recipe_plan)
     return root
@@ -1070,6 +1154,8 @@ def parser() -> argparse.ArgumentParser:
 def main() -> None:
     try:
         args = parser().parse_args()
+        if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute):
+            raise EvoError("handoff is already resolved: execute the supplied task without planning or delegating again")
         args.func(args)
     except (EvoError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)

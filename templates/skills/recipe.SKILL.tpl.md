@@ -20,8 +20,11 @@ The formal interface is defined in `recipe.yaml`.
 
 1. Run `.ai-evo/bin/ai-evo-skills recipe plan <namespace>-<skill-name>` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
-2. Read and execute each returned command `SKILL.md` in plan order. Before executing a step, replace every
-   `ai-evo-step-output` reference with the complete output produced by the referenced earlier step.
+2. Process returned steps in plan order. Replace each `ai-evo-step-output` reference in `with` with the complete
+   output of the earlier step. For delegated steps, send the complete resolved step JSON to
+   `.ai-evo/bin/ai-evo-skills command execute` on stdin. The core supplies the execution handoff; do not replan
+   children or ask delegated executors to invoke the planner. For current-mode steps, apply the resolved
+   handoff directly.
 3. Stop on the first failed step and return the declared recipe result.
 
 ## Expected output
