@@ -7,6 +7,9 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Reject duplicate YAML keys, including nested policies and skill frontmatter, before values can be
+  overwritten. Preserve ordinary aliases and explicit overrides of merged defaults.
+
 - Explicitly use Codex `workspace-write` sandbox for `read-write` commands, including network-disabled runs.
 - Report profile resume permission separately from native adapter support. Claude resume is reported as
   unavailable through the core; Codex supports it when permitted by the profile.

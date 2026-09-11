@@ -16,6 +16,7 @@ from jsonschema.exceptions import SchemaError
 import yaml
 
 from . import __version__
+from .yaml_loading import load_strict_yaml
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 
 PROTOCOL_VERSION = "1.0"
@@ -65,7 +66,7 @@ def repo_root() -> Path:
 
 def load_yaml(path: Path) -> Any:
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
+        return load_strict_yaml(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise EvoError(f"{path}: cannot read YAML: {exc}") from exc
 
@@ -88,7 +89,7 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     match = re.match(r"\A---\n(.*?)\n---\n(.*)\Z", text, re.S)
     if not match:
         raise EvoError(f"{path}: missing YAML frontmatter")
-    data = yaml.safe_load(match.group(1))
+    data = load_strict_yaml(match.group(1))
     if not isinstance(data, dict):
         raise EvoError(f"{path}: frontmatter must be a mapping")
     return data, match.group(2)
@@ -98,7 +99,7 @@ def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], str,
     blocks = re.findall(r"```yaml ai-evo-interface\n(.*?)\n```", body, re.S)
     if len(blocks) != 1:
         raise EvoError(f"{path}: command must contain exactly one yaml ai-evo-interface block")
-    data = yaml.safe_load(blocks[0])
+    data = load_strict_yaml(blocks[0])
     if not isinstance(data, dict) or set(data) != {"inputs", "executor", "execution-policy"}:
         raise EvoError(f"{path}: interface must contain inputs, executor and execution-policy")
     policy = data.get("execution-policy")
