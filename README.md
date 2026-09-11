@@ -247,7 +247,9 @@ must translate them into native CLI controls or planning stops. `auto` delegates
 For Claude Code, read-only commands use non-interactive permission denial, disable editing tools and expose Bash
 only for `.ai-evo/bin/ai-evo-git-read`. That wrapper offers argument-safe `status`, `diff`, `show`, `log`,
 `rev-parse`, `merge-base` and `ls-files` operations. This preserves branch and diff inspection without exposing
-arbitrary shell commands. Network-disabled commands also disable web tools and unconfigured MCP servers while
+arbitrary shell commands. The wrapper disables configured Git conversion filters and compares unfiltered
+worktree content; `status` and `diff` omit submodules to avoid running helpers from nested repositories.
+Network-disabled commands also disable web tools and unconfigured MCP servers while
 retaining native edit tools when the workspace policy is read-write.
 
 Built-in adapters declare `prompt-delivery: stdin`. The execution plan exposes this as

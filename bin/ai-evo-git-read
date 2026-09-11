@@ -39,11 +39,25 @@ def main() -> None:
         "-c", "log.showSignature=false",
         "-c", "diff.submodule=short",
     ]
+    # Diff may run clean/process filters even with --no-textconv. Enumerate
+    # effective driver configuration (including includes), then override it
+    # through argv so neither config values nor driver names become shell code.
+    filters = subprocess.run(
+        [*prefix, "config", "--null", "--name-only", "--get-regexp",
+         r"^filter\..*\.(clean|smudge|process|required)$"],
+        env=environment, capture_output=True, text=True, check=False,
+    )
+    if filters.returncode not in (0, 1):
+        fail("cannot inspect Git filter configuration")
+    for key in dict.fromkeys(filters.stdout.split("\0")):
+        if key:
+            value = "false" if key.endswith(".required") else ""
+            prefix.extend(["-c", f"{key}={value}"])
 
     if operation == "status" and not arguments:
-        command = [*prefix, "status", "--short", "--branch", "--untracked-files=all"]
+        command = [*prefix, "status", "--short", "--branch", "--untracked-files=all", "--ignore-submodules=all"]
     elif operation == "diff" and len(arguments) <= 1:
-        command = [*prefix, "diff", "--no-ext-diff", "--no-textconv"]
+        command = [*prefix, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all"]
         if arguments:
             command.append(positional(arguments[0], "diff target"))
     elif operation == "show" and len(arguments) == 1:

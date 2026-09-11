@@ -378,6 +378,43 @@ outputs:
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertFalse(marker.exists(), result.stderr)
 
+    def test_git_wrapper_disables_clean_and_process_filters(self):
+        for driver in ("clean", "process"):
+            with self.subTest(driver=driver):
+                temporary, root = self.repository()
+                with temporary:
+                    def git(*arguments):
+                        return subprocess.run(
+                            ["git", *arguments], cwd=root, text=True,
+                            capture_output=True, check=True,
+                        )
+
+                    git("config", "user.name", "Test")
+                    git("config", "user.email", "test@example.test")
+                    (root / ".gitattributes").write_text("data.txt filter=custom\n")
+                    (root / "data.txt").write_text("original\n")
+                    git("add", ".gitattributes", "data.txt")
+                    git("commit", "-qm", "Initial")
+                    helper = root / "filter-helper"
+                    helper.write_text("#!/bin/sh\ntouch unexpected-write\ncat\n")
+                    helper.chmod(0o755)
+                    included = root / "filters.config"
+                    included.write_text(
+                        f'[filter "custom"]\n{driver} = {helper}\nrequired = true\n'
+                    )
+                    git("config", "include.path", str(included))
+                    (root / "data.txt").write_text("changed content\n")
+                    for operation in ("diff", "status"):
+                        result = subprocess.run(
+                            [str(ENGINE / "bin/ai-evo-git-read"), operation],
+                            cwd=root, text=True, capture_output=True,
+                        )
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        self.assertIn("data.txt", result.stdout)
+                        if operation == "diff":
+                            self.assertIn("+changed content", result.stdout)
+                        self.assertFalse((root / "unexpected-write").exists())
+
     def test_init_reuses_shared_project_configuration_across_worktrees(self):
         with tempfile.TemporaryDirectory(prefix="ai-evo-shared-test.") as temporary:
             base = Path(temporary)
