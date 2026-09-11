@@ -163,6 +163,27 @@ class CliIntegrationTest(unittest.TestCase):
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
             self.assertFalse(link.is_symlink())
 
+    def test_equivalent_target_paths_fail_before_sync_writes(self):
+        for alias in (".agents/./skills", ".agents/skills/", "alias/skills"):
+            with self.subTest(alias=alias):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex", "claude")
+                    self.add_command(root)
+                    if alias.startswith("alias/"):
+                        (root / ".agents").mkdir()
+                        (root / "alias").symlink_to(root / ".agents", target_is_directory=True)
+                    config_path = root / ".ai-evo-skills.yaml"
+                    config = yaml.safe_load(config_path.read_text())
+                    config["targets"][1]["path"] = alias
+                    config_path.write_text(yaml.safe_dump(config))
+                    for arguments in (("validate",), ("sync", "--dry-run"), ("sync",)):
+                        result = self.run_cli(root, *arguments)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("target paths must be unique", result.stderr)
+                    self.assertFalse((root / ".agents/skills").exists())
+                    self.assertFalse((root / ".claude/skills").exists())
+
     def test_command_plan_enforces_restrictive_policy_with_delegation(self):
         temporary, root = self.repository()
         with temporary:

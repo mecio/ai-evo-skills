@@ -377,11 +377,11 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
             errors.append(f"{entry}: must reference {adapter['project-entrypoint']['must-reference']}")
 
     target_ids = [target["id"] for target in config["targets"]]
-    target_paths = [target["path"] for target in config["targets"]]
+    target_paths = [(repo / target["path"]).resolve(strict=False) for target in config["targets"]]
     if len(target_ids) != len(set(target_ids)):
         errors.append(f"{config_path}: target ids must be unique")
     if len(target_paths) != len(set(target_paths)):
-        errors.append(f"{config_path}: target paths must be unique")
+        errors.append(f"{config_path}: target paths must be unique after resolving filesystem aliases")
 
     known_adapters = {path.stem for path in (engine / "adapters").glob("*.yaml")}
     for skill in registry.values():
