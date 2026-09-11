@@ -1,6 +1,6 @@
 ---
 name: <namespace>-<skill-name>
-description: TODO: explain when the AI must use this atomic command and what result it produces.
+description: "TODO: explain when the AI must use this atomic command and what result it produces."
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"

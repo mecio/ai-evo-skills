@@ -152,7 +152,7 @@ def is_within(path: Path, root: Path) -> bool:
     return resolved_path == resolved_root or resolved_root in resolved_path.parents
 
 
-def load_context(require_config: bool = True) -> tuple[Context | None, list[str]]:
+def load_context(require_config: bool = True, *, for_creation: bool = False) -> tuple[Context | None, list[str]]:
     errors: list[str] = []
     repo = repo_root()
     engine = repo / ".ai-evo"
@@ -210,6 +210,16 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
                 errors.append(f"{item}: missing SKILL.md")
         for path in sorted(root.glob("*/SKILL.md")):
             if path.parent.is_symlink() or path.is_symlink():
+                continue
+            if for_creation:
+                # Reserve names and validate storage without requiring draft content
+                # to be executable. Publishing and planning still validate everything.
+                name = path.parent.name
+                if not NAME_RE.fullmatch(name) or len(name) > 64 or not name.startswith(namespace + "-"):
+                    errors.append(f"{path.parent}: invalid namespaced skill name")
+                if name in registry:
+                    errors.append(f"{path}: duplicate skill name {name}")
+                registry[name] = Skill(name, "command" if root.name == "commands" else "recipe", path, {})
                 continue
             try:
                 front, body = parse_frontmatter(path)
@@ -326,10 +336,14 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
     else:
         profile_paths = sorted(profiles_root.glob("*.yaml"))
     for path in profile_paths:
+        if for_creation:
+            continue
         try:
             data = load_yaml(path)
             validation = schema_errors(data, engine / "schemas/effort-profile.schema.json", path)
             errors += validation
+            if isinstance(data, dict) and "TODO" in str(data.get("description", "")):
+                errors.append(f"{path}: unresolved TODO placeholder")
             if isinstance(data, dict) and not validation:
                 name = data.get("name")
                 if name != path.stem:
@@ -342,7 +356,7 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
                     profiles[name] = data
         except EvoError as exc:
             errors.append(str(exc))
-    if namespace + "-default" not in profiles:
+    if not for_creation and namespace + "-default" not in profiles:
         errors.append(f"missing default effort profile {namespace}-default")
 
     adapters: dict[str, dict[str, Any]] = {}
@@ -515,8 +529,8 @@ def validate_recipe_executors(context: Context) -> list[str]:
     return errors
 
 
-def validated_context() -> Context:
-    context, errors = load_context()
+def validated_context(*, for_creation: bool = False) -> Context:
+    context, errors = load_context(for_creation=for_creation)
     if errors:
         raise EvoError("validation failed:\n" + "\n".join(f"- {error}" for error in errors))
     assert context is not None
@@ -732,10 +746,12 @@ def ensure_short_name(name: str, namespace: str) -> None:
 
 
 def cmd_create(args: argparse.Namespace) -> None:
-    context = validated_context()
+    context = validated_context(for_creation=True)
     namespace, short = context.config["namespace"], args.name
     ensure_short_name(short, namespace)
     name = f"{namespace}-{short}"
+    if len(name) > 64:
+        raise EvoError("namespaced artifact name must not exceed 64 characters")
     if args.create_kind in {"command", "recipe"} and name in context.registry:
         existing = context.registry[name]
         raise EvoError(f"skill name {name} is already used by {existing.path.parent}")
@@ -912,7 +928,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     profile_content = render(
         profile_template, {"namespace": namespace, "profile-name": "default"}
     ).replace(
-        "description: TODO: describe the resource and output policy.",
+        'description: "TODO: describe the resource and output policy."',
         "description: Default resource-conscious profile for this project.",
     )
     config = {"version": PROTOCOL_VERSION, "namespace": namespace, "targets": targets}

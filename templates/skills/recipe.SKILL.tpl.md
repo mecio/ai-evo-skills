@@ -1,6 +1,6 @@
 ---
 name: <namespace>-<skill-name>
-description: TODO: explain when the AI must use this recipe and what final result it produces.
+description: "TODO: explain when the AI must use this recipe and what final result it produces."
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"

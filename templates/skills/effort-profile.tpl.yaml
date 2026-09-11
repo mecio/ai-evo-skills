@@ -1,6 +1,6 @@
 version: "1.0"
 name: <namespace>-<profile-name>
-description: TODO: describe the resource and output policy.
+description: "TODO: describe the resource and output policy."
 reasoning: {level: medium}
 resources: {subagents: disabled, network: disabled}
 execution: {concurrent-on-same-worktree: false, reuse-session: correction-only}
