@@ -28,6 +28,8 @@ class SessionPolicyTest(unittest.TestCase):
                         result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'codex')
                         self.assertEqual(0, result.returncode, result.stderr)
                         app = json.loads(result.stdout)['application']
+                        sandbox_index = app['cli_arguments'].index('--sandbox')
+                        self.assertEqual('read-only' if workspace == 'read-only' else 'workspace-write', app['cli_arguments'][sandbox_index + 1])
                         self.assertEqual(reuse == 'never', '--ephemeral' in app['cli_arguments'])
                         self.assertEqual(reuse, app['session']['reuse'])
                         self.assertEqual(reuse != 'never', app['session']['resume_allowed'])

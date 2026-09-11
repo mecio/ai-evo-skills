@@ -593,6 +593,12 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
     policy_instructions: list[str] = []
     policy = skill.execution_policy or {}
     for dimension, value in policy.items():
+        if (dimension, value) == ("workspace", "read-write"):
+            translation = adapter["execution-policy-translation"].get("workspace-read-write")
+            if translation:
+                arguments.extend(translation["cli-arguments"])
+                policy_instructions.extend(translation.get("instructions", []))
+            continue
         if (dimension, value) not in {("workspace", "read-only"), ("network", "disabled")}:
             continue
         key = f"{dimension}-{value}"

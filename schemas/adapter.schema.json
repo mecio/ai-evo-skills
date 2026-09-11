@@ -67,6 +67,7 @@
     "execution-policy-translation": {
       "type": "object", "additionalProperties": false, "required": ["workspace-read-only", "network-disabled"],
       "properties": {
+        "workspace-read-write": { "$ref": "#/$defs/policyTranslation" },
         "workspace-read-only": { "$ref": "#/$defs/policyTranslation" },
         "network-disabled": { "$ref": "#/$defs/policyTranslation" }
       }

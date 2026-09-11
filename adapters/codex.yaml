@@ -24,6 +24,9 @@ session-translation:
   always: []
 
 execution-policy-translation:
+  workspace-read-write:
+    enforcement: native
+    cli-arguments: ["--sandbox", "workspace-write"]
   workspace-read-only:
     enforcement: native
     cli-arguments: ["--sandbox", "read-only"]
