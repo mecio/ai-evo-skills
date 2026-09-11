@@ -82,7 +82,7 @@
       "type": "object", "additionalProperties": false, "required": ["enforcement", "cli-arguments"],
       "properties": {
         "enforcement": { "const": "native" },
-        "cli-arguments": { "type": "array", "items": { "type": "string" } },
+        "cli-arguments": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "instructions": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
