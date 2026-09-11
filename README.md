@@ -157,10 +157,13 @@ compatible newer versions and review adapter changes when vendor flags change. W
 
 ## Install and initialize
 
-Clone a released engine once, then link it from an application repository:
+Check [GitHub Releases](https://github.com/mecio/ai-evo-skills/releases) for the latest stable release.
+If no stable release is available, choose the latest pre-release and review its release notes before installing.
+Replace `<release-tag>` below with the selected release's exact tag. Clone the engine once, then link it from
+an application repository:
 
 ```bash
-git clone --branch v0.1.0-beta.2 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
+git clone --branch '<release-tag>' https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
 cd /path/to/project
 ln -s /chosen/path/ai-evo-skills .ai-evo
 ./.ai-evo/bin/ai-evo-skills init --namespace abc --adapter codex --adapter claude
