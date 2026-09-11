@@ -16,6 +16,36 @@ class ProcessLifecycleTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
+    def test_timeout_reaps_process_with_non_utf8_name(self):
+        from ai_evo_skills.execution import ExecutionTimeout, run_delegated
+        temporary, root = self.repository()
+        with temporary:
+            marker = root / 'named.pid'
+            child = (
+                "import ctypes,os,signal,time; from pathlib import Path; "
+                "assert ctypes.CDLL(None).prctl(15, b'bad) \\xff\\nname', 0, 0, 0) == 0; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path('named.pid').write_text(str(os.getpid())); time.sleep(60)"
+            )
+            try:
+                with self.assertRaises(ExecutionTimeout):
+                    run_delegated([sys.executable, '-c', child], cwd=str(root),
+                                  env=os.environ.copy(), prompt=None, timeout=1)
+                self.assertTrue(marker.exists(), 'probe must start before the timeout')
+                pid = int(marker.read_text())
+                self.assertFalse(Path(f'/proc/{pid}').exists(), 'process must be terminated and reaped')
+            finally:
+                if marker.exists():
+                    pid = int(marker.read_text())
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        os.waitpid(pid, 0)
+                    except ChildProcessError:
+                        pass
+
     def test_timeout_and_termination_kill_descendants_even_when_the_leader_exits(self):
         for interrupt in (False, True):
             with self.subTest(interrupt=interrupt):

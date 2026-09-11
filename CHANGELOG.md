@@ -7,6 +7,7 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Read Linux process identities as bytes so non-UTF-8 process names cannot interrupt timeout cleanup.
 - Report non-string skill frontmatter keys with file diagnostics instead of a traceback.
 
 - Supervise delegated Linux process trees as a child subreaper, including detached and double-forked

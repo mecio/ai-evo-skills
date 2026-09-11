@@ -22,11 +22,12 @@ def _children(pid: int) -> set[int]:
     return children
 
 
-def _birth(pid: int) -> str | None:
+def _birth(pid: int) -> bytes | None:
     try:
         # comm can contain spaces and closing parentheses; fields after its last
         # closing parenthesis start with state (field 3), then ppid (field 4).
-        return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+        # Linux process names are arbitrary bytes, not necessarily UTF-8.
+        return Path(f'/proc/{pid}/stat').read_bytes().rsplit(b')', 1)[1].split()[19]
     except (FileNotFoundError, ProcessLookupError):
         return None
 
@@ -41,7 +42,7 @@ class ProcessTree:
 
     def __init__(self) -> None:
         self.owner = os.getpid()
-        self.handles: dict[int, tuple[str, int]] = {}
+        self.handles: dict[int, tuple[bytes, int]] = {}
         self.existing = {pid: _birth(pid) for pid in _children(self.owner)}
         self.libc = ctypes.CDLL(None, use_errno=True)
         self.previous = ctypes.c_int()
