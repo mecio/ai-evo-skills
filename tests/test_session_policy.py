@@ -33,3 +33,22 @@ class SessionPolicyTest(unittest.TestCase):
                         self.assertEqual(reuse == 'never', '--ephemeral' in app['cli_arguments'])
                         self.assertEqual(reuse, app['session']['reuse'])
                         self.assertEqual(reuse != 'never', app['session']['resume_allowed'])
+
+    def test_resume_requires_both_profile_permission_and_adapter_support(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex', 'claude')
+            self.add_command(root)
+            profile_path = root / '.ai-evo-prj/skills/config/effort-profiles/abc-default.yaml'
+            profile = yaml.safe_load(profile_path.read_text())
+            for reuse in ('never', 'correction-only', 'always'):
+                profile['execution']['reuse-session'] = reuse
+                profile_path.write_text(yaml.safe_dump(profile))
+                for adapter in ('codex', 'claude'):
+                    with self.subTest(reuse=reuse, adapter=adapter):
+                        result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', adapter)
+                        self.assertEqual(0, result.returncode, result.stderr)
+                        session = json.loads(result.stdout)['application']['session']
+                        self.assertEqual(reuse != 'never', session['resume_permitted'])
+                        self.assertEqual(adapter == 'codex', session['resume_supported'])
+                        self.assertEqual(reuse != 'never' and adapter == 'codex', session['resume_allowed'])

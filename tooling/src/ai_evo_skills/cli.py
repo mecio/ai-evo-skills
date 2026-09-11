@@ -630,7 +630,9 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
         "execution_policy": policy,
         "session": {
             "reuse": reuse,
-            "resume_allowed": reuse != "never",
+            "resume_permitted": reuse != "never",
+            "resume_supported": bool(adapter["invocation"].get("resume-arguments")),
+            "resume_allowed": reuse != "never" and bool(adapter["invocation"].get("resume-arguments")),
             "corrections_only": reuse == "correction-only",
             "resume_arguments": adapter["invocation"].get("resume-arguments"),
         },
