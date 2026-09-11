@@ -7,6 +7,9 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Reject adapter resume templates missing `<session-id>` during validation, consistently with the
+  execution snapshot schema, instead of producing unusable plans.
+
 - Reject duplicate YAML keys, including nested policies and skill frontmatter, before values can be
   overwritten. Preserve ordinary aliases and explicit overrides of merged defaults.
 
