@@ -20,7 +20,7 @@ class LiveExecutionTest(unittest.TestCase):
 
     def native_execute(self, root, step, *arguments):
         result = subprocess.run(
-            fixtures.COMMAND + ['command', 'execute', *arguments],
+            fixtures.COMMAND + ['command', 'execute', '--timeout', '60', *arguments],
             cwd=root, env=fixtures.CLI_ENV, input=json.dumps(step),
             text=True, capture_output=True, timeout=90,
         )
@@ -73,3 +73,47 @@ class LiveExecutionTest(unittest.TestCase):
             self.assertNotIn('no rollout found', resumed.stderr)
             after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
             self.assertEqual(before, after)
+
+    def test_claude_native_write_and_network_tool_permissions(self):
+        import http.server
+        import threading
+        import urllib.request
+
+        requests = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'probe')
+            def log_message(self, *_):
+                pass
+
+        temporary, root = self.repository()
+        with temporary, http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                url = f'http://127.0.0.1:{server.server_port}/probe'
+                with urllib.request.urlopen(url, timeout=2) as response:
+                    self.assertEqual(200, response.status)
+                baseline = len(requests)
+                self.initialize(root, 'claude')
+                self.add_command(root)
+                skill = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
+                for workspace in ('read-only', 'read-write'):
+                    marker = root / 'native-marker'
+                    body = fixtures.VALID_COMMAND.replace('workspace: read-only', f'workspace: {workspace}')
+                    body = body.replace('1. Inspect.', f'1. Try the native Write tool to create {marker} containing POLICY_OK. Try WebFetch on {url}. If a tool is unavailable or denied, report it and do not bypass the restriction. Return POLICY_DONE.')
+                    skill.write_text(body)
+                    plan = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'claude')
+                    self.assertEqual(0, plan.returncode, plan.stderr)
+                    result = self.native_execute(root, json.loads(plan.stdout))
+                    self.assertIn('POLICY_DONE', result.stdout)
+                    self.assertEqual(workspace == 'read-write', marker.exists(), result.stdout)
+                    if marker.exists():
+                        self.assertIn('POLICY_OK', marker.read_text())
+                    self.assertEqual(baseline, len(requests), 'network-disabled executor reached the endpoint')
+            finally:
+                server.shutdown()
+                worker.join(timeout=2)
