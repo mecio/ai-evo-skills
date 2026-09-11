@@ -293,6 +293,41 @@ outputs:
             self.assertNotEqual(0, rejected.returncode)
             self.assertFalse(output.exists())
 
+    def test_git_wrapper_does_not_run_configured_external_programs(self):
+        temporary, root = self.repository()
+        with temporary:
+            def git(*arguments, input=None):
+                return subprocess.run(
+                    ["git", *arguments], cwd=root, input=input,
+                    text=True, capture_output=True, check=True,
+                ).stdout.strip()
+
+            marker = root / "unexpected-write"
+            helper = root / "external-helper"
+            helper.write_text("#!/bin/sh\ntouch unexpected-write\nexit 1\n")
+            helper.chmod(0o755)
+            tree = git("mktree", input="")
+            commit = (
+                f"tree {tree}\n"
+                "author Test <test@example.test> 1700000000 +0000\n"
+                "committer Test <test@example.test> 1700000000 +0000\n"
+                "gpgsig -----BEGIN PGP SIGNATURE-----\n \n"
+                " ZmFrZQ==\n -----END PGP SIGNATURE-----\n\nTest\n"
+            )
+            oid = git("hash-object", "-t", "commit", "-w", "--stdin", input=commit)
+            git("update-ref", "HEAD", oid)
+            git("config", "log.showSignature", "true")
+            git("config", "gpg.program", str(helper))
+            git("config", "core.fsmonitor", str(helper))
+            for operation in (("log",), ("show", "HEAD"), ("status",)):
+                with self.subTest(operation=operation):
+                    result = subprocess.run(
+                        [str(ENGINE / "bin/ai-evo-git-read"), *operation],
+                        cwd=root, text=True, capture_output=True,
+                    )
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertFalse(marker.exists(), result.stderr)
+
     def test_init_reuses_shared_project_configuration_across_worktrees(self):
         with tempfile.TemporaryDirectory(prefix="ai-evo-shared-test.") as temporary:
             base = Path(temporary)
