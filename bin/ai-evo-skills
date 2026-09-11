@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${AI_EVO_EXECUTION_HANDOFF:-}" == resolved ]]; then
+    case "${1:-} ${2:-}" in
+        "command plan"|"recipe plan"|"command execute")
+            echo "error: handoff is already resolved: execute the supplied task without planning or delegating again" >&2
+            exit 1
+            ;;
+    esac
+fi
+
 skills_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONDONTWRITEBYTECODE=1
+if [[ -x "${skills_root}/.venv/bin/ai-evo-skills" ]]; then
+    exec "${skills_root}/.venv/bin/ai-evo-skills" "$@"
+fi
 exec uv run --frozen --project "${skills_root}" ai-evo-skills "$@"
