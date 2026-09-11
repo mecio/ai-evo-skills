@@ -199,6 +199,8 @@ def load_context(require_config: bool = True) -> tuple[Context | None, list[str]
                 errors.append(f"{item}: skill directories may not be symbolic links")
             elif not item.is_dir():
                 errors.append(f"{item}: skill collections may contain only skill directories")
+            elif (item / "SKILL.md").is_symlink():
+                errors.append(f"{item / 'SKILL.md'}: skill files may not be symbolic links")
             elif not (item / "SKILL.md").exists():
                 errors.append(f"{item}: missing SKILL.md")
         for path in sorted(root.glob("*/SKILL.md")):

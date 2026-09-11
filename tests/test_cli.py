@@ -443,6 +443,28 @@ outputs:
             self.assertNotEqual(0, self.run_cli(root, "sync").returncode)
             self.assertFalse((root / ".agents/skills/abc-inspect").exists())
 
+    def test_symbolic_skill_files_fail_without_removing_published_links(self):
+        for broken in (False, True):
+            with self.subTest(broken=broken):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex")
+                    self.add_command(root)
+                    self.assertEqual(0, self.run_cli(root, "sync").returncode)
+                    published = root / ".agents/skills/abc-inspect"
+                    original_target = os.readlink(published)
+                    skill = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+                    external = root / "external.md"
+                    if not broken:
+                        external.write_text(skill.read_text())
+                    skill.unlink()
+                    skill.symlink_to(external)
+                    for operation in ("validate", "sync"):
+                        result = self.run_cli(root, operation)
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertIn("skill files may not be symbolic links", result.stderr)
+                    self.assertEqual(original_target, os.readlink(published))
+
     def test_validate_rejects_symbolic_catalog_directories(self):
         temporary, root = self.repository()
         with temporary, tempfile.TemporaryDirectory(prefix="ai-evo-catalog-test.") as outside:
