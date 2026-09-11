@@ -1,16 +1,16 @@
 ---
-name: enabu-php-tests
-description: "Run legacy tests for PHP 7.2 and legacy plus Unit tests for PHP 8.3, then summarize."
+name: acme-recipe-reviewed-change
+description: "Run a tracked-change review and summarize its findings in sequence, using shared commands."
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
 ---
 
-# Test the configured PHP context
+# Review and report
 
 ## Purpose
 
-Run the selected test suites and distinguish skipped suites from executed results.
+Run a tracked-change review and summarize its findings in sequence, using shared commands.
 
 ## Interface
 
@@ -18,7 +18,7 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Procedure
 
-1. Run `.ai-evo/bin/ai-evo-skills recipe plan enabu-php-tests` with the current adapter, the received
+1. Run `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-reviewed-change` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
 2. Keep the complete plan and an initially empty ordered `results` array. Before each step, send
    `{"plan": <complete plan>, "results": <recorded results>}` as JSON on stdin to
@@ -29,7 +29,7 @@ The formal interface is defined in `recipe.yaml`.
    for delegated mode, or apply its resolved handoff directly for current mode. Do not replan children.
 4. Record success as `{"step": "<id>", "status": "succeeded", "output": "<complete output>"}`. Preserve
    whitespace. A skipped upstream output is passed to command inputs as JSON text describing the skip;
-   aggregation commands must interpret that text as an omitted branch, not a successful test result.
+   the reporting command must describe that state as a skipped review, never as a completed review.
 5. On failure, record `{"step": "<id>", "status": "failed", "exit_code": <nonzero code>}` and stop.
    Never execute later steps after a failure or a runtime validation error. A skip is not a failure.
 6. Repeat `recipe advance` until `complete`, then return its `output` unchanged, including a structured
@@ -38,18 +38,21 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Expected output
 
-Run the selected test suites and distinguish skipped suites from executed results.
+The final Markdown report produced by `acme-report-review`.
 
 ## Constraints
 
-- Run the selected test suites and distinguish skipped suites from executed results.
+- Run steps sequentially and stop on failure.
+- Preserve the review output when passing it to the reporting command.
 
 ## Success criteria
 
-- Run the selected test suites and distinguish skipped suites from executed results.
+- The review completes before reporting starts.
+- The final report retains findings and verification limits.
 
 ## Examples
 
 ```text
-/enabu-php-tests
+$acme-recipe-reviewed-change
+/acme-recipe-reviewed-change
 ```

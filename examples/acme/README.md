@@ -1,0 +1,91 @@
+# Acme starter catalog
+
+A complete boilerplate with three commands and two recipes. Copy it into an initialized project to try
+shared prompts, input defaults, sequential composition and a conditional step. All skills use the `acme`
+namespace and work with either bundled adapter. `init` does not install this catalog automatically.
+
+## What is included?
+
+| Artifact | Purpose |
+|---|---|
+| [acme-detect-changes](catalog/commands/acme-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
+| [acme-review](catalog/commands/acme-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
+| [acme-report-review](catalog/commands/acme-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
+| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Always run review, then reporting. |
+| [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Detect changes, conditionally review security, then report the review or its skip. |
+
+Both recipes reuse the same review and reporting commands. Each recipe directory also contains a complete
+`SKILL.md` with the coordinator procedure. The catalog has no draft placeholders.
+
+## Copy into a project
+
+Use an engine checkout that contains this example and supports conditional recipes with `normalize: trim`.
+Follow the [installation guide](../../docs/first-skill.md#install-and-initialize), initializing with namespace
+`acme` and at least one of `codex` or `claude`. Run the following from that application repository, using a
+fresh catalog with none of these five names already present:
+
+```bash
+cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
+cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
+./.ai-evo/bin/ai-evo-skills validate
+./.ai-evo/bin/ai-evo-skills sync --dry-run
+./.ai-evo/bin/ai-evo-skills sync
+```
+
+If you already created `acme-review` from the tutorial, choose which implementation to keep before copying;
+the copy commands overwrite matching files. This boilerplate gives `target` a `HEAD` default so the recipes
+and review command can be invoked without arguments. It reuses the default effort profile created by `init`.
+
+For another namespace, replace `acme-` consistently in directory names, frontmatter, planner instructions,
+recipe names, `uses` references and invocation examples before validation. See the
+[authoring guide](../../docs/authoring.md) for naming and input contracts.
+
+## Try it
+
+Open your AI client in the application repository. In Codex:
+
+```text
+$acme-review
+$acme-recipe-reviewed-change
+$acme-recipe-review-security-if-changed
+```
+
+In Claude Code, replace the leading `$` with `/`. Each line is a separate invocation. Native AI execution
+requires an authenticated CLI and makes model requests.
+
+The ordinary recipe defaults to `target=HEAD` and `focus=correctness`; both can be overridden:
+
+```text
+$acme-recipe-reviewed-change target=main focus=security
+```
+
+The conditional recipe exposes only `target`, defaulting to `HEAD`. It fixes `focus: security` internally,
+as communicated by its name. To compare against another existing local ref:
+
+```text
+$acme-recipe-review-security-if-changed target=main
+```
+
+## How the condition behaves
+
+| Detector outcome | Review step | Report step |
+|---|---|---|
+| `changed` | Runs with `focus: security`. | Summarizes the review and its limits. |
+| `clean` | Skipped by `recipe advance`. | Explains that no review ran because the tracked diff was empty. |
+| Inspection failure or invalid token | Workflow stops. | Does not run. |
+
+`normalize: trim` permits outer whitespace such as `changed\n`; successful detector output is otherwise
+limited to `changed` or `clean`. The recipe's coordinator instructions require invalid tokens to be recorded
+as failures. The core then evaluates `when` and passes a skipped review to the report command as JSON text
+with `type: ai-evo-step-skipped`. The report must not describe skipped work as a passed review.
+
+The comparison uses tracked working-tree content against the chosen target. Untracked files and submodules
+are outside its scope. With `HEAD`, a clean tracked diff skips the conditional review; a tracked edit enables
+it. A missing target, including `HEAD` in a repository without commits, is an inspection failure.
+
+Commands request read-only workspace access and disabled network access. The detector and review use the
+bundled Git read wrapper; reporting consumes the prior output without repeating inspection. Keep the worktree
+stable during a run so detection and review see the same changes. This example demonstrates conditional AI
+orchestration; the prompts and reports remain tasks performed by the AI.
+
+For the full condition and journal semantics, see the [recipe runtime guide](../../docs/recipe-runtime.md).

@@ -4,30 +4,34 @@ Recipe orchestration remains the coordinator's responsibility. The core supplies
 condition evaluation and transitions; `recipe advance` never starts an AI process. Use the same flow with
 Codex or Claude as coordinator. Execution snapshots and journals are trusted local data, not a security boundary.
 
+Recipe names, including the root `plan.recipe`, must use `<namespace>-recipe-<name>`. Nested `uses` references
+name the full recipe; flattened executable steps still refer to atomic commands with their unchanged names.
+Migrate legacy recipe names and regenerate snapshots as described in the [migration guide](recipe-naming-migration.md).
+
 ## Authoring a condition
 
 ```yaml
 when:
-  value: "${{ steps.php_context.output }}"
-  equals: "php83"
+  value: "${{ steps.detect.output }}"
+  equals: "changed"
 ```
 
 `when` is optional and requires `value` and `equals`, with optional `normalize: trim`. `value` must be a complete reference to an
-existing recipe input (`${{ inputs.php }}`) or the output of a strictly earlier step. `equals` is a literal
+existing recipe input (`${{ inputs.change_state }}`) or the output of a strictly earlier step. `equals` is a literal
 string, including the empty string; it is never interpreted as an expression. No other operators, partial
 interpolation, Boolean expressions, regular expressions or executable expressions are supported.
 
 By default the comparison is exact equality of decoded Unicode strings. There is no trimming, newline conversion,
-case folding or Unicode normalization. `php83`, `php83\n` and ` php83` differ. JSON escape spelling does not
-matter: `"php83"` and `"\u0070hp83"` decode to the same string. Preserve complete successful step outputs.
+case folding or Unicode normalization. `changed`, `changed\n` and ` changed` differ. JSON escape spelling does not
+matter: `"changed"` and `"\u0063hanged"` decode to the same string. Preserve complete successful step outputs.
 
 To tolerate client-added outer whitespace, declare normalization explicitly:
 
 ```yaml
 when:
-  value: "${{ steps.php_context.output }}"
+  value: "${{ steps.detect.output }}"
   normalize: trim
-  equals: "php83"
+  equals: "changed"
 ```
 
 `trim` removes leading and trailing Unicode whitespace from the compared value (Python `str.strip()`),
@@ -37,8 +41,8 @@ normalization. The original output, journal, downstream inputs and final result 
 authoring and runtime validation. Each nested condition applies only its own normalization; skipped states
 remain structured and never become strings for comparison.
 
-The PHP example opts into `trim`: both `php83` and the native CLI output `php83\n` select Unit tests.
-The detector must still return only `php83` or `php72`, without explanations or Markdown fences.
+The Acme example opts into `trim`: both `changed` and the native CLI output `changed\n` enable the security review.
+The detector must still return only `changed` or `clean`, without explanations or Markdown fences.
 
 Both `validate` and `recipe plan` check references used by `when`. Strictly earlier output references exclude
 self-dependencies, forward dependencies and all step dependency cycles, including cycles mixing `with` and
@@ -51,11 +55,11 @@ Input references are resolved during planning. Output references remain typed ob
 
 ```json
 {
-  "id": "unit_tests",
-  "uses": "enabu-test-unit",
+  "id": "review",
+  "uses": "acme-review",
   "when": {
     "all": [
-      {"value": {"type": "ai-evo-step-output", "step": "php_context"}, "equals": "php83"}
+      {"value": {"type": "ai-evo-step-output", "step": "detect"}, "normalize": "trim", "equals": "changed"}
     ]
   }
 }
@@ -68,7 +72,7 @@ conditions already known from inputs. Consumers must support this capability and
 Conditions on nested recipe invocations apply to all expanded command descendants. Their `when.all` lists
 contain outer conditions followed by inner ones, in evaluation order. All must match. Evaluation short-circuits
 at the first false condition, so a skipped outer branch never requires evaluation of its inner conditions.
-Flattened ids remain dot-separated (`branch.unit_tests`). A nested recipe's output continues to alias its
+Flattened ids remain dot-separated (`branch.review`). A nested recipe's output continues to alias its
 declared final descendant; a skip marker identifies that actual descendant, not a synthetic container step.
 
 ## Coordinator loop
@@ -101,11 +105,11 @@ perform its resolved handoff directly. Do not replan either kind. Delegated chil
 Successful and failed records have these exact shapes:
 
 ```json
-{"step": "legacy_tests", "status": "succeeded", "output": "complete command output"}
+{"step": "detect", "status": "succeeded", "output": "complete command output"}
 ```
 
 ```json
-{"step": "legacy_tests", "status": "failed", "exit_code": 17}
+{"step": "detect", "status": "failed", "exit_code": 17}
 ```
 
 Use a nonzero exit code in 1–255; a current-mode failure without a native code can use 1. Stop immediately on
@@ -123,9 +127,9 @@ A skipped record is generated by the core:
 
 ```json
 {
-  "step": "unit_tests",
+  "step": "review",
   "status": "skipped",
-  "output": {"type": "ai-evo-step-skipped", "step": "unit_tests", "reason": "condition-false"}
+  "output": {"type": "ai-evo-step-skipped", "step": "review", "reason": "condition-false"}
 }
 ```
 
@@ -136,13 +140,13 @@ prepared for command arguments. The core checks that recorded skips agree with t
 An unconditional downstream command may read a skipped output. Since command inputs remain strings, the core
 serializes that marker as compact JSON text with sorted keys and no extra whitespace. Successful outputs pass
 through unchanged. An aggregation command must explicitly handle this documented marker format as an omitted
-branch and must not claim the skipped tests passed. There is no implicit empty string, `null` or success result.
+branch and must not claim the skipped review completed. There is no implicit empty string, `null` or success result.
 The typed journal remains authoritative: a successful command that happens to emit identical JSON is still a
 success string in the journal, so aggregators should consume only outputs from commands they trust.
 
 If the recipe's final reference points to a skipped step, `complete.output` is the structured marker itself,
 not a JSON string. References to potentially skipped outputs are legal; they use these rules consistently,
-including nested recipes. See the complete [PHP example](../examples/php-context/README.md).
+including nested recipes. See the complete [Acme example](../examples/acme/README.md).
 
 ## Schemas and compatibility
 
@@ -152,8 +156,9 @@ The authoring schema remains `schemas/recipe.schema.json`. Runtime requests are 
 lookup uses the network. Semantic checks additionally enforce reference ordering, session consistency,
 condition capability, journal order and fail-fast.
 
-On-disk protocol `1.0` remains unchanged: `when` is an optional, additive feature and existing recipes require
-no migration. Plans without conditions retain their existing fields and behavior; existing coordinators may
+On-disk protocol `1.0` remains unchanged: `when` is an optional, additive feature and does not itself require
+migration. The separate mandatory recipe naming rule does require the migration linked above.
+Plans without conditions retain their existing fields and behavior; existing coordinators may
 continue their old loop for those plans. Older engines reject `when` under their strict authoring schema;
 they cannot safely run conditional recipes. Update the engine and coordinator instructions together when
 adopting this capability. This is an unreleased compatible engine extension, not a newly published release.

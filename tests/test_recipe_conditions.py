@@ -340,37 +340,42 @@ class RecipeConditionsTest(unittest.TestCase):
             with self.assertRaisesRegex(ExecutionError, 'capability'):
                 advance_recipe({'plan': plan, 'results': []})
 
-    def test_php_example_validates_and_runs_both_branches_for_both_coordinators(self):
+    def test_acme_example_validates_and_runs_both_branches_for_both_coordinators(self):
         temporary, root = self.repository()
         with temporary:
-            initialized = self.run_cli(root, 'init', '--namespace', 'enabu', '--adapter', 'codex', '--adapter', 'claude')
+            initialized = self.run_cli(root, 'init', '--namespace', 'acme', '--adapter', 'codex', '--adapter', 'claude')
             self.assertEqual(0, initialized.returncode, initialized.stderr)
-            shutil.copytree(fixtures.ENGINE / 'examples/php-context/catalog',
+            shutil.copytree(fixtures.ENGINE / 'examples/acme/catalog',
                             root / '.ai-evo-prj/skills/catalog', dirs_exist_ok=True)
             checked = self.run_cli(root, 'validate')
             self.assertEqual(0, checked.returncode, checked.stderr)
             for adapter in ('codex', 'claude'):
-                planned = self.run_cli(root, 'recipe', 'plan', 'enabu-php-tests', '--adapter', adapter)
+                planned = self.run_cli(root, 'recipe', 'plan', 'acme-recipe-review-security-if-changed', '--adapter', adapter)
                 self.assertEqual(0, planned.returncode, planned.stderr)
                 plan = json.loads(planned.stdout)
-                for context in ('php72', 'php83'):
+                for context in ('clean', 'changed'):
                     results, executed = [], []
                     while True:
                         transition = advance_recipe({'plan': plan, 'results': results})
                         if transition['status'] == 'complete':
-                            self.assertEqual('summary', transition['output'])
+                            self.assertEqual('report', transition['output'])
                             break
                         if transition['status'] == 'skipped':
                             results.append(transition['result'])
                             continue
                         step = transition['step']
                         executed.append(step['id'])
-                        if step['id'] == 'summary' and context == 'php72':
-                            self.assertEqual(skipped_output('unit_tests'), json.loads(step['with']['unit']))
+                        if step['id'] in ('review', 'report'):
+                            self.assertEqual('security', step['with']['focus'])
+                        if step['id'] == 'report':
+                            if context == 'clean':
+                                self.assertEqual(skipped_output('review'), json.loads(step['with']['review']))
+                            else:
+                                self.assertEqual('review', step['with']['review'])
                         validate_plan(step)
-                        step['application']['command'] = [sys.executable, '-c', 'import sys; sys.stdout.write(' + repr(context + '\n' if step['id'] == 'php_context' else step['id']) + ')']
+                        step['application']['command'] = [sys.executable, '-c', 'import sys; sys.stdout.write(' + repr(context + '\n' if step['id'] == 'detect' else step['id']) + ')']
                         result = subprocess.run(fixtures.COMMAND + ['command', 'execute'], cwd=root,
                                                 env=fixtures.CLI_ENV, input=json.dumps(step), text=True, capture_output=True)
                         self.assertEqual(0, result.returncode, result.stderr)
                         results.append(self.result(step['id'], result.stdout))
-                    self.assertEqual(['php_context', 'legacy_tests'] + (['unit_tests'] if context == 'php83' else []) + ['summary'], executed)
+                    self.assertEqual(['detect'] + (['review'] if context == 'changed' else []) + ['report'], executed)

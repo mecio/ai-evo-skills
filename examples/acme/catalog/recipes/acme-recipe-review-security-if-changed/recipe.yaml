@@ -1,0 +1,30 @@
+version: "1.0"
+name: acme-recipe-review-security-if-changed
+executor: current
+inputs:
+  target:
+    description: Local Git commit or ref to compare with the tracked working tree, excluding submodules.
+    default: HEAD
+steps:
+  - id: detect
+    uses: acme-detect-changes
+    with:
+      target: "${{ inputs.target }}"
+  - id: review
+    uses: acme-review
+    when:
+      value: "${{ steps.detect.output }}"
+      normalize: trim
+      equals: changed
+    with:
+      target: "${{ inputs.target }}"
+      focus: security
+  - id: report
+    uses: acme-report-review
+    with:
+      review: "${{ steps.review.output }}"
+      target: "${{ inputs.target }}"
+      focus: security
+outputs:
+  result:
+    value: "${{ steps.report.output }}"

@@ -5,6 +5,18 @@
 Maintenance changes since `0.1.0-beta.2`; no new release or tag has been created.
 On-disk project protocol remains `1.0`. Regenerate execution snapshots when adopting these changes.
 
+### Documentation
+
+- Add an `acme` starter catalog with three reusable commands and two recipes, including a conditional security
+  review, parameter defaults, explicit skip reporting and copy instructions. Consolidate the bundled examples
+  into this catalog and update documentation and integration checks to use it.
+- Keep the README focused on the project overview and documentation entry points. Add a first-skill guide
+  with installation, a complete `acme` review example and a review/verification recipe illustration.
+- Explain how defaults and fixed specializations shorten skill and recipe invocations, with descriptive names
+  communicating the built-in target or review focus.
+- Move setup, authoring and execution details into dedicated guides; clarify mandatory policy enforcement
+  and delegated prompt delivery, and keep release history in the changelog and release notes.
+
 ### Fixed
 
 - Preserve cyclic or otherwise unresolvable unmanaged links during synchronization without blocking
@@ -12,8 +24,8 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
   dangling managed links whose catalog entries were deleted.
 
 - Allow explicit `when.normalize: trim` to compare native CLI outputs with outer whitespace while preserving
-  exact equality by default. Keep original outputs, journals and downstream inputs unchanged. The PHP example
-  now selects Unit tests for `php83` even when the client appends a newline.
+  exact equality by default. Keep original outputs, journals and downstream inputs unchanged. The Acme example
+  selects the security review for `changed` even when the client appends a newline.
 
 - Calculate published relative links from the physical client directory, including symbolic client paths.
 - Reject publication targets overlapping canonical or personal skill sources before any sync writes.

@@ -1,0 +1,25 @@
+version: "1.0"
+name: acme-recipe-reviewed-change
+executor: current
+inputs:
+  target:
+    description: Local Git commit or ref to compare with the tracked working tree, excluding submodules.
+    default: HEAD
+  focus:
+    description: Review area to emphasize, such as correctness or security.
+    default: correctness
+steps:
+  - id: review
+    uses: acme-review
+    with:
+      target: "${{ inputs.target }}"
+      focus: "${{ inputs.focus }}"
+  - id: report
+    uses: acme-report-review
+    with:
+      review: "${{ steps.review.output }}"
+      target: "${{ inputs.target }}"
+      focus: "${{ inputs.focus }}"
+outputs:
+  result:
+    value: "${{ steps.report.output }}"
