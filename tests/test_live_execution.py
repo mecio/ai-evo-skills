@@ -117,3 +117,38 @@ class LiveExecutionTest(unittest.TestCase):
             finally:
                 server.shutdown()
                 worker.join(timeout=2)
+
+    def test_claude_read_only_git_wrapper_is_actually_executed(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex', 'claude')
+            self.add_command(root)
+            skill = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
+            skill.write_text(fixtures.VALID_COMMAND.replace('executor: current', 'executor: claude').replace(
+                '1. Inspect.', '1. Invoke Bash with exactly `.ai-evo/bin/ai-evo-git-read status`. '
+                'Report the Git status and finish with GIT_REVIEW_DONE. Do not use other commands.'
+            ))
+            result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'codex')
+            self.assertEqual(0, result.returncode, result.stderr)
+            step = json.loads(result.stdout)
+            step['application']['cli_arguments'] += ['--output-format', 'stream-json', '--verbose']
+            before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*')
+                      if p.is_file() and '.git' not in p.parts}
+            executed = self.native_execute(root, step)
+            events = [json.loads(line) for line in executed.stdout.splitlines() if line.startswith('{')]
+            calls = [block for event in events if event.get('type') == 'assistant'
+                     for block in event['message']['content'] if block.get('type') == 'tool_use']
+            bash = [call for call in calls if call['name'] == 'Bash']
+            self.assertTrue(bash, executed.stdout)
+            for call in bash:
+                self.assertEqual('.ai-evo/bin/ai-evo-git-read status', call['input']['command'])
+                replies = [block for event in events if event.get('type') == 'user'
+                           for block in event['message']['content']
+                           if block.get('tool_use_id') == call['id']]
+                self.assertTrue(replies, executed.stdout)
+                self.assertTrue(all(not reply.get('is_error') for reply in replies), replies)
+            self.assertIn('GIT_REVIEW_DONE', events[-1]['result'])
+            self.assertFalse(events[-1].get('permission_denials'), events[-1])
+            after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*')
+                     if p.is_file() and '.git' not in p.parts}
+            self.assertEqual(before, after)

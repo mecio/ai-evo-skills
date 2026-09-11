@@ -38,7 +38,7 @@ execution-policy-translation:
       - --allowedTools
       - Read,Glob,Grep,WebSearch,WebFetch,Bash(.ai-evo/bin/ai-evo-git-read *)
       - --disallowedTools
-      - Edit,Write,NotebookEdit,MultiEdit
+      - Edit,Write,NotebookEdit
     instructions:
       - Use .ai-evo/bin/ai-evo-git-read for Git inspection; arbitrary shell commands are unavailable.
   network-disabled:

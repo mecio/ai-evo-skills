@@ -21,6 +21,7 @@ from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 from .recipe_runtime import advance_recipe, validate_recipe_snapshot
 from .naming import recipe_name_error
+from .claude_policy import normalize_claude_arguments, ClaudePolicyError
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -656,6 +657,11 @@ def profile_payload(context: Context, name: str | None, adapter_id: str) -> dict
                 denied.extend(translation["resource-tools"][resource])
         if denied:
             delegated += [translation["disallowed-tools-option"], ",".join(denied)]
+    if adapter_id == "claude":
+        try:
+            delegated = normalize_claude_arguments(delegated)
+        except ClaudePolicyError as exc:
+            raise EvoError(str(exc)) from exc
     return {
         "version": PROTOCOL_VERSION,
         "profile": selected,
@@ -692,7 +698,14 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
         arguments.extend(translation["cli-arguments"])
         policy_instructions.extend(translation.get("instructions", []))
     deny_option = adapter["profile-translation"]["delegated-cli"].get("disallowed-tools-option") if adapter["profile-translation"]["delegated-cli"] else None
-    if deny_option:
+    command = adapter["invocation"]["command"]
+    if adapter_id == "claude":
+        try:
+            arguments = normalize_claude_arguments(command[1:], arguments)
+        except ClaudePolicyError as exc:
+            raise EvoError(str(exc)) from exc
+        command = command[:1]
+    elif deny_option:
         compact, denied, index = [], [], 0
         while index < len(arguments):
             if arguments[index] == deny_option and index + 1 < len(arguments):
@@ -707,7 +720,7 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
     return {
         "executor": adapter_id,
         "mode": "delegated" if delegated else "current",
-        "command": adapter["invocation"]["command"],
+        "command": command,
         "prompt_delivery": adapter["invocation"].get("prompt-delivery", "argument-after-options"),
         "working_directory": str(context.repo),
         "cli_arguments": arguments,

@@ -37,6 +37,12 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Compose Claude invocation, profile, session and execution-policy arguments into one deterministic
+  policy: intersect tool availability and approvals, union denials, and remove duplicate permission controls.
+  Preserve the read-only Git wrapper approval while excluding disabled edit, web and agent tools.
+- Remove the obsolete Claude `MultiEdit` deny entry and reject unsupported tool mappings during planning.
+  Add offline composition/recipe regressions and a live check of successful Git wrapper execution.
+
 - Ignore local JetBrains `.idea` metadata in Git.
 
 - Reject cyclic publication directories and parent aliases with a path-specific CLI diagnostic instead

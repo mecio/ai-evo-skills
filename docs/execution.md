@@ -8,6 +8,10 @@ The bundled adapters currently support Codex and Claude Code. Other clients requ
 translations. Their CLI arguments were verified with Codex CLI `0.153.4` and Claude Code `2.1.266`; use those or
 compatible newer versions and review adapter changes when vendor flags change. Windows support is outside this beta.
 
+Claude policy composition is also exercised with Claude Code `2.1.268`. The adapter targets the
+`2.1.266+` CLI contract, not the older `2.1.68` flag set. It uses `Agent` and the current editing tools
+`Edit`, `Write`, `NotebookEdit`; the obsolete `MultiEdit` deny entry has been removed.
+
 ## Execution policies and prompt delivery
 
 `execution-policy.workspace` accepts `read-only` or `read-write`. `execution-policy.network` accepts `disabled`,
@@ -22,6 +26,44 @@ arbitrary shell commands. The wrapper disables configured Git conversion filters
 worktree content; `status` and `diff` omit submodules to avoid running helpers from nested repositories.
 Network-disabled commands also disable web tools and unconfigured MCP servers while
 retaining native edit tools when the workspace policy is read-write.
+
+### Claude policy composition
+
+The core parses Claude invocation, session, effort-profile and execution-policy arguments into structured
+permission modes and tool-rule sets before serializing them once. This applies to every command and recipe;
+other adapters retain their existing translations. Policy composition does not depend on the order of
+workspace and network declarations:
+
+- Each explicit `--tools` list is a capability ceiling: lists intersect. An absent list or `default` imposes
+  no ceiling. Fully denied tools are removed from the resulting list.
+- Each explicit `--allowedTools` list is an approval ceiling: lists intersect. A bare tool includes its scoped
+  rules, so intersecting `Bash` with `Bash(.ai-evo/bin/ai-evo-git-read *)` keeps only the wrapper rule.
+  Identical scoped rules survive; different scoped patterns are conservatively omitted when their
+  intersection cannot be proved. Grants for unavailable or fully denied tools are removed.
+- `--disallowedTools` rules form a union. Deny always wins: an explicit `Bash` or `Bash(*)` deny disables Bash,
+  including the wrapper. The core never removes a safety denial to make an allow rule work. Scoped denials
+  remain intact even when the broader tool is available; Claude evaluates those denials before approvals.
+- Repeated permission modes collapse to one. `dontAsk` prevails over approval-capable modes;
+  incompatible modes such as `plan` and `dontAsk` stop planning. Permission prompts collapse to `none`
+  when any layer requests it. `--strict-mcp-config` is retained once. Unrelated repeatable options are preserved.
+- Empty intersections serialize as `--tools=` or `--allowedTools=`, preserving empty lists without empty
+  argv entries or reverting to defaults. Camel-case, hyphenated aliases, inline values and variadic tool
+  lists normalize to the same representation; spaces and commas inside scoped rules are preserved.
+
+For read-only, network-disabled review with subagents disabled, the available tools are
+`Bash,Glob,Grep,Read`; automatic approvals are `Bash(.ai-evo/bin/ai-evo-git-read *),Glob,Grep,Read`.
+`Agent,Edit,NotebookEdit,WebFetch,WebSearch,Write` remain explicitly denied. `dontAsk`, prompt target `none`,
+print mode and strict MCP configuration remain active. Network restriction concerns task tools, not the
+Claude service connection needed to run the model. Enforcement is provided by Claude permissions and the Git
+wrapper, not an additional OS sandbox; local/managed Claude settings and vendor permission behavior still apply.
+
+The core validates built-in names against the supported adapter mapping. Unknown names and obsolete
+`MultiEdit`/`Task` entries stop planning with a mapping diagnostic rather than silently discarding a restriction
+or forwarding an ineffective deny rule. MCP permission rules remain supported. No runtime version probe or
+automatic alias substitution is needed for this fix: planning remains offline and deterministic. Adding a new
+built-in tool requires reviewing the mapping against the supported CLI. See the official
+[tool reference](https://code.claude.com/docs/en/tools-reference) and
+[permission rules](https://code.claude.com/docs/en/permissions).
 
 Built-in adapters declare `prompt-delivery: stdin`. The execution plan exposes this as
 `application.prompt_delivery`. For delegated execution, the coordinating AI passes the complete resolved plan
