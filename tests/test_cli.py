@@ -123,7 +123,7 @@ class CliIntegrationTest(unittest.TestCase):
     def test_version_reports_beta_release(self):
         result = subprocess.run(COMMAND + ["--version"], env=CLI_ENV, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual("ai-evo-skills 0.1.0-beta.2", result.stdout.strip())
+        self.assertEqual("ai-evo-skills 0.1.0-beta.3", result.stdout.strip())
 
     def add_command(self, root):
         path = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"

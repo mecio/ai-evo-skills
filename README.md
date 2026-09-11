@@ -1,6 +1,6 @@
 # AI Evo Skills
 
-**Release:** `0.1.0-beta.2` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
+**Release:** `0.1.0-beta.3` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
 
 AI Evo Skills is a small, project-local orchestration layer for AI coding skills. It keeps one canonical catalog
 of reusable commands, lets developers compose those commands into validated sequential recipes, and publishes
@@ -143,7 +143,7 @@ identifies the AI that coordinates the workflow.
 
 ## Requirements
 
-Version `0.1.0-beta.2` targets Linux and requires:
+Version `0.1.0-beta.3` targets Linux and requires:
 
 - Git and symbolic-link support;
 - Python 3.11 or newer;
@@ -159,7 +159,7 @@ compatible newer versions and review adapter changes when vendor flags change. W
 Clone a released engine once, then link it from an application repository:
 
 ```bash
-git clone --branch v0.1.0-beta.2 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
+git clone --branch v0.1.0-beta.3 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
 cd /path/to/project
 ln -s /chosen/path/ai-evo-skills .ai-evo
 ./.ai-evo/bin/ai-evo-skills init --namespace abc --adapter codex --adapter claude
@@ -181,6 +181,11 @@ The namespace must contain 3-6 lowercase ASCII letters. The initial configuratio
 
 `AGENTS.md` and `CLAUDE.md` should contain only the instruction to read `.ai-evo-prj/entrypoint.md`. Shared
 project rules belong in that entrypoint and its directives so every enabled AI receives the same guidance.
+
+After bootstrap, the launcher executes `.ai-evo/.venv/bin/ai-evo-skills` directly with bytecode writes
+disabled. It calls `uv run --frozen` only when that executable is absent. Bootstrap the environment in a
+writable context (`uv sync --frozen --project .ai-evo`) before invoking planners inside read-only sandboxes.
+Updating the engine's dependencies also requires an explicit `uv sync --frozen --project .ai-evo`.
 
 ## Project configuration
 
@@ -333,6 +338,35 @@ These commands are designed primarily for AI consumption and return JSON:
 ./.ai-evo/bin/ai-evo-skills recipe plan abc-my-review --adapter codex --input target=HEAD
 ```
 
+Every command plan and expanded recipe step includes a `handoff` with type `ai-evo-resolved-command`,
+resolved planning status, `allow_planning: false` and a snapshot of the skill. Its `with` and `application`
+fields are the authoritative inputs, directory, execution policy, profile and native CLI arguments.
+After replacing runtime output references in `with`, the coordinator sends the complete delegated step JSON
+to `.ai-evo/bin/ai-evo-skills command execute` on stdin. This command consumes a trusted local plan; it does
+not load or revalidate the catalog and must not be used with untrusted execution JSON.
+
+`command execute` constructs the structured `ai-evo-execution-handoff` prompt and sets
+`AI_EVO_EXECUTION_HANDOFF=resolved` for the child. Core CLI calls to `command plan`, `recipe plan` or nested
+`command execute` are rejected while that marker is present. Delegates perform the task directly, skipping
+planning instructions in existing skill text. This prevents accidental replanning through the supported
+handoff; it is not an OS security boundary against an executor deliberately removing the marker.
+Child stdout/stderr and exit status are preserved, so the coordinator stops the recipe on failure.
+
+Codex session persistence is independent of workspace permissions:
+
+| `execution.reuse-session` | Native launch | Allowed reuse |
+|---|---|---|
+| `never` | `--ephemeral` | None |
+| `correction-only` | Persist session; no `--ephemeral` | Correct a failed step |
+| `always` | Persist session; no `--ephemeral` | Resume when appropriate |
+
+Capture the native session id from the CLI output. For a failed Codex step, pass its resolved JSON to
+`command execute --resume-session <id> --correction`; the same native policy arguments are retained.
+With `always`, `--correction` is optional. The coordinator is responsible for associating the id with the
+original step and for deciding that a correction is justified. The native CLI needs writable session storage
+outside the read-only worktree when persistence is enabled. Adapters declare optional `session-translation`
+and `invocation.resume-arguments`; the bundled Codex adapter defines both.
+
 A restrictive command is delegated even when its executor matches the coordinating AI, because a fresh native
 CLI invocation is required to enforce its sandbox and network policy.
 
@@ -354,7 +388,8 @@ The frontmatter accepts the Agent Skills fields `name`, `description`, `license`
 `allowed-tools`. AI Evo Skills additionally validates their basic types and uses the string metadata keys
 `ai-evo-kind` and `ai-evo-version` for its protocol.
 
-The engine validates structure and produces native execution arguments. The executing AI and its CLI remain
+The engine validates structure, produces native execution arguments and launches resolved delegated handoffs.
+The executing AI and its CLI remain
 responsible for following the plan, honoring native restrictions and reporting failures. Review generated plans
 and adapters when upgrading an AI CLI whose flags may have changed.
 
@@ -362,6 +397,9 @@ and adapters when upgrading an AI CLI whose flags may have changed.
 
 The software release and file protocol use separate versions:
 
+- `0.1.0-beta.3` fixes read-only planner launch, makes Codex persistence follow the reuse profile and adds
+  structured execution handoffs. See [CHANGELOG.md](CHANGELOG.md). On-disk protocol `1.0` is unchanged;
+  execution handoff and adapter fields are additive. Regenerate plans to use `command execute`.
 - `0.1.0-beta.2` makes prompt delivery explicit and sends prompts to the bundled Codex and Claude Code adapters
   through standard input, preventing variadic CLI options from consuming them.
 - `0.1.0-beta.1` is the first public beta of the CLI and repository layout. Breaking behavior may still change
@@ -369,9 +407,17 @@ The software release and file protocol use separate versions:
 - `1.0` is the current on-disk protocol used by project configuration, adapters, skills, recipes and effort
   profiles. A protocol change requires validator and migration support independently of the package release.
 
-The Python package uses the PEP 440 equivalent `0.1.0b2`; Git releases use the SemVer tag
-`v0.1.0-beta.2`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
+The Python package uses the PEP 440 equivalent `0.1.0b3`; Git releases use the SemVer tag
+`v0.1.0-beta.3`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
 schemas and templates come from the engine clone linked as `.ai-evo`.
+
+## Maintainer verification
+
+Run `uv run --frozen python -m unittest discover -s tests -v` for offline regression tests. The launcher
+sandbox test uses Linux Landlock to deny filesystem writes (except `/dev/null`) and skips if unavailable.
+Run `AI_EVO_LIVE_TESTS=1 uv run --frozen python -m unittest discover -s tests -p test_live_execution.py -v`
+with authenticated Claude and Codex CLIs to verify sequential read-only execution and correction resume
+against the same native session id. This opt-in test makes model requests.
 
 ## License
 
