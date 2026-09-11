@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.1.0-beta.4
+## Unreleased
 
-On-disk project protocol remains `1.0`. Regenerate execution snapshots after upgrading.
+Maintenance changes since `0.1.0-beta.2`; no new release or tag has been created.
+On-disk project protocol remains `1.0`. Regenerate execution snapshots when adopting these changes.
 
 ### Fixed
 
@@ -11,24 +12,6 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots after upg
   unavailable through the core; Codex supports it when permitted by the profile.
 - Allow multiple unfinished drafts to be created. Keep storage and name checks during creation and full
   validation before publication/planning. Generate syntactically valid YAML and reject profile TODOs.
-
-### Added
-
-- A packaged execution-plan schema requiring the complete policy, profile, handoff and session contract,
-  plus cross-field consistency checks before any delegated process starts.
-- A 900-second default execution deadline, adjustable with `--timeout`. Timeout exits 124 and kills the
-  process group; SIGINT/SIGTERM cancel with 130/143 and terminate descendants, including those ignoring TERM.
-- Native policy probes: Codex read-only/read-write filesystem and network checks, plus authenticated Claude
-  edit and network-tool permission checks. Namespace-unavailable skips are explicitly reported, not passes.
-
-
-## 0.1.0-beta.3
-
-On-disk protocol: `1.0` (unchanged). Planner handoffs and adapter session fields are additive.
-Regenerate execution plans after upgrading; existing skills do not need to be rewritten.
-
-### Fixed
-
 - Run an installed engine virtualenv directly, without uv cache locks or bytecode writes in read-only
   sandboxes. Keep frozen uv bootstrap when no installed executable is available.
 - Apply Codex `--ephemeral` only for `reuse-session: never`. Preserve native sessions for
@@ -38,6 +21,12 @@ Regenerate execution plans after upgrading; existing skills do not need to be re
 
 ### Added
 
+- A packaged execution-plan schema requiring the complete policy, profile, handoff and session contract,
+  plus cross-field consistency checks before any delegated process starts.
+- A 900-second default execution deadline, adjustable with `--timeout`. Timeout exits 124 and kills the
+  process group; SIGINT/SIGTERM cancel with 130/143 and terminate descendants, including those ignoring TERM.
+- Native policy probes: Codex read-only/read-write filesystem and network checks, plus authenticated Claude
+  edit and network-tool permission checks. Namespace-unavailable skips are explicitly reported, not passes.
 - Structured resolved handoffs with skill snapshots, explicit planning status and policy/session data.
 - `command execute` consumes delegated plans from stdin, supplies the core handoff and blocks accidental
   recursive planning through an inherited execution marker. Runtime output references must be resolved

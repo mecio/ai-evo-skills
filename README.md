@@ -1,6 +1,6 @@
 # AI Evo Skills
 
-**Release:** `0.1.0-beta.4` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
+**Release:** `0.1.0-beta.2` · **Protocol:** `1.0` · **License:** Apache-2.0 · **Status:** public beta, Linux-first
 
 AI Evo Skills is a small, project-local orchestration layer for AI coding skills. It keeps one canonical catalog
 of reusable commands, lets developers compose those commands into validated sequential recipes, and publishes
@@ -143,7 +143,7 @@ identifies the AI that coordinates the workflow.
 
 ## Requirements
 
-Version `0.1.0-beta.4` targets Linux and requires:
+Version `0.1.0-beta.2` targets Linux and requires:
 
 - Git and symbolic-link support;
 - Python 3.11 or newer;
@@ -159,7 +159,7 @@ compatible newer versions and review adapter changes when vendor flags change. W
 Clone a released engine once, then link it from an application repository:
 
 ```bash
-git clone --branch v0.1.0-beta.4 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
+git clone --branch v0.1.0-beta.2 https://github.com/mecio/ai-evo-skills /chosen/path/ai-evo-skills
 cd /path/to/project
 ln -s /chosen/path/ai-evo-skills .ai-evo
 ./.ai-evo/bin/ai-evo-skills init --namespace abc --adapter codex --adapter claude
@@ -408,13 +408,13 @@ and adapters when upgrading an AI CLI whose flags may have changed.
 
 ## Versioning and beta status
 
+Version changes and Git tags are made only for a new release explicitly requested by the maintainer.
+During correction and maintenance work, keep the latest released version and record changes under
+`Unreleased` in [CHANGELOG.md](CHANGELOG.md). The documentation below also covers these unreleased changes;
+the released tag does not include them yet.
+
 The software release and file protocol use separate versions:
 
-- `0.1.0-beta.4` fixes Codex write permissions, resume capability reporting and draft creation; validates
-  complete execution snapshots and adds bounded process-group execution and native policy probes.
-- `0.1.0-beta.3` fixes read-only planner launch, makes Codex persistence follow the reuse profile and adds
-  structured execution handoffs. See [CHANGELOG.md](CHANGELOG.md). On-disk protocol `1.0` is unchanged;
-  execution handoff and adapter fields are additive. Regenerate plans to use `command execute`.
 - `0.1.0-beta.2` makes prompt delivery explicit and sends prompts to the bundled Codex and Claude Code adapters
   through standard input, preventing variadic CLI options from consuming them.
 - `0.1.0-beta.1` is the first public beta of the CLI and repository layout. Breaking behavior may still change
@@ -422,8 +422,8 @@ The software release and file protocol use separate versions:
 - `1.0` is the current on-disk protocol used by project configuration, adapters, skills, recipes and effort
   profiles. A protocol change requires validator and migration support independently of the package release.
 
-The Python package uses the PEP 440 equivalent `0.1.0b4`; Git releases use the SemVer tag
-`v0.1.0-beta.4`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
+The Python package uses the PEP 440 equivalent `0.1.0b2`; Git releases use the SemVer tag
+`v0.1.0-beta.2`. Python build artifacts contain the CLI and required Apache license notices. Runtime adapters,
 schemas and templates come from the engine clone linked as `.ai-evo`.
 
 ## Maintainer verification
