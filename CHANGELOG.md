@@ -7,6 +7,8 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Report non-string skill frontmatter keys with file diagnostics instead of a traceback.
+
 - Supervise delegated Linux process trees as a child subreaper, including detached and double-forked
   orphans. Terminate and reap remaining step descendants on timeout, cancellation and normal completion;
   preserve preexisting unrelated children and use pidfds to avoid PID-reuse signalling races.

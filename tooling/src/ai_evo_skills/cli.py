@@ -93,6 +93,8 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     data = load_strict_yaml(match.group(1))
     if not isinstance(data, dict):
         raise EvoError(f"{path}: frontmatter must be a mapping")
+    if not all(isinstance(key, str) for key in data):
+        raise EvoError(f"{path}: frontmatter keys must be strings")
     return data, match.group(2)
 
 

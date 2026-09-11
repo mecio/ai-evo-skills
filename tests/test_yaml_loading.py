@@ -12,6 +12,24 @@ class YamlLoadingTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
+    def test_non_string_frontmatter_keys_have_file_diagnostics(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex')
+            self.add_command(root)
+            path = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
+            original = path.read_text()
+            for fields in ('123: extra', 'true: extra', 'null: extra', '123: extra\nunknown: extra'):
+                with self.subTest(fields=fields):
+                    path.write_text(original.replace('name: abc-inspect', 'name: abc-inspect\n' + fields))
+                    for command in (('validate',), ('sync',), ('command', 'plan', 'abc-inspect', '--adapter', 'codex')):
+                        result = self.run_cli(root, *command)
+                        self.assertEqual(1, result.returncode)
+                        self.assertIn(str(path), result.stderr)
+                        self.assertIn('frontmatter keys must be strings', result.stderr)
+                        self.assertNotIn('Traceback', result.stderr)
+            self.assertFalse((root / '.agents/skills').exists())
+
     def test_duplicate_nested_policy_is_rejected_before_publication_or_planning(self):
         temporary, root = self.repository()
         with temporary:
