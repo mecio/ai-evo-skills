@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import os
 from pathlib import Path
 import subprocess
@@ -28,6 +29,40 @@ class ExecutionTest(unittest.TestCase):
             fixtures.COMMAND + ['command', 'execute', *args], cwd=root,
             env=fixtures.CLI_ENV, input=json.dumps(step), text=True, capture_output=True,
         )
+
+    def test_complete_schema_rejects_missing_fields_before_spawning(self):
+        from ai_evo_skills.execution import ExecutionError, validate_plan
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex')
+            self.add_command(root)
+            step = self.command_plan(root)
+            validate_plan(step)
+            for section in ('application', 'handoff'):
+                for field in step[section]:
+                    with self.subTest(section=section, field=field):
+                        broken = copy.deepcopy(step)
+                        del broken[section][field]
+                        with self.assertRaises(ExecutionError):
+                            validate_plan(broken)
+            for section in ('profile', 'session', 'execution_policy'):
+                for field in step['application'][section]:
+                    with self.subTest(section=section, field=field):
+                        broken = copy.deepcopy(step)
+                        del broken['application'][section][field]
+                        with self.assertRaises(ExecutionError):
+                            validate_plan(broken)
+            for field, value in (('resume_allowed', False), ('resume_supported', False)):
+                broken = copy.deepcopy(step)
+                broken['application']['session'][field] = value
+                with self.assertRaisesRegex(ExecutionError, 'inconsistent session'):
+                    validate_plan(broken)
+            step['application']['command'] = [sys.executable, '-c', 'print("must not execute")']
+            del step['application']['profile']
+            result = self.execute(root, step)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual('', result.stdout)
+            self.assertIn('invalid execution plan', result.stderr)
 
     def test_session_translation_and_resume_authorization(self):
         temporary, root = self.repository()

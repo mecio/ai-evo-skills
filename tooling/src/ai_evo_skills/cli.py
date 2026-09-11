@@ -15,6 +15,7 @@ from jsonschema.exceptions import SchemaError
 import yaml
 
 from . import __version__
+from .execution import ExecutionError, validate_plan
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -1031,33 +1032,10 @@ def cmd_command_execute(args: argparse.Namespace) -> None:
         step = json.load(sys.stdin)
     except (ValueError, OSError) as exc:
         raise EvoError(f"invalid execution plan JSON: {exc}") from exc
-    if not isinstance(step, dict):
-        raise EvoError("execution plan must be an object")
-    handoff, application, inputs = step.get("handoff"), step.get("application"), step.get("with")
-    if (
-        not isinstance(handoff, dict)
-        or handoff.get("type") != "ai-evo-resolved-command"
-        or handoff.get("version") != PROTOCOL_VERSION
-        or handoff.get("allow_planning") is not False
-        or handoff.get("planning") not in (
-            {"command": "resolved", "recipe": "resolved"},
-            {"command": "resolved", "recipe": "not-applicable"},
-        )
-        or not isinstance(handoff.get("skill_content"), str)
-    ):
-        raise EvoError("execution requires a resolved command handoff")
-    if not isinstance(inputs, dict) or not all(isinstance(value, str) for value in inputs.values()):
-        raise EvoError("resolve all step output references to string inputs before execution")
-    if not isinstance(application, dict) or application.get("mode") != "delegated":
-        raise EvoError("command execute requires a delegated application")
-    command, options = application.get("command"), application.get("cli_arguments")
-    if not all(isinstance(values, list) and all(isinstance(value, str) for value in values) for values in (command, options)) or not command:
-        raise EvoError("execution command and CLI arguments must be string arrays")
-    directory, delivery = application.get("working_directory"), application.get("prompt_delivery")
-    if not isinstance(directory, str) or not Path(directory).is_absolute():
-        raise EvoError("execution working directory must be absolute")
-    if delivery not in ("stdin", "argument-before-options", "argument-after-options"):
-        raise EvoError("invalid execution prompt delivery")
+    validate_plan(step)
+    application = step["application"]
+    command, options = application["command"], application["cli_arguments"]
+    directory, delivery = application["working_directory"], application["prompt_delivery"]
     argv = [*command, *options]
     if args.resume_session:
         session = application.get("session", {})
@@ -1181,7 +1159,7 @@ def main() -> None:
         if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute):
             raise EvoError("handoff is already resolved: execute the supplied task without planning or delegating again")
         args.func(args)
-    except (EvoError, OSError, KeyError) as exc:
+    except (EvoError, ExecutionError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

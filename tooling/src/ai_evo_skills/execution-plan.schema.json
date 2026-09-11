@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-evo-skills:schema:execution-plan:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "skill_path",
+    "with",
+    "application",
+    "handoff"
+  ],
+  "properties": {
+    "version": {
+      "const": "1.0"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uses": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skill_path": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "with": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executor",
+        "mode",
+        "command",
+        "prompt_delivery",
+        "working_directory",
+        "cli_arguments",
+        "execution_policy",
+        "session",
+        "policy_instructions",
+        "profile"
+      ],
+      "properties": {
+        "executor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "const": "delegated"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "prompt_delivery": {
+          "enum": [
+            "stdin",
+            "argument-before-options",
+            "argument-after-options"
+          ]
+        },
+        "working_directory": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "cli_arguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "execution_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace",
+            "network"
+          ],
+          "properties": {
+            "workspace": {
+              "enum": [
+                "read-only",
+                "read-write"
+              ]
+            },
+            "network": {
+              "enum": [
+                "disabled",
+                "enabled",
+                "auto"
+              ]
+            }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reuse",
+            "resume_permitted",
+            "resume_supported",
+            "resume_allowed",
+            "corrections_only",
+            "resume_arguments"
+          ],
+          "properties": {
+            "reuse": {
+              "enum": [
+                "never",
+                "correction-only",
+                "always"
+              ]
+            },
+            "resume_permitted": {
+              "type": "boolean"
+            },
+            "resume_supported": {
+              "type": "boolean"
+            },
+            "resume_allowed": {
+              "type": "boolean"
+            },
+            "corrections_only": {
+              "type": "boolean"
+            },
+            "resume_arguments": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "contains": {
+                    "type": "string",
+                    "pattern": "<session-id>"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "policy_instructions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "profile",
+            "adapter",
+            "application",
+            "delegated_cli_arguments",
+            "instructions",
+            "reporting"
+          ],
+          "properties": {
+            "version": {
+              "const": "1.0"
+            },
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "adapter": {
+              "type": "string",
+              "minLength": 1
+            },
+            "application": {
+              "enum": [
+                "instructions",
+                "native-cli-and-instructions"
+              ]
+            },
+            "delegated_cli_arguments": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "instructions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "reporting": {
+              "enum": [
+                "none",
+                "summary",
+                "full"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "version",
+        "planning",
+        "allow_planning",
+        "skill_content"
+      ],
+      "properties": {
+        "type": {
+          "const": "ai-evo-resolved-command"
+        },
+        "version": {
+          "const": "1.0"
+        },
+        "planning": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command",
+            "recipe"
+          ],
+          "properties": {
+            "command": {
+              "const": "resolved"
+            },
+            "recipe": {
+              "enum": [
+                "resolved",
+                "not-applicable"
+              ]
+            }
+          }
+        },
+        "allow_planning": {
+          "const": false
+        },
+        "skill_content": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "version",
+        "command"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "id"
+            ]
+          },
+          {
+            "required": [
+              "uses"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "required": [
+        "id",
+        "uses"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "version"
+            ]
+          },
+          {
+            "required": [
+              "command"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
