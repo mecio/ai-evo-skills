@@ -7,6 +7,10 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
 
 ### Fixed
 
+- Supervise delegated Linux process trees as a child subreaper, including detached and double-forked
+  orphans. Terminate and reap remaining step descendants on timeout, cancellation and normal completion;
+  preserve preexisting unrelated children and use pidfds to avoid PID-reuse signalling races.
+
 - Reject adapter resume templates missing `<session-id>` during validation, consistently with the
   execution snapshot schema, instead of producing unusable plans.
 
@@ -44,6 +48,9 @@ On-disk project protocol remains `1.0`. Regenerate execution snapshots when adop
   Claude → Codex execution/resume. Native authenticated tests are opt-in with `AI_EVO_LIVE_TESTS=1`.
 
 ### Operational notes
+
+- Delegated execution now requires Linux kernel 5.3+, accessible procfs and child-subreaper/pidfd support.
+  TERM has a two-second grace period, followed by KILL and up to two seconds for reaping.
 
 - Bootstrap and dependency updates require `uv sync --frozen --project .ai-evo` in a writable context.
 - Persistent native session storage must be writable outside the read-only worktree.

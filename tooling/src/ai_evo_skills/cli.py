@@ -17,6 +17,7 @@ import yaml
 
 from . import __version__
 from .yaml_loading import load_strict_yaml
+from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 
 PROTOCOL_VERSION = "1.0"
@@ -1172,7 +1173,7 @@ def main() -> None:
         if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute):
             raise EvoError("handoff is already resolved: execute the supplied task without planning or delegating again")
         args.func(args)
-    except (EvoError, ExecutionError, OSError, KeyError) as exc:
+    except (EvoError, ExecutionError, ProcessTreeError, OSError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(124 if isinstance(exc, ExecutionTimeout) else 1) from exc
 

@@ -147,6 +147,7 @@ Version `0.1.0-beta.2` targets Linux and requires:
 
 - Git and symbolic-link support;
 - Python 3.11 or newer;
+- for delegated execution, Linux kernel 5.3+ with accessible procfs, pidfds and child-subreaper support;
 - [uv](https://docs.astral.sh/uv/getting-started/installation/);
 - every enabled AI CLI installed and authenticated.
 
@@ -359,8 +360,12 @@ planning instructions in existing skill text. This prevents accidental replannin
 handoff; it is not an OS security boundary against an executor deliberately removing the marker.
 Child stdout/stderr and exit status are preserved, so the coordinator stops the recipe on failure.
 `command execute --timeout <seconds>` sets a positive finite deadline (default: 900 seconds). Timeout exits
-with status 124; SIGINT/SIGTERM exit with 130/143. The core terminates the delegated process group and
-force-kills remaining descendants after a grace period of at most two seconds. This also applies to resume.
+with status 124; SIGINT/SIGTERM exit with 130/143. The execution process acts as a Linux child subreaper
+and follows descendants even after `setsid` or
+double-fork. It sends TERM, allows up to two seconds for graceful exit, then sends KILL and allows up to
+two seconds to reap remaining descendants. Cleanup also runs when the native CLI exits normally, so
+background jobs cannot outlive the step. Existing unrelated children are excluded, and pidfds prevent
+signalling a different process after PID reuse. This also applies to resume.
 A hard kill of the core process itself cannot be intercepted; use normal cancellation signals.
 
 Codex session persistence is independent of workspace permissions:
