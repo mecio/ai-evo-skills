@@ -38,7 +38,7 @@ The formal interface is defined in `recipe.yaml`.
 
 ## Expected output
 
-The final Markdown report produced by `acme-report-review`.
+The final Markdown report produced by `acme-cmd-report-review`.
 
 ## Constraints
 

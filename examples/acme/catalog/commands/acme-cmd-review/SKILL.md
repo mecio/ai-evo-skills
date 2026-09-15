@@ -1,5 +1,5 @@
 ---
-name: acme-review
+name: acme-cmd-review
 description: Review tracked changes against a local Git target and report actionable findings with evidence.
 metadata:
   ai-evo-kind: command
@@ -32,7 +32,7 @@ inputs:
 
 1. If an `ai-evo-execution-handoff` is supplied, apply its resolved inputs, working directory, policy and
    profile instructions; continue at step 4 without planning again.
-2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-review` with `--adapter` set to the current
+2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-cmd-review` with `--adapter` set to the current
    adapter, each received input as `--input key=value`, and any requested `--ai-effort-profile`.
    Stop if planning or validation fails.
 3. Pass the complete resolved plan JSON to `.ai-evo/bin/ai-evo-skills command execute` on stdin.
@@ -67,6 +67,6 @@ review limits. Do not equate an empty diff with proof that the entire project is
 ## Examples
 
 ```text
-$acme-review focus=security
-/acme-review focus=security
+$acme-cmd-review focus=security
+/acme-cmd-review focus=security
 ```

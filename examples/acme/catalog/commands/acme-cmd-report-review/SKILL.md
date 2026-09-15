@@ -1,5 +1,5 @@
 ---
-name: acme-report-review
+name: acme-cmd-report-review
 description: Summarize a supplied review and clearly distinguish a completed review from a skipped review.
 metadata:
   ai-evo-kind: command
@@ -35,7 +35,7 @@ inputs:
 
 1. If an `ai-evo-execution-handoff` is supplied, apply its resolved inputs, working directory, policy and
    profile instructions; continue at step 4 without planning again.
-2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-report-review` with `--adapter` set to the current
+2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-cmd-report-review` with `--adapter` set to the current
    adapter, each received input as `--input key=value`, and any requested `--ai-effort-profile`.
    Stop if planning or validation fails.
 3. Pass the complete resolved plan JSON to `.ai-evo/bin/ai-evo-skills command execute` on stdin.
@@ -69,6 +69,6 @@ reviews retain the supplied findings and limits; a skipped review makes no claim
 ## Examples
 
 ```text
-$acme-report-review review="No findings. Scope: tracked diff against HEAD; no tests run."
-/acme-report-review review="No findings. Scope: tracked diff against HEAD; no tests run."
+$acme-cmd-report-review review="No findings. Scope: tracked diff against HEAD; no tests run."
+/acme-cmd-report-review review="No findings. Scope: tracked diff against HEAD; no tests run."
 ```

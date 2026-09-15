@@ -41,13 +41,13 @@ references. Store that prompt once as a command:
 ./.ai-evo/bin/ai-evo-skills create command review
 ```
 
-Open `.ai-evo-prj/skills/catalog/commands/acme-review/SKILL.md` and replace its generated draft with this complete
+Open `.ai-evo-prj/skills/catalog/commands/acme-cmd-review/SKILL.md` and replace its generated draft with this complete
 example. **Purpose**, the review steps in **Procedure**, and **Expected output** capture the reusable prompt;
 **Interface** declares what changes between invocations. The first procedure steps preserve the engine handoff.
 
 ````markdown
 ---
-name: acme-review
+name: acme-cmd-review
 description: Review a Git diff without modifying files and report actionable findings with evidence.
 metadata:
   ai-evo-kind: command
@@ -80,7 +80,7 @@ inputs:
 
 1. If an `ai-evo-execution-handoff` is supplied, use its resolved inputs, working directory, policy and
    profile instructions; continue at step 4 without planning again.
-2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-review` with `--adapter` set to the current
+2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-cmd-review` with `--adapter` set to the current
    adapter, each received input passed as `--input key=value`, and any requested `--ai-effort-profile`.
    Stop if planning or validation fails.
 3. Pass the complete resolved plan JSON to `.ai-evo/bin/ai-evo-skills command execute` on stdin.
@@ -112,8 +112,8 @@ file and line references, its impact and supporting evidence. If none are found,
 ## Examples
 
 ```text
-$acme-review target=HEAD focus=security
-/acme-review target=HEAD focus=security
+$acme-cmd-review target=HEAD focus=security
+/acme-cmd-review target=HEAD focus=security
 ```
 ````
 
@@ -129,8 +129,8 @@ In a client session opened in the application repository, invoke it with:
 
 | Client | Invocation |
 |---|---|
-| Codex | `$acme-review target=HEAD focus=security` |
-| Claude Code | `/acme-review target=HEAD focus=security` |
+| Codex | `$acme-cmd-review target=HEAD focus=security` |
+| Claude Code | `/acme-cmd-review target=HEAD focus=security` |
 
 `HEAD` reviews staged and unstaged tracked changes against the latest commit. Use another local ref to change
 the comparison. Next time, invoke the same skill with new inputs; its review instructions remain in the catalog.
@@ -141,19 +141,19 @@ Update that source when the team's prompt improves, then validate and synchroniz
 > [!TIP]
 > Put recurring choices in the skill or recipe so callers can omit them. In the command's interface or a
 > recipe's `inputs`, replace `target`'s `required: true` with `default: HEAD` and set `focus` to
-> `default: security`. With these defaults, `$acme-review` is enough; explicit inputs can still override them.
+> `default: security`. With these defaults, `$acme-cmd-review` is enough; explicit inputs can still override them.
 >
 > For a fixed specialization, a recipe can pass literal `target: HEAD` and `focus: security` in a step's
 > `with` mapping to a command or nested recipe that accepts those inputs, without exposing them as recipe
 > inputs. A specialized command can instead state those fixed choices in its procedure and omit the
 > corresponding inputs from its interface.
 >
-> Give the variant a descriptive name, such as `acme-review-security` or `acme-recipe-review-security-head`,
+> Give the variant a descriptive name, such as `acme-cmd-review-security` or `acme-recipe-review-security-head`,
 > so its invocation communicates the built-in choices. The name describes the behavior; the defaults,
 > mappings or instructions implement it. Keep the artifact name and its references consistent when renaming.
 >
 > For example, create a recipe with `create recipe review-security-head --catalog`, complete its generated
-> `SKILL.md`, and use this `recipe.yaml` to reuse the `acme-review` command above:
+> `SKILL.md`, and use this `recipe.yaml` to reuse the `acme-cmd-review` command above:
 >
 > ```yaml
 > version: "1.0"
@@ -162,7 +162,7 @@ Update that source when the team's prompt improves, then validate and synchroniz
 > inputs: {}
 > steps:
 >   - id: review
->     uses: acme-review
+>     uses: acme-cmd-review
 >     with:
 >       target: HEAD
 >       focus: security
@@ -186,8 +186,8 @@ Claude and a verification command in Codex, while Codex coordinates the sequence
 
 This creates `acme-recipe-reviewed-change` with a `SKILL.md` and `recipe.yaml`. Complete the generated
 `SKILL.md` descriptions while preserving its coordinator procedure. The following illustrative `recipe.yaml`
-assumes two completed shared commands: `acme-review-with-claude`, accepting `target`, and
-`acme-verify-with-codex`, accepting `target` and the previous `review`. Set their executors to `claude` and
+assumes two completed shared commands: `acme-cmd-review-with-claude`, accepting `target`, and
+`acme-cmd-verify-with-codex`, accepting `target` and the previous `review`. Set their executors to `claude` and
 `codex` respectively, and enable both adapters.
 
 ```yaml
@@ -200,11 +200,11 @@ inputs:
     required: true
 steps:
   - id: review
-    uses: acme-review-with-claude
+    uses: acme-cmd-review-with-claude
     with:
       target: "${{ inputs.target }}"
   - id: verify
-    uses: acme-verify-with-codex
+    uses: acme-cmd-verify-with-codex
     with:
       target: "${{ inputs.target }}"
       review: "${{ steps.review.output }}"
@@ -220,5 +220,5 @@ Steps run in declared order and stop on failure; forward references and dependen
 
 Without `--catalog`, recipes are created under `skills/custom/recipes` and ignored by Git. Commands always
 belong to the shared catalog. Recipe names use `<namespace>-recipe-<name>`; command names use
-`<namespace>-<name>`. Pass only the short name to `create`. See [authoring](authoring.md) for contracts,
+`<namespace>-cmd-<name>`. Pass only the short name to `create`. See [authoring](authoring.md) for contracts,
 effort profiles and draft completion, and [recipe naming migration](recipe-naming-migration.md) for older catalogs.

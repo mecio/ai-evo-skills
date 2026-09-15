@@ -7,11 +7,11 @@ inputs:
     default: HEAD
 steps:
   - id: detect
-    uses: acme-detect-changes
+    uses: acme-cmd-detect-changes
     with:
       target: "${{ inputs.target }}"
   - id: review
-    uses: acme-review
+    uses: acme-cmd-review
     when:
       value: "${{ steps.detect.output }}"
       normalize: trim
@@ -20,7 +20,7 @@ steps:
       target: "${{ inputs.target }}"
       focus: security
   - id: report
-    uses: acme-report-review
+    uses: acme-cmd-report-review
     with:
       review: "${{ steps.review.output }}"
       target: "${{ inputs.target }}"

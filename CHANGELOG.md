@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-No unreleased changes.
+### Changed
+
+- `create command <name>` now generates `<namespace>-cmd-<name>` in the directory, frontmatter and
+  invocation instructions. Pass the short name; already prefixed names are rejected and the complete
+  name must fit within 64 characters. Existing command names remain valid.
+- Align command templates, authoring documentation and the Acme starter catalog with the `cmd-` marker.
 
 ## 0.1.0-beta.3
 

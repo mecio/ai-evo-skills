@@ -1,6 +1,6 @@
 # Migrate recipe names
 
-All shared and personal recipes now use `<namespace>-recipe-<name>`. Commands keep `<namespace>-<name>`.
+All shared and personal recipes now use `<namespace>-recipe-<name>`. New commands use `<namespace>-cmd-<name>`; see [command authoring](authoring.md#create-artifacts).
 This beta change intentionally rejects old recipe names. It does not introduce aliases, install two names,
 or silently rewrite files. The change is released in engine `0.1.0-beta.3`; see the
 [release changelog](../CHANGELOG.md#010-beta3).

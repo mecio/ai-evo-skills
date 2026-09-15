@@ -78,7 +78,7 @@ These planning commands are designed primarily for AI consumption and return JSO
 
 ```bash
 ./.ai-evo/bin/ai-evo-skills profile resolve --adapter codex
-./.ai-evo/bin/ai-evo-skills command plan acme-review --adapter codex --input target=HEAD
+./.ai-evo/bin/ai-evo-skills command plan acme-cmd-review --adapter codex --input target=HEAD
 ./.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-reviewed-change --adapter codex --input target=HEAD
 # With the complete plan and result journal supplied as JSON on stdin:
 ./.ai-evo/bin/ai-evo-skills recipe advance

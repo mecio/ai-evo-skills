@@ -7,7 +7,7 @@ Teams maintain those skills in one shared catalog, compose them into repeatable 
 consistently across AI coding clients. Once a prompt is captured in a skill, developers invoke it and supply
 only the inputs needed for the task, without rewriting or pasting the same instructions each time.
 
-For example, save your team's review criteria once, then invoke `acme-review` with a Git target and a focus.
+For example, save your team's review criteria once, then invoke `acme-cmd-review` with a Git target and a focus.
 A recipe can pass that review to a second skill that verifies the findings against the code.
 
 [First skill](docs/first-skill.md) · [Recipes](docs/first-skill.md#compose-skills-into-recipes) · [Documentation](#documentation)
@@ -62,16 +62,16 @@ from published releases.
 ## Get started
 
 Follow the [first skill walkthrough](docs/first-skill.md) to install the engine, save your prompt as a command,
-validate it and publish it to your AI clients. The guide includes a complete `acme-review` skill and recipe
+validate it and publish it to your AI clients. The guide includes a complete `acme-cmd-review` skill and recipe
 examples. Initialization creates the project structure; skills become available after you author and synchronize them.
 
 Once the example skill is published, invoke it in Codex with:
 
 ```text
-$acme-review target=HEAD focus=security
+$acme-cmd-review target=HEAD focus=security
 ```
 
-Claude Code uses `/acme-review target=HEAD focus=security`. The review criteria stay in the shared skill;
+Claude Code uses `/acme-cmd-review target=HEAD focus=security`. The review criteria stay in the shared skill;
 only the inputs change between invocations.
 
 > [!TIP]

@@ -190,11 +190,11 @@ class RecipeNamingTest(unittest.TestCase):
                 result = self.run_cli(root, 'recipe', 'plan', 'acme-recipe-reviewed-change',
                                       '--adapter', adapter, '--input', 'target=HEAD')
                 self.assertEqual(0, result.returncode, result.stderr)
-                self.assertEqual(['acme-review', 'acme-report-review'],
+                self.assertEqual(['acme-cmd-review', 'acme-cmd-report-review'],
                                  [step['uses'] for step in json.loads(result.stdout)['execution']['steps']])
             result = self.run_cli(root, 'sync')
             self.assertEqual(0, result.returncode, result.stderr)
             for client in ('.agents', '.claude'):
-                for name in ('acme-detect-changes', 'acme-review', 'acme-report-review',
+                for name in ('acme-cmd-detect-changes', 'acme-cmd-review', 'acme-cmd-report-review',
                              'acme-recipe-reviewed-change', 'acme-recipe-review-security-if-changed'):
                     self.assertTrue((root / client / 'skills' / name).is_symlink())

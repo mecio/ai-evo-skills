@@ -1,5 +1,5 @@
 ---
-name: acme-detect-changes
+name: acme-cmd-detect-changes
 description: Detect whether the tracked working tree differs from a local Git target before a conditional review.
 metadata:
   ai-evo-kind: command
@@ -29,7 +29,7 @@ inputs:
 
 1. If an `ai-evo-execution-handoff` is supplied, apply its resolved inputs, working directory, policy and
    profile instructions; continue at step 4 without planning again.
-2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-detect-changes` with `--adapter` set to the current
+2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan acme-cmd-detect-changes` with `--adapter` set to the current
    adapter, each received input as `--input key=value`, and any requested `--ai-effort-profile`.
    Stop if planning or validation fails.
 3. Pass the complete resolved plan JSON to `.ai-evo/bin/ai-evo-skills command execute` on stdin.
@@ -59,6 +59,6 @@ Exactly `changed` or `clean` on success. A Git or inspection error is a failed t
 ## Examples
 
 ```text
-$acme-detect-changes
-/acme-detect-changes
+$acme-cmd-detect-changes
+/acme-cmd-detect-changes
 ```

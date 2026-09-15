@@ -10,12 +10,12 @@ inputs:
     default: correctness
 steps:
   - id: review
-    uses: acme-review
+    uses: acme-cmd-review
     with:
       target: "${{ inputs.target }}"
       focus: "${{ inputs.focus }}"
   - id: report
-    uses: acme-report-review
+    uses: acme-cmd-report-review
     with:
       review: "${{ steps.review.output }}"
       target: "${{ inputs.target }}"

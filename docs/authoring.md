@@ -23,10 +23,15 @@ You can create several commands, recipes and profiles before completing them. Al
 Examples under `.ai-evo/examples/` are documentation and are never installed by `init`.
 
 Recipe names must be `<namespace>-recipe-<name>` in both collections; directory names, `SKILL.md` frontmatter,
-`recipe.yaml` and references to nested recipes must agree. Commands retain `<namespace>-<name>`, without
-an added `command-` marker. The complete skill name must fit within 64 characters, including the recipe marker.
+`recipe.yaml` and references to nested recipes must agree. New commands use `<namespace>-cmd-<name>`
+consistently in the directory, frontmatter, planning instructions and invocations. The complete skill name
+must fit within 64 characters, including its marker.
 
-Pass short names to `create`; it adds the namespace and recipe marker. See the
+Pass short names to `create`; it adds the namespace and the `cmd-` or `recipe-` marker.
+For commands, `create command review` produces `<namespace>-cmd-review`. Already prefixed names such as
+`cmd-review` or `<namespace>-cmd-review` are rejected; pass `review`. Existing commands with legacy names
+remain valid. To rename one, update its directory, frontmatter, planning instructions, invocations and recipe
+`uses` references, then run `validate` and `sync`. See the
 [naming rules and migration guide](recipe-naming-migration.md) for rejected forms and existing recipes.
 
 ## Command contract

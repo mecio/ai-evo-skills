@@ -56,7 +56,7 @@ Input references are resolved during planning. Output references remain typed ob
 ```json
 {
   "id": "review",
-  "uses": "acme-review",
+  "uses": "acme-cmd-review",
   "when": {
     "all": [
       {"value": {"type": "ai-evo-step-output", "step": "detect"}, "normalize": "trim", "equals": "changed"}

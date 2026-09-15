@@ -8,9 +8,9 @@ namespace and work with either bundled adapter. `init` does not install this cat
 
 | Artifact | Purpose |
 |---|---|
-| [acme-detect-changes](catalog/commands/acme-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
-| [acme-review](catalog/commands/acme-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
-| [acme-report-review](catalog/commands/acme-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
+| [acme-cmd-detect-changes](catalog/commands/acme-cmd-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
+| [acme-cmd-review](catalog/commands/acme-cmd-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
+| [acme-cmd-report-review](catalog/commands/acme-cmd-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
 | [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Always run review, then reporting. |
 | [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Detect changes, conditionally review security, then report the review or its skip. |
 
@@ -32,7 +32,7 @@ cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes
 ./.ai-evo/bin/ai-evo-skills sync
 ```
 
-If you already created `acme-review` from the tutorial, choose which implementation to keep before copying;
+If you already created `acme-cmd-review` from the tutorial, choose which implementation to keep before copying;
 the copy commands overwrite matching files. This boilerplate gives `target` a `HEAD` default so the recipes
 and review command can be invoked without arguments. It reuses the default effort profile created by `init`.
 
@@ -45,7 +45,7 @@ recipe names, `uses` references and invocation examples before validation. See t
 Open your AI client in the application repository. In Codex:
 
 ```text
-$acme-review
+$acme-cmd-review
 $acme-recipe-reviewed-change
 $acme-recipe-review-security-if-changed
 ```
