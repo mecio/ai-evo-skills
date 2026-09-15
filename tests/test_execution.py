@@ -128,16 +128,15 @@ print('executed without replanning')
             self.initialize(root, 'codex', 'claude')
             self.add_command(root)
             skill = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
-            skill.write_text(fixtures.VALID_COMMAND.replace('executor: current', 'executor: claude'))
             second = skill.parent.parent / 'abc-verify/SKILL.md'
             second.parent.mkdir()
-            second.write_text(fixtures.VALID_COMMAND.replace('abc-inspect', 'abc-verify').replace('executor: current', 'executor: codex').replace('inputs: {}', 'inputs:\n  review:\n    description: Prior result\n    required: true'))
+            second.write_text(fixtures.VALID_COMMAND.replace('abc-inspect', 'abc-verify').replace('inputs: {}', 'inputs:\n  review:\n    description: Prior result\n    required: true'))
             recipe = root / '.ai-evo-prj/skills/catalog/recipes/abc-recipe-flow'
             recipe.mkdir()
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             (recipe / 'recipe.yaml').write_text(yaml.safe_dump({
-                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'codex', 'inputs': {},
-                'steps': [{'id': 'review', 'uses': 'abc-inspect'}, {'id': 'verify', 'uses': 'abc-verify', 'with': {'review': '${{ steps.review.output }}'}}],
+                'version': '1.0', 'name': 'abc-recipe-flow', 'inputs': {},
+                'steps': [{'id': 'review', 'uses': 'abc-inspect', 'executor': 'claude'}, {'id': 'verify', 'uses': 'abc-verify', 'executor': 'codex', 'with': {'review': '${{ steps.review.output }}'}}],
                 'outputs': {'result': {'value': '${{ steps.verify.output }}'}},
             }))
             result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')

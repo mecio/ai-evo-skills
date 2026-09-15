@@ -1,12 +1,13 @@
 version: "1.0"
 name: <namespace>-recipe-<skill-name>
-executor: current
 
 inputs: {}
 
 steps:
   - id: TODO
     uses: <namespace>-TODO
+    # Optional executor for this call; omit to use the current AI:
+    # executor: claude
     # Optional exact comparison; references must name an input or an earlier step:
     # when:
     #   value: "${{ inputs.context }}"

@@ -80,8 +80,10 @@ targets:
     enabled: false
 ```
 
-An `executor: current` skill is published to every enabled target; an explicit executor limits publication
-to that adapter. For recipes, the executor selects the coordinator; child commands may use a different adapter.
+Commands and recipes always use the invoking AI and are published to every enabled target. They cannot
+declare an executor. Step executors select the AI for individual calls without limiting publication of the
+recipe or child command.
+See [executor selection](authoring.md#executor-selection) for nested calls and precedence.
 
 Every target keeps an expressive `id`, its engine `adapter`, a project-relative native skill `path` and an
 explicit `enabled` value. Disabled targets remain documented, while `sync` removes their managed links.
@@ -104,12 +106,11 @@ need remote `$schema` URLs. Schema `$id` values are versioned `urn:ai-evo-skills
 network lookup. The validator checks only adapters named by project targets, including disabled targets, and
 rejects unsafe absolute or parent-traversing paths. Skill directories, `SKILL.md` files and `recipe.yaml` files may
 not be symbolic links. `sync` manages only links whose destinations belong to the canonical catalog or personal
-recipe area. A recipe that would be published is invalid when one of its commands requires a disabled adapter or
-one of its nested recipes requires another coordinator.
+recipe area. A recipe that would be published is invalid when a command or nested call resolves to a disabled
+adapter, even if that step's condition would skip it.
 
-Catalog skills may name an adapter supplied by the engine even when that adapter is absent from the current
-project configuration; such skills remain dormant in that project. The adapter file is validated when a project
-target names it, and any published recipe that reaches it still fails validation until the adapter is enabled.
+Step executors must name an adapter supplied by the engine or `current`. The adapter file is validated when
+a project target names it; a published recipe cannot use an adapter absent from the project configuration.
 
 The frontmatter accepts the Agent Skills fields `name`, `description`, `license`, `compatibility`, `metadata` and
 `allowed-tools`. AI Evo Skills additionally validates their basic types and uses the string metadata keys

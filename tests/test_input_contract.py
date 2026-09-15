@@ -22,7 +22,7 @@ class InputContractTest(unittest.TestCase):
             recipe.mkdir(parents=True)
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             data = {
-                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'current',
+                'version': '1.0', 'name': 'abc-recipe-flow',
                 'inputs': {'target': {'description': 'Target', 'default': 'main'}},
                 'steps': [{'id': 'first', 'uses': 'abc-inspect', 'with': {'value': 'initial'}},
                           {'id': 'second', 'uses': 'abc-inspect',

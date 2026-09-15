@@ -63,7 +63,6 @@ Find actionable regressions in tracked changes relative to a Git target, using t
 ## Interface
 
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-only
   network: disabled
@@ -158,7 +157,6 @@ Update that source when the team's prompt improves, then validate and synchroniz
 > ```yaml
 > version: "1.0"
 > name: acme-recipe-review-security-head
-> executor: current
 > inputs: {}
 > steps:
 >   - id: review
@@ -186,25 +184,26 @@ Claude and a verification command in Codex, while Codex coordinates the sequence
 
 This creates `acme-recipe-reviewed-change` with a `SKILL.md` and `recipe.yaml`. Complete the generated
 `SKILL.md` descriptions while preserving its coordinator procedure. The following illustrative `recipe.yaml`
-assumes two completed shared commands: `acme-cmd-review-with-claude`, accepting `target`, and
-`acme-cmd-verify-with-codex`, accepting `target` and the previous `review`. Set their executors to `claude` and
-`codex` respectively, and enable both adapters.
+assumes two completed shared commands: `acme-cmd-review`, accepting `target`, and
+`acme-cmd-verify`, accepting `target` and the previous `review`. Leave their executors unset and enable both
+adapters. The recipe chooses the executor for each call.
 
 ```yaml
 version: "1.0"
 name: acme-recipe-reviewed-change
-executor: codex
 inputs:
   target:
     description: Local Git commit or ref to compare with the tracked working tree.
     required: true
 steps:
   - id: review
-    uses: acme-cmd-review-with-claude
+    uses: acme-cmd-review
+    executor: claude
     with:
       target: "${{ inputs.target }}"
   - id: verify
-    uses: acme-cmd-verify-with-codex
+    uses: acme-cmd-verify
+    executor: codex
     with:
       target: "${{ inputs.target }}"
       review: "${{ steps.review.output }}"
@@ -215,7 +214,8 @@ outputs:
 
 The verification prompt should check each finding against the diff, discard unsupported claims and return a
 final report. After completing both commands and the recipe, run `validate` and `sync`, then invoke
-`$acme-recipe-reviewed-change target=HEAD` in Codex. The second step receives the first report automatically.
+`$acme-recipe-reviewed-change target=HEAD` in Codex or `/acme-recipe-reviewed-change target=HEAD` in Claude.
+The invoking AI coordinates both calls. The second step receives the first report automatically.
 Steps run in declared order and stop on failure; forward references and dependency cycles are rejected.
 
 Without `--catalog`, recipes are created under `skills/custom/recipes` and ignored by Git. Commands always

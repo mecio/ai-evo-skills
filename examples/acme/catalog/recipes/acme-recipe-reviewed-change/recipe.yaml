@@ -1,6 +1,5 @@
 version: "1.0"
 name: acme-recipe-reviewed-change
-executor: current
 inputs:
   target:
     description: Local Git commit or ref to compare with the tracked working tree, excluding submodules.

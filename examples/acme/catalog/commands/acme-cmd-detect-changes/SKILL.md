@@ -15,7 +15,6 @@ Detect whether the tracked working tree differs from a local Git target before a
 ## Interface
 
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-only
   network: disabled

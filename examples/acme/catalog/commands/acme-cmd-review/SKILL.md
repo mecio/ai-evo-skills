@@ -15,7 +15,6 @@ Review tracked changes against a local Git target and report actionable findings
 ## Interface
 
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-only
   network: disabled

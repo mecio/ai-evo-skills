@@ -15,7 +15,6 @@ Summarize a supplied review and clearly distinguish a completed review from a sk
 ## Interface
 
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-only
   network: disabled

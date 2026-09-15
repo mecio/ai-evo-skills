@@ -35,7 +35,7 @@ class RecipeConditionsTest(unittest.TestCase):
             recipe.mkdir(parents=True)
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             data = {
-                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'current',
+                'version': '1.0', 'name': 'abc-recipe-flow',
                 'inputs': {'php': {'description': 'PHP context', 'default': 'php83'}},
                 'steps': [{'id': 'detect', 'uses': 'abc-detect'},
                           {'id': 'legacy', 'uses': 'abc-legacy'},
@@ -223,8 +223,7 @@ class RecipeConditionsTest(unittest.TestCase):
     def test_false_condition_does_not_hide_disabled_executor_or_cycles(self):
         with self.project() as (root, path, data):
             data['steps'][2]['when'] = {'value': '${{ inputs.php }}', 'equals': 'never'}
-            skill = root / '.ai-evo-prj/skills/catalog/commands/abc-unit/SKILL.md'
-            skill.write_text(skill.read_text().replace('executor: current', 'executor: claude'))
+            data['steps'][2]['executor'] = 'claude'
             config_path = root / '.ai-evo-skills.yaml'
             config = yaml.safe_load(config_path.read_text())
             config['targets'][1]['enabled'] = False
@@ -245,7 +244,7 @@ class RecipeConditionsTest(unittest.TestCase):
             nested.mkdir()
             (nested / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL.replace('abc-recipe-flow', 'abc-recipe-nested'))
             (nested / 'recipe.yaml').write_text(yaml.safe_dump({
-                'version': '1.0', 'name': 'abc-recipe-nested', 'executor': 'current', 'inputs': {},
+                'version': '1.0', 'name': 'abc-recipe-nested', 'inputs': {},
                 'steps': [{'id': 'first', 'uses': 'abc-unit'},
                           {'id': 'second', 'uses': 'abc-unit', 'when': {'value': '${{ steps.first.output }}', 'equals': 'go'}}],
                 'outputs': {'result': {'value': '${{ steps.second.output }}'}},

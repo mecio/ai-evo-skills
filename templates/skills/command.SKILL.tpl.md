@@ -15,7 +15,6 @@ TODO
 ## Interface
 
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-write
   network: auto

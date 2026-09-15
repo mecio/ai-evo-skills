@@ -123,7 +123,7 @@ class PublicationPathsTest(unittest.TestCase):
                     recipe.mkdir()
                     (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
                     (recipe / 'recipe.yaml').write_text(yaml.safe_dump({
-                        'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'codex', 'inputs': {},
+                        'version': '1.0', 'name': 'abc-recipe-flow', 'inputs': {},
                         'steps': [{'id': 'inspect', 'uses': 'abc-inspect'}],
                         'outputs': {'result': {'value': '${{ steps.inspect.output }}'}},
                     }))

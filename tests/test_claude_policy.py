@@ -205,7 +205,7 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
             self.initialize(root, 'codex', 'claude')
             self.add_command(root)
             command = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
-            body = fixtures.VALID_COMMAND.replace('executor: current', 'executor: claude').replace(
+            body = fixtures.VALID_COMMAND.replace(
                 'inputs: {}', 'inputs:\n  target: {description: Git target, default: current}\n'
                 '  base: {description: Base branch, default: master}\n'
                 '  focus: {description: Review focus, default: general}\n'
@@ -215,8 +215,8 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
             recipe.mkdir()
             (recipe / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL)
             (recipe / 'recipe.yaml').write_text(yaml.safe_dump({
-                'version': '1.0', 'name': 'abc-recipe-flow', 'executor': 'codex', 'inputs': {},
-                'steps': [{'id': 'review', 'uses': 'abc-inspect', 'with': {
+                'version': '1.0', 'name': 'abc-recipe-flow', 'inputs': {},
+                'steps': [{'id': 'review', 'uses': 'abc-inspect', 'executor': 'claude', 'with': {
                     'target': 'current', 'base': 'master', 'focus': 'general', 'constraints': ''}}],
                 'outputs': {'result': {'value': '${{ steps.review.output }}'}},
             }))
@@ -235,9 +235,11 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
 
             # Network-only restrictions must continue to permit native edits.
             command.write_text(body.replace('workspace: read-only', 'workspace: read-write'))
-            result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'codex')
+            result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')
             self.assertEqual(0, result.returncode, result.stderr)
-            actual = options(json.loads(result.stdout)['application']['cli_arguments'])
+            step = json.loads(result.stdout)['execution']['steps'][0]
+            validate_plan(step)
+            actual = options(step['application']['cli_arguments'])
             for name in ('Edit', 'Write', 'NotebookEdit'):
                 self.assertIn(name, actual['--tools'].split(','))
                 self.assertIn(name, actual['--allowedTools'].split(','))

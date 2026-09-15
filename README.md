@@ -16,10 +16,10 @@ A recipe can pass that review to a second skill that verifies the findings again
 
 AI Evo Skills is a small, project-local orchestration layer built on the Agent Skills format:
 
-- **Commands** store atomic operations in a `SKILL.md`, with a prompt, named inputs, an executor and execution
+- **Commands** store atomic operations in a `SKILL.md`, with a prompt, named inputs and execution
   policies. Shared commands belong to the team's catalog.
 - **Recipes** compose commands or other recipes into an ordered workflow. They pass inputs and earlier results
-  between steps, validate dependencies and stop at the first failure.
+  between steps, choose an executor for each call, validate dependencies and stop at the first failure.
 - **Adapters** publish the relevant skills into each enabled AI client's native project directory and translate
   common execution policies into its CLI controls. Bundled adapters support Codex and Claude Code.
 - **Effort profiles** define shared preferences for reasoning, tests, resource use and reporting.

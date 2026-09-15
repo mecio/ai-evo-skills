@@ -4,14 +4,10 @@
   "title": "AI Evo Skills recipe",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "name", "executor", "inputs", "steps", "outputs"],
+  "required": ["version", "name", "inputs", "steps", "outputs"],
   "properties": {
     "version": { "const": "1.0" },
     "name": { "$ref": "#/$defs/recipeName" },
-    "executor": {
-      "type": "string",
-      "pattern": "^(current|[a-z][a-z0-9-]*)$"
-    },
     "inputs": { "$ref": "#/$defs/inputs" },
     "steps": {
       "type": "array",
@@ -23,6 +19,10 @@
         "properties": {
           "id": { "$ref": "#/$defs/identifier" },
           "uses": { "$ref": "#/$defs/skillName" },
+          "executor": {
+            "type": "string",
+            "pattern": "^(current|[a-z][a-z0-9-]*)$"
+          },
           "when": {
             "type": "object",
             "additionalProperties": false,

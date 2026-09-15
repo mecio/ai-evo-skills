@@ -24,7 +24,7 @@ class RecipeNamingTest(unittest.TestCase):
         directory.mkdir(parents=True)
         (directory / 'SKILL.md').write_text(fixtures.VALID_FLOW_SKILL.replace('abc-recipe-flow', name))
         (directory / 'recipe.yaml').write_text(yaml.safe_dump({
-            'version': '1.0', 'name': name, 'executor': 'current', 'inputs': {},
+            'version': '1.0', 'name': name, 'inputs': {},
             'steps': [{'id': 'inspect', 'uses': uses}],
             'outputs': {'result': {'value': '${{ steps.inspect.output }}'}},
         }))

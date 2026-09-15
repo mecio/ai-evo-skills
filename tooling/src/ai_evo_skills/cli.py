@@ -42,7 +42,6 @@ class Skill:
     kind: str
     path: Path
     inputs: dict[str, Any]
-    executor: str = "current"
     execution_policy: dict[str, str] | None = None
     recipe: dict[str, Any] | None = None
 
@@ -110,15 +109,17 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     return data, match.group(2)
 
 
-def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], str, dict[str, str]]:
+def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict[str, str]]:
     blocks = re.findall(r"```yaml ai-evo-interface\n(.*?)\n```", body, re.S)
     if len(blocks) != 1:
         raise EvoError(f"{path}: command must contain exactly one yaml ai-evo-interface block")
     data = load_strict_yaml(blocks[0])
-    if not isinstance(data, dict) or set(data) != {"inputs", "executor", "execution-policy"}:
-        raise EvoError(f"{path}: interface must contain inputs, executor and execution-policy")
+    if isinstance(data, dict) and "executor" in data:
+        raise EvoError(f"{path}: commands always use the current AI; executor is only supported on recipe steps")
+    if not isinstance(data, dict) or set(data) != {"inputs", "execution-policy"}:
+        raise EvoError(f"{path}: interface must contain only inputs and execution-policy")
     policy = data.get("execution-policy")
-    if not isinstance(data.get("inputs"), dict) or not isinstance(data.get("executor"), str) or not isinstance(policy, dict):
+    if not isinstance(data.get("inputs"), dict) or not isinstance(policy, dict):
         raise EvoError(f"{path}: malformed command interface")
     if (
         set(policy) != {"workspace", "network"}
@@ -127,7 +128,7 @@ def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], str,
         or policy["network"] not in {"disabled", "enabled", "auto"}
     ):
         raise EvoError(f"{path}: invalid execution-policy")
-    return data["inputs"], data["executor"], policy
+    return data["inputs"], policy
 
 
 def validate_inputs(inputs: Any, label: str) -> list[str]:
@@ -355,7 +356,6 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             if "TODO" in body or any(isinstance(value, str) and "TODO" in value for value in front.values()):
                 errors.append(f"{path}: unresolved TODO placeholder")
             recipe = None
-            executor = "current"
             execution_policy = None
             inputs: dict[str, Any] = {}
             if expected_kind == "command":
@@ -363,7 +363,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 if extra:
                     errors.append(f"{path.parent}: command directory may contain only SKILL.md: {', '.join(extra)}")
                 try:
-                    inputs, executor, execution_policy = parse_command_interface(body, path)
+                    inputs, execution_policy = parse_command_interface(body, path)
                 except (EvoError, yaml.YAMLError) as exc:
                     errors.append(str(exc))
                 errors += validate_inputs(inputs, f"{path}:inputs")
@@ -379,12 +379,12 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                         if isinstance(recipe, dict) and isinstance(recipe.get("name"), str):
                             if diagnostic := recipe_name_error(recipe["name"], namespace):
                                 errors.append(f"{recipe_path}: {diagnostic}")
+                        if isinstance(recipe, dict) and "executor" in recipe:
+                            errors.append(f"{recipe_path}: recipes always use the current AI; executor is only supported on recipe steps")
                         recipe_validation = schema_errors(recipe, engine / "schemas/recipe.schema.json", recipe_path)
                         errors += recipe_validation
                         if not recipe_validation and isinstance(recipe, dict):
                             inputs = recipe.get("inputs", {})
-                            if isinstance(recipe.get("executor"), str):
-                                executor = recipe["executor"]
                             if recipe.get("name") != name:
                                 errors.append(f"{recipe_path}: name must equal SKILL name")
                         if recipe_validation:
@@ -394,7 +394,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 extra = [item.name for item in path.parent.iterdir() if item.name not in {"SKILL.md", "recipe.yaml"}]
                 if extra:
                     errors.append(f"{path.parent}: recipe directory may contain only SKILL.md and recipe.yaml: {', '.join(extra)}")
-            registry[name] = Skill(name, expected_kind, path, inputs, executor, execution_policy, recipe)
+            registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe)
 
     profiles: dict[str, dict[str, Any]] = {}
     profiles_root = skills / "config/effort-profiles"
@@ -467,10 +467,11 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
 
     known_adapters = {path.stem for path in (engine / "adapters").glob("*.yaml")}
     for skill in registry.values():
-        if skill.executor == "current":
-            continue
-        if skill.executor not in known_adapters:
-            errors.append(f"{skill.path}: unknown executor adapter {skill.executor}")
+        if skill.recipe is not None:
+            for step in skill.recipe["steps"]:
+                executor = step.get("executor", "current")
+                if executor != "current" and executor not in known_adapters:
+                    errors.append(f"{skill.path.parent / 'recipe.yaml'}:steps.{step['id']}: unknown executor adapter {executor}")
 
     directives = project / "directives"
     for path in directives.iterdir() if directives.exists() else []:
@@ -558,45 +559,22 @@ def validate_recipes(context: Context) -> list[str]:
 
 
 def validate_recipe_executors(context: Context) -> list[str]:
-    """Ensure every published recipe can execute all descendants."""
+    """Every recipe is published to all enabled targets; check each call's override."""
     errors: list[str] = []
     enabled = {target["adapter"] for target in context.config["targets"] if target["enabled"]}
-    reported: set[tuple[str, str, str]] = set()
-
-    def check(recipe: Skill, coordinator: str, stack: set[str]) -> None:
-        if recipe.name in stack or not isinstance(recipe.recipe, dict):
-            return
-        for step in recipe.recipe.get("steps", []):
+    if not enabled:
+        return errors
+    for recipe in context.registry.values():
+        if recipe.kind != "recipe" or not isinstance(recipe.recipe, dict):
+            continue
+        for step in recipe.recipe["steps"]:
             child = context.registry.get(step.get("uses"))
             if child is None:
                 continue
-            if child.kind == "command":
-                executor = coordinator if child.executor == "current" else child.executor
-                if executor not in enabled:
-                    key = (recipe.name, child.name, executor)
-                    if key not in reported:
-                        errors.append(
-                            f"{recipe.name}: command {child.name} requires disabled adapter {executor}"
-                        )
-                        reported.add(key)
-            else:
-                if child.executor not in {"current", coordinator}:
-                    key = (recipe.name, child.name, child.executor)
-                    if key not in reported:
-                        errors.append(
-                            f"{recipe.name}: nested recipe {child.name} requires coordinator "
-                            f"{child.executor}, not {coordinator}"
-                        )
-                        reported.add(key)
-                    continue
-                check(child, coordinator, stack | {recipe.name})
-
-    for skill in context.registry.values():
-        if skill.kind != "recipe" or not isinstance(skill.recipe, dict):
-            continue
-        coordinators = enabled if skill.executor == "current" else {skill.executor} & enabled
-        for coordinator in sorted(coordinators):
-            check(skill, coordinator, set())
+            executor = step.get("executor", "current")
+            if executor != "current" and executor not in enabled:
+                kind = "command" if child.kind == "command" else "nested recipe"
+                errors.append(f"{recipe.name}:steps.{step['id']}: {kind} {child.name} requires disabled adapter {executor}")
     return errors
 
 
@@ -673,8 +651,11 @@ def profile_payload(context: Context, name: str | None, adapter_id: str) -> dict
     }
 
 
-def command_application(context: Context, skill: Skill, profile_name: str | None, current_adapter: str) -> dict[str, Any]:
-    adapter_id = current_adapter if skill.executor == "current" else skill.executor
+def command_application(
+    context: Context, skill: Skill, profile_name: str | None, current_adapter: str,
+    *, executor: str = "current",
+) -> dict[str, Any]:
+    adapter_id = current_adapter if executor == "current" else executor
     payload = profile_payload(context, profile_name, adapter_id)
     adapter = context.adapters[adapter_id]
     arguments = list(payload["delegated_cli_arguments"])
@@ -716,7 +697,7 @@ def command_application(context: Context, skill: Skill, profile_name: str | None
             compact.extend([deny_option, ",".join(dict.fromkeys(denied))])
         arguments = compact
     restrictive_policy = policy.get("workspace") == "read-only" or policy.get("network") == "disabled"
-    delegated = skill.executor != "current" or restrictive_policy
+    delegated = executor != "current" or restrictive_policy
     return {
         "executor": adapter_id,
         "mode": "delegated" if delegated else "current",
@@ -773,7 +754,6 @@ def cmd_sync(args: argparse.Namespace) -> None:
             name: skill
             for name, skill in context.registry.items()
             if target["enabled"]
-            and skill.executor in {"current", target["adapter"]}
         }
         directory = context.repo / target["path"]
         resolved_directory = directory.resolve(strict=False)
@@ -1230,14 +1210,13 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     root = context.registry.get(args.name)
     if not root or root.kind != "recipe":
         raise EvoError(f"unknown recipe {args.name}")
-    if root.executor not in {"current", args.adapter}:
-        raise EvoError(f"recipe {root.name} requires coordinator adapter {root.executor}, not {args.adapter}")
     initial = resolve_inputs(root.inputs, args.input)
     plan: list[dict[str, Any]] = []
 
-    def expand(skill: Skill, supplied: dict[str, Any], prefix: str, inherited: list[dict[str, Any]]) -> Any:
-        if skill.executor not in {"current", args.adapter}:
-            raise EvoError(f"recipe {skill.name} requires coordinator adapter {skill.executor}, not {args.adapter}")
+    def expand(
+        skill: Skill, supplied: dict[str, Any], prefix: str,
+        inherited: list[dict[str, Any]], coordinator: str, delegated_scope: bool,
+    ) -> Any:
         values = {key: supplied.get(key, spec.get("default")) for key, spec in skill.inputs.items()}
         outputs: dict[str, Any] = {}
         assert skill.recipe is not None
@@ -1255,15 +1234,25 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
                 if "normalize" in step["when"]:
                     guards[-1]["normalize"] = step["when"]["normalize"]
             if child.kind == "recipe":
-                outputs[step["id"]] = expand(child, child_values, full_id, guards)
+                declared = step.get("executor", "current")
+                child_coordinator = coordinator if declared == "current" else declared
+                outputs[step["id"]] = expand(
+                    child, child_values, full_id, guards, child_coordinator,
+                    delegated_scope or declared != "current",
+                )
             else:
-                plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter), "handoff": resolved_handoff(child, recipe=True)})
+                executor = step.get("executor", "current")
+                # A nested recipe's current AI may differ from the root coordinator.
+                # Its commands then need delegated execution, even without restrictions.
+                if executor == "current" and (delegated_scope or coordinator != args.adapter):
+                    executor = coordinator
+                plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter, executor=executor), "handoff": resolved_handoff(child, recipe=True)})
                 if guards:
                     plan[-1]["when"] = {"all": guards}
                 outputs[step["id"]] = step_output_reference(full_id)
         return resolve_value(skill.recipe["outputs"]["result"]["value"], values, outputs)
 
-    result = expand(root, initial, "", [])
+    result = expand(root, initial, "", [], args.adapter, False)
     payload = {
         "version": PROTOCOL_VERSION,
         "recipe": root.name,

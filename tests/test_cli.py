@@ -27,7 +27,6 @@ metadata:
 Inspect a target.
 ## Interface
 ```yaml ai-evo-interface
-executor: current
 execution-policy:
   workspace: read-only
   network: disabled
@@ -276,7 +275,6 @@ class CliIntegrationTest(unittest.TestCase):
             (recipe / "SKILL.md").write_text(VALID_RECIPE_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
 name: abc-recipe-loop
-executor: current
 inputs: {}
 steps:
   - id: recurse
@@ -304,7 +302,7 @@ outputs:
                     recipe.mkdir()
                     (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
                     (recipe / "recipe.yaml").write_text(yaml.safe_dump({
-                        "version": "1.0", "name": "abc-recipe-flow", "executor": "current",
+                        "version": "1.0", "name": "abc-recipe-flow",
                         "inputs": {}, "steps": [{"id": "inspect", "uses": "abc-inspect"}],
                         "outputs": {"result": {"value": "${{ steps.inspect.output }}"}},
                     }))
@@ -350,7 +348,7 @@ outputs:
                         recipe.mkdir()
                         (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL.replace("abc-recipe-flow", name))
                         (recipe / "recipe.yaml").write_text(yaml.safe_dump({
-                            "version": "1.0", "name": name, "executor": "current",
+                            "version": "1.0", "name": name,
                             "inputs": definitions, "steps": [{"id": "run", "uses": used}],
                             "outputs": {"result": {"value": "${{ steps.run.output }}"}},
                         }))
@@ -364,7 +362,7 @@ outputs:
                         self.assertNotIn("Traceback", result.stderr)
                     self.assertFalse((root / ".agents/skills").exists())
 
-    def test_recipe_is_published_only_to_its_coordinator(self):
+    def test_step_executor_does_not_restrict_recipe_publication(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex", "claude")
@@ -374,41 +372,38 @@ outputs:
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
 name: abc-recipe-flow
-executor: codex
 inputs: {}
 steps:
   - id: inspect
     uses: abc-inspect
+    executor: claude
 outputs:
   result:
     value: "${{ steps.inspect.output }}"
 """)
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
             self.assertTrue((root / ".agents/skills/abc-recipe-flow").is_symlink())
-            self.assertFalse((root / ".claude/skills/abc-recipe-flow").exists())
-            rejected = self.run_cli(root, "recipe", "plan", "abc-recipe-flow", "--adapter", "claude")
-            self.assertNotEqual(0, rejected.returncode)
-            self.assertIn("requires coordinator adapter codex", rejected.stderr)
+            self.assertTrue((root / ".claude/skills/abc-recipe-flow").is_symlink())
+            for adapter in ("codex", "claude"):
+                planned = self.run_cli(root, "recipe", "plan", "abc-recipe-flow", "--adapter", adapter)
+                self.assertEqual(0, planned.returncode, planned.stderr)
+                self.assertEqual("claude", json.loads(planned.stdout)["execution"]["steps"][0]["application"]["executor"])
 
-    def test_command_is_published_only_to_its_executor(self):
+    def test_command_is_published_to_every_enabled_adapter(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex", "claude")
             self.add_command(root)
-            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
-            command.write_text(command.read_text().replace("executor: current", "executor: codex"))
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
             self.assertTrue((root / ".agents/skills/abc-inspect").is_symlink())
-            self.assertFalse((root / ".claude/skills/abc-inspect").exists())
+            self.assertTrue((root / ".claude/skills/abc-inspect").is_symlink())
 
     def test_claude_read_only_policy_preserves_git_command_access(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex", "claude")
             self.add_command(root)
-            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
-            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
-            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "codex")
+            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "claude")
             self.assertEqual(0, result.returncode, result.stderr)
             arguments = json.loads(result.stdout)["application"]["cli_arguments"]
             self.assertIn("dontAsk", arguments)
@@ -529,23 +524,21 @@ outputs:
             self.assertEqual(original, profile.read_text())
             self.assertEqual(0, self.run_cli(repositories[1], "validate").returncode)
 
-    def test_published_recipe_rejects_a_disabled_command_executor(self):
+    def test_published_recipe_rejects_a_disabled_step_executor(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex", "claude")
             self.add_command(root)
-            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
-            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
             recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
             recipe.mkdir(parents=True)
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
 name: abc-recipe-flow
-executor: codex
 inputs: {}
 steps:
   - id: inspect
     uses: abc-inspect
+    executor: claude
 outputs:
   result:
     value: "${{ steps.inspect.output }}"
@@ -598,16 +591,17 @@ outputs:
             self.assertNotEqual(0, result.returncode)
             self.assertIn("prompt-delivery", result.stderr)
 
-    def test_unconfigured_executor_may_remain_dormant_in_catalog(self):
+    def test_command_uses_only_configured_current_adapter(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex")
             self.add_command(root)
-            command = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
-            command.write_text(command.read_text().replace("executor: current", "executor: claude"))
             self.assertEqual(0, self.run_cli(root, "validate").returncode)
             self.assertEqual(0, self.run_cli(root, "sync").returncode)
-            self.assertFalse((root / ".agents/skills/abc-inspect").exists())
+            self.assertTrue((root / ".agents/skills/abc-inspect").is_symlink())
+            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "codex")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("codex", json.loads(result.stdout)["application"]["executor"])
 
     def test_validate_rejects_symbolic_skill_directories(self):
         temporary, root = self.repository()
@@ -678,7 +672,7 @@ outputs:
                     recipe.mkdir()
                     (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
                     (recipe / "recipe.yaml").write_text(yaml.safe_dump({
-                        "version": "1.0", "name": "abc-recipe-flow", "executor": "current",
+                        "version": "1.0", "name": "abc-recipe-flow",
                         "inputs": {}, "steps": [{"id": "run", "uses": "abc-inspect"}],
                         "outputs": {"result": {"value": "${{ steps.run.output }}"}},
                     }))
@@ -731,7 +725,6 @@ outputs:
             (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
             (recipe / "recipe.yaml").write_text("""version: "1.0"
 name: abc-recipe-flow
-executor: codex
 inputs: {}
 steps:
   - id: first

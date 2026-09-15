@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-No unreleased changes.
+- Commands and recipes always use the invoking AI and are published to every enabled target. Reject executor
+  declarations in command interfaces and at recipe level, including explicit `current`; only recipe steps
+  may declare an executor. Update templates, examples and documentation to this contract.
+- Allow per-step executor overrides for commands and nested recipes, with local inheritance through nested
+  calls. Preserve command policies, adapter-specific profiles, sequential execution and runtime snapshots.
+- Validate unknown or disabled step executors before planning or publication, including skipped branches.
+- This is an incompatible beta change within on-disk protocol `1.0`. Remove old command and recipe executor
+  declarations, move required delegation to calling steps, regenerate plans and synchronize. See
+  [executor migration](docs/authoring.md#migrating-existing-executor-declarations).
 
 ## 0.1.0-beta.4
 
