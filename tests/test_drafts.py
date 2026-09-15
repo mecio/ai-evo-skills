@@ -19,7 +19,7 @@ class DraftTest(unittest.TestCase):
                 yaml.safe_load(path.read_text().split('---\n')[1])
             for path in (root / '.ai-evo-prj/skills').rglob('*.yaml'):
                 yaml.safe_load(path.read_text())
-            for args in [('validate',), ('sync',), ('command', 'plan', 'abc-one', '--adapter', 'codex')]:
+            for args in [('validate',), ('sync',), ('command', 'plan', 'abc-cmd-one', '--adapter', 'codex')]:
                 result = self.run_cli(root, *args)
                 self.assertNotEqual(0, result.returncode)
                 self.assertIn('TODO', result.stderr)

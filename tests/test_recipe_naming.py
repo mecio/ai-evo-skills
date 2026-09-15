@@ -30,7 +30,7 @@ class RecipeNamingTest(unittest.TestCase):
         }))
         return directory
 
-    def test_create_uses_recipe_prefix_in_both_collections_and_keeps_command_names(self):
+    def test_create_uses_distinct_recipe_and_command_prefixes(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, 'codex')
@@ -48,7 +48,7 @@ class RecipeNamingTest(unittest.TestCase):
                 self.assertFalse(directory.with_name('abc-' + name).exists())
             result = self.run_cli(root, 'create', 'command', 'my-review')
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertTrue((root / '.ai-evo-prj/skills/catalog/commands/abc-my-review/SKILL.md').is_file())
+            self.assertTrue((root / '.ai-evo-prj/skills/catalog/commands/abc-cmd-my-review/SKILL.md').is_file())
 
     def test_create_rejects_prefixed_names_without_writes_and_counts_full_length(self):
         temporary, root = self.repository()

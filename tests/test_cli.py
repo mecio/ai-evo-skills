@@ -661,7 +661,6 @@ outputs:
         cases = (
             ("catalog/recipes", ("recipe", "inspect")),
             ("catalog/recipes", ("recipe", "inspect", "--catalog")),
-            ("catalog/recipes", ("command", "recipe-flow")),
             ("catalog/recipes", ("recipe", "flow")),
             ("custom/recipes", ("recipe", "flow", "--catalog")),
         )

@@ -1,5 +1,5 @@
 ---
-name: <namespace>-<skill-name>
+name: <namespace>-cmd-<skill-name>
 description: "TODO: explain when the AI must use this atomic command and what result it produces."
 metadata:
   ai-evo-kind: command
@@ -25,7 +25,7 @@ inputs: {}
 ## Procedure
 
 1. When an `ai-evo-execution-handoff` is supplied, execute its resolved task directly and skip steps 2-4.
-2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan <namespace>-<skill-name>` with the current adapter, the received
+2. Otherwise run `.ai-evo/bin/ai-evo-skills command plan <namespace>-cmd-<skill-name>` with the current adapter, the received
    inputs and the optional `--ai-effort-profile`.
 3. Stop if planning or validation fails.
 4. Apply the returned working directory, execution mode, native CLI arguments, prompt delivery, policy
@@ -49,5 +49,5 @@ TODO
 ## Examples
 
 ```text
-/<namespace>-<skill-name>
+/<namespace>-cmd-<skill-name>
 ```

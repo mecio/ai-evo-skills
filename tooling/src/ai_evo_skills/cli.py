@@ -848,24 +848,26 @@ def ensure_short_name(name: str, namespace: str) -> None:
 def cmd_create(args: argparse.Namespace) -> None:
     context = validated_context(for_creation=True)
     namespace, short = context.config["namespace"], args.name
-    if args.create_kind == "recipe":
+    marker = {"command": "cmd", "recipe": "recipe"}.get(args.create_kind)
+    if marker:
         if short.startswith(namespace + "-"):
             suggestion = short[len(namespace) + 1:]
-            while suggestion.startswith("recipe-"):
-                suggestion = suggestion[len("recipe-"):]
-            raise EvoError(f"pass the unprefixed recipe name {suggestion!r}; {namespace}-recipe- is added automatically")
-        if short == "recipe" or short.startswith("recipe-"):
+            while suggestion.startswith(marker + "-"):
+                suggestion = suggestion[len(marker) + 1:]
+            suggestion = suggestion if suggestion and suggestion != marker else "<name>"
+            raise EvoError(f"pass the unprefixed {args.create_kind} name {suggestion!r}; {namespace}-{marker}- is added automatically")
+        if short == marker or short.startswith(marker + "-"):
             suggestion = short
-            while suggestion.startswith("recipe-"):
-                suggestion = suggestion[len("recipe-"):]
-            suggestion = suggestion if suggestion and suggestion != "recipe" else "<name>"
-            raise EvoError(f"pass the unprefixed recipe name {suggestion!r}; {namespace}-recipe- is added automatically")
-        foreign = re.fullmatch(r"([a-z]{3,6})-recipe-(.+)", short)
+            while suggestion.startswith(marker + "-"):
+                suggestion = suggestion[len(marker) + 1:]
+            suggestion = suggestion if suggestion and suggestion != marker else "<name>"
+            raise EvoError(f"pass the unprefixed {args.create_kind} name {suggestion!r}; {namespace}-{marker}- is added automatically")
+        foreign = re.fullmatch(fr"([a-z]{{3,6}})-{marker}-(.+)", short)
         if foreign:
-            raise EvoError(f"recipe namespace {foreign[1]!r} does not match project namespace {namespace!r}; "
+            raise EvoError(f"{args.create_kind} namespace {foreign[1]!r} does not match project namespace {namespace!r}; "
                            f"pass the unprefixed name {foreign[2]!r}")
     ensure_short_name(short, namespace)
-    name = f"{namespace}-recipe-{short}" if args.create_kind == "recipe" else f"{namespace}-{short}"
+    name = f"{namespace}-{marker}-{short}" if marker else f"{namespace}-{short}"
     if len(name) > 64:
         raise EvoError("namespaced artifact name must not exceed 64 characters")
     if args.create_kind in {"command", "recipe"} and name in context.registry:
@@ -1294,7 +1296,10 @@ def parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init"); init.add_argument("--namespace"); init.add_argument("--adapter", action="append", required=True); init.set_defaults(func=cmd_init)
     create = sub.add_parser("create"); create_sub = create.add_subparsers(dest="create_kind", required=True)
     for kind in ("command", "effort-profile"):
-        item = create_sub.add_parser(kind); item.add_argument("name"); item.set_defaults(func=cmd_create)
+        item = create_sub.add_parser(kind)
+        prefix = "<namespace>-cmd-" if kind == "command" else "<namespace>-"
+        item.add_argument("name", help=f"short name only; {prefix} is added automatically")
+        item.set_defaults(func=cmd_create)
     recipe = create_sub.add_parser("recipe")
     recipe.add_argument("name", help="short name only; <namespace>-recipe- is added automatically")
     recipe.add_argument("--catalog", action="store_true"); recipe.set_defaults(func=cmd_create)
