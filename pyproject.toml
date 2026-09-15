@@ -1,6 +1,6 @@
 [project]
 name = "ai-evo-skills"
-version = "0.1.0b3"
+version = "0.1.0b4"
 description = "Compose, validate, plan and publish project-local AI skills"
 readme = "README.md"
 authors = [

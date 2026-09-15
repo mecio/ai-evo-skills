@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.0-beta.4
+
+Changes since `0.1.0-beta.3`.
+On-disk project protocol remains `1.0`.
+
 ### Changed
 
 - `create command <name>` now generates `<namespace>-cmd-<name>` in the directory, frontmatter and
