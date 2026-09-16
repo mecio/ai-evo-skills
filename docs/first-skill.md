@@ -241,6 +241,12 @@ and references to earlier results. The recipe does not automatically repeat unti
 Steps run in declared order and stop on failure; forward references and dependency cycles are rejected.
 See [how AIs exchange results](recipe-runtime.md#how-ais-exchange-results) for the coordinator's runtime responsibilities.
 
+For a workflow combining AI judgment with deterministic tools, try the
+[runtime-tests example](../examples/runtime-tests/README.md): a command calls a script to identify the PHP
+context, the recipe selects applicable test suites, and a reporting command consumes their results.
+The [script guide](command-scripts.md) also inventories implementation verification, failure diagnosis and
+controller extraction workflows from the Enabu catalog.
+
 Without `--catalog`, recipes are created under `skills/custom/recipes` and ignored by Git. Commands always
 belong to the shared catalog. Recipe names use `<namespace>-recipe-<name>`; command names use
 `<namespace>-cmd-<name>`. Pass only the short name to `create`. See [authoring](authoring.md) for contracts,

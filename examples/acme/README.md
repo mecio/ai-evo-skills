@@ -89,3 +89,14 @@ stable during a run so detection and review see the same changes. This example d
 orchestration; the prompts and reports remain tasks performed by the AI.
 
 For the full condition and journal semantics, see the [recipe runtime guide](../../docs/recipe-runtime.md).
+
+## Extend the pattern with project scripts
+
+The [runtime-tests catalog](../runtime-tests/README.md) adapts an Enabu workflow: detect the configured PHP
+context with a script, run legacy tests, conditionally run Unit tests and report the results. Its names do
+not collide with this catalog. It includes a runnable context helper and requires your real test wrappers
+and worktree configuration before executing suites.
+
+That example assigns script-backed steps to Codex because the bundled restricted Claude policy permits
+only the Git read wrapper used above. See [command scripts](../../docs/command-scripts.md) for deterministic
+output contracts and an inventory of other workflows, including branch planning and commit validation.

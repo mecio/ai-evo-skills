@@ -1,0 +1,29 @@
+version: "1.0"
+name: acme-recipe-test-legacy-and-unit
+inputs: {}
+steps:
+  - id: php_context
+    uses: acme-cmd-detect-php-context
+    executor: codex
+  - id: legacy_tests
+    uses: acme-cmd-test-legacy
+    executor: codex
+    with:
+      context: "${{ steps.php_context.output }}"
+  - id: unit_tests
+    uses: acme-cmd-test-unit
+    executor: codex
+    when:
+      value: "${{ steps.php_context.output }}"
+      normalize: trim
+      equals: php83
+    with:
+      context: "${{ steps.php_context.output }}"
+  - id: report
+    uses: acme-cmd-report-test-results
+    with:
+      legacy_result: "${{ steps.legacy_tests.output }}"
+      unit_result: "${{ steps.unit_tests.output }}"
+outputs:
+  result:
+    value: "${{ steps.report.output }}"

@@ -29,6 +29,11 @@ AI Evo Skills is a small, project-local orchestration layer built on the Agent S
 The engine supplies the CLI, schemas, adapters and templates. Your project supplies the prompts, directives
 and catalog. Initialization creates the structure and a default effort profile; you author the actual skills.
 
+Commands can also call project scripts for deterministic decisions and checks. For example, a script can
+identify a worktree's runtime, a recipe can select the applicable test suites, and an AI can interpret
+their results. See the [script guide and use cases](docs/command-scripts.md) and
+[runtime-tests example](examples/runtime-tests/README.md).
+
 ## Multiple AIs, one workflow
 
 **The AI where you invoke a recipe coordinates the work.** Start it in Codex and Codex orchestrates;
@@ -150,6 +155,10 @@ See the [execution reference](docs/execution.md) for delegation, native restrict
 
 - [Acme starter catalog](examples/acme/README.md): a boilerplate with three commands, two recipes and a
   conditional review, ready to copy into an initialized project.
+- [Runtime-tests example](examples/runtime-tests/README.md): scripted PHP context detection, conditional suites
+  and reporting; supply your application's test wrappers and worktree mapping.
+- [Commands that use scripts](docs/command-scripts.md): placement, output contracts, adapter permissions and
+  an inventory of Enabu workflows and script callers.
 - [First skill walkthrough](docs/first-skill.md): installation, a complete review prompt, publication,
   shorter invocations and recipe examples.
 - [Project setup and publication](docs/project-setup.md): directory layout, initialization, configuration,

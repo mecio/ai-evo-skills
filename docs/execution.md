@@ -27,6 +27,10 @@ worktree content; `status` and `diff` omit submodules to avoid running helpers f
 Network-disabled commands also disable web tools and unconfigured MCP servers while
 retaining native edit tools when the workspace policy is read-write.
 
+These Bash restrictions also apply to project scripts and test runners named in a command's instructions.
+The [script guide](command-scripts.md#adapter-permissions) explains adapter selection for those tasks;
+the [runtime-tests example](../examples/runtime-tests/README.md) uses Codex for the script-backed steps.
+
 ### Claude policy composition
 
 The core parses Claude invocation, session, effort-profile and execution-policy arguments into structured

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "worktrees": [
+    {"root": "/absolute/path/to/legacy-checkout", "context": "php72"},
+    {"root": "/absolute/path/to/php83-worktree", "context": "php83"}
+  ]
+}

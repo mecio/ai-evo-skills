@@ -61,6 +61,18 @@ step to reuse the same command with different AIs.
 
 Execution restrictions and native prompt delivery are described in the [execution reference](execution.md).
 
+### Calling project scripts
+
+A command's `Procedure` may invoke a project script for deterministic detection, name generation,
+validation or test execution. Store helpers under `.ai-evo-prj/scripts/` or use existing application tools;
+keep command directories limited to `SKILL.md`. Document argv/stdin inputs, working directory, dependencies,
+stdout format, failure statuses and side effects. Preserve exact tokens or JSON when another step consumes them.
+
+The AI executes the helper under its resolved policy; recipes do not support shell steps. Confirm that the
+selected adapter permits the script. The bundled restrictive Claude policies only allow the Git read wrapper,
+so the [runtime-tests example](../examples/runtime-tests/README.md) selects Codex for project-script calls.
+See [command scripts](command-scripts.md) for output contracts, verification and the Enabu use-case inventory.
+
 ## Recipe contract
 
 A recipe directory contains `SKILL.md` for its purpose, coordinator procedure and expected result, plus

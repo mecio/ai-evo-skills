@@ -23,18 +23,23 @@ A normal installation can use a separate specification repository:
 ├── component-map.md
 ├── directives/
 ├── templates/
+├── scripts/                                optional project-owned helpers
 └── skills/
     ├── catalog/
     │   ├── commands/                       shared, team-reviewed building blocks
     │   └── recipes/                        shared compositions
     ├── custom/recipes/                     personal, Git-ignored compositions
-    └── config/effort-profiles/
+    └── config/                            effort profiles and optional helper configuration
+        └── effort-profiles/
 ```
 
 `.ai-evo` separates reusable machinery from application knowledge. `.ai-evo-prj` separates project-specific AI
 configuration from the application repository when desired. Both may be shared across Git worktrees, while
 `.ai-evo-skills.yaml` and generated native links belong to the worktree in which the CLI runs. The CLI always
 finds that worktree with `git rev-parse --show-toplevel`.
+
+Project scripts are optional, authored separately from `init`, and called by command procedures when allowed
+by their execution policies. See [commands that use scripts](command-scripts.md) for placement and contracts.
 
 ## Initialization details
 
