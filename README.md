@@ -3,12 +3,14 @@
 **License:** Apache-2.0 · **Status:** public beta, Linux-first
 
 AI Evo Skills turns proven prompts into reusable skills with standardized inputs and execution policies.
-Teams maintain those skills in one shared catalog, compose them into repeatable workflows, and use them
-consistently across AI coding clients. Once a prompt is captured in a skill, developers invoke it and supply
-only the inputs needed for the task, without rewriting or pasting the same instructions each time.
+Teams maintain those skills in one shared catalog and compose workflows where Codex and Claude Code can
+delegate tasks, exchange results and act on each other's feedback. Once a prompt is captured in a skill,
+developers invoke it and supply only the inputs needed for the task, without rewriting or pasting the same
+instructions each time.
 
 For example, save your team's review criteria once, then invoke `acme-cmd-review` with a Git target and a focus.
-A recipe can pass that review to a second skill that verifies the findings against the code.
+A recipe can ask Claude to perform that review, pass its findings to Codex for verification, and send
+Codex's feedback back to Claude for a revised report.
 
 [First skill](docs/first-skill.md) · [Recipes](docs/first-skill.md#compose-skills-into-recipes) · [Documentation](#documentation)
 
@@ -26,6 +28,57 @@ AI Evo Skills is a small, project-local orchestration layer built on the Agent S
 
 The engine supplies the CLI, schemas, adapters and templates. Your project supplies the prompts, directives
 and catalog. Initialization creates the structure and a default effort profile; you author the actual skills.
+
+## Multiple AIs, one workflow
+
+**The AI where you invoke a recipe coordinates the work.** Start it in Codex and Codex orchestrates;
+start it in Claude Code and Claude orchestrates. The recipe selects the executor for each step.
+The coordinator sends that executor the task instructions, resolved inputs and execution policies,
+then records its output and passes the declared results to subsequent steps.
+
+This lets one AI direct another using its previous response. For example, Codex can coordinate a recipe
+that asks Claude for a review, uses a Codex step to check the findings, and asks Claude to revise the
+report using that feedback:
+
+```mermaid
+flowchart LR
+    A[Claude: review] -->|Review findings| B[Codex: verify]
+    B -->|Corrections and feedback| C[Claude: revise report]
+    A -->|Original review| C
+```
+
+The recipe makes those exchanges explicit. This illustrative `steps` excerpt assumes you have authored
+the three commands with the inputs shown:
+
+```yaml
+steps:
+  - id: review
+    uses: acme-cmd-review
+    executor: claude
+    with:
+      target: HEAD
+  - id: verify
+    uses: acme-cmd-verify
+    executor: codex
+    with:
+      target: HEAD
+      review: "${{ steps.review.output }}"
+  - id: revise
+    uses: acme-cmd-revise-review
+    executor: claude
+    with:
+      review: "${{ steps.review.output }}"
+      feedback: "${{ steps.verify.output }}"
+```
+
+`executor` chooses who does the work; `${{ steps.verify.output }}` passes that step's complete result
+as an input to another command. The coordinator manages these exchanges through the engine.
+Each executor receives the task and inputs supplied for its step; conversation history is not automatically shared.
+
+**Feedback rounds must be declared in the recipe.** Steps run in order and can consume earlier outputs.
+A further review or correction requires a further step; the workflow does not automatically repeat until
+an AI is satisfied. See the [recipe walkthrough](docs/first-skill.md#compose-skills-into-recipes) for a
+complete recipe and [executor selection](docs/authoring.md#executor-selection) for delegation rules.
 
 ## When is it useful?
 

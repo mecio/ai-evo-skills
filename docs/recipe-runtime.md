@@ -8,6 +8,36 @@ Recipe names, including the root `plan.recipe`, must use `<namespace>-recipe-<na
 name the full recipe; flattened executable steps still refer to atomic commands with their unchanged names.
 Migrate legacy recipe names and regenerate snapshots as described in the [migration guide](recipe-naming-migration.md).
 
+## How AIs exchange results
+
+The AI where a recipe is invoked remains its coordinator. A step's `executor` selects the AI that performs
+that task; the coordinator drives the plan even when successive steps use different executors.
+The [review, verification and revision example](first-skill.md#compose-skills-into-recipes) shows a complete
+Claude → Codex → Claude recipe.
+
+The exchange follows the same protocol for each step:
+
+1. The coordinator supplies the plan and recorded results to `recipe advance`. The core resolves references
+   such as `${{ steps.review.output }}` into the next step's named `with` inputs.
+2. For a delegated step, the coordinator sends the resolved step to `command execute`. The executor receives
+   a handoff containing the command's skill snapshot, resolved inputs, working directory, execution policy
+   and effort profile. It performs that task and returns its output. For current mode, the coordinator
+   performs the resolved task directly.
+3. The coordinator records a successful step's complete output string in the result journal, preserving
+   whitespace. Later steps receive that result only where their inputs reference it; the coordinator must
+   not rewrite or summarize the recorded output. To produce feedback or a summary, declare a command step
+   that does so and pass its output onward.
+
+The handoff does not automatically include the coordinator's conversation history or every prior result.
+For a revision task, explicitly pass both the original report and the feedback it needs. Selecting the same
+executor again does not itself establish a shared conversation; session handling follows the separate
+[execution policy](execution.md#session-reuse).
+
+Feedback rounds must be represented as subsequent steps with distinct ids and references to earlier outputs.
+Conditions can skip declared steps; they do not create new steps or repeat a sequence until an AI approves.
+The coordinator loop below advances this declared sequence. Correction after an execution failure follows
+the session policy and is separate from a successful review producing feedback for a later revision step.
+
 ## Authoring a condition
 
 ```yaml

@@ -65,7 +65,7 @@ Execution restrictions and native prompt delivery are described in the [executio
 
 A recipe directory contains `SKILL.md` for its purpose, coordinator procedure and expected result, plus
 `recipe.yaml` for its formal inputs, ordered steps and output. Start with the generated template
-and the [review/verification illustration](first-skill.md#compose-skills-into-recipes).
+and the [review, verification and revision example](first-skill.md#compose-skills-into-recipes).
 
 Recipe inputs follow the same description and required/default rules as command inputs. Each step has a unique
 `id`, a `uses` reference to a command or recipe, and a `with` mapping matching that child's inputs.
@@ -101,6 +101,12 @@ inherit it, including through further nesting. `current` means the calling recip
 are local to the call and do not affect later sibling steps or standalone invocations. The root coordinator
 continues driving the flattened plan; commands assigned to an explicit adapter run through delegated execution.
 Command execution policies and the selected effort profile still apply to the resolved adapter.
+
+For a complete Claude → Codex → Claude feedback round, see the
+[recipe walkthrough](first-skill.md#compose-skills-into-recipes). It passes Codex's verification output back
+to a Claude revision step alongside the original review. Declare each further round as additional steps;
+the [runtime protocol](recipe-runtime.md#how-ais-exchange-results) explains how the coordinator supplies
+inputs and records outputs.
 
 All referenced executors must be known to the engine, and all adapters reachable from a published recipe
 must be enabled, even in skipped branches. Command and recipe publication is independent of step executors.

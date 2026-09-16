@@ -175,8 +175,9 @@ Update that source when the team's prompt improves, then validate and synchroniz
 
 ## Compose skills into recipes
 
-A recipe reuses command prompts and passes results between steps. For example, a review command can run in
-Claude and a verification command in Codex, while Codex coordinates the sequence.
+A recipe reuses command prompts and passes results between steps, including steps executed by different AIs.
+For example, Claude can review a change, Codex can verify its findings, and Claude can revise the report
+using Codex's feedback. The AI where you invoke the recipe coordinates all three calls.
 
 ```bash
 ./.ai-evo/bin/ai-evo-skills create recipe reviewed-change --catalog
@@ -184,9 +185,17 @@ Claude and a verification command in Codex, while Codex coordinates the sequence
 
 This creates `acme-recipe-reviewed-change` with a `SKILL.md` and `recipe.yaml`. Complete the generated
 `SKILL.md` descriptions while preserving its coordinator procedure. The following illustrative `recipe.yaml`
-assumes two completed shared commands: `acme-cmd-review`, accepting `target`, and
-`acme-cmd-verify`, accepting `target` and the previous `review`. Leave their executors unset and enable both
-adapters. The recipe chooses the executor for each call.
+assumes three completed shared commands:
+
+- `acme-cmd-review`, accepting `target`, produces the initial review.
+- `acme-cmd-verify`, accepting `target` and `review`, checks each finding against the diff and returns
+  feedback identifying supported findings, unsupported claims and required corrections.
+- `acme-cmd-revise-review`, accepting `review` and `feedback`, revises the original report using that feedback
+  and returns the final review. Its prompt should preserve supported findings and remove or correct unsupported claims.
+
+Author the verification and revision commands with those input contracts and instructions; recipe creation
+does not create them. Leave executor declarations out of command interfaces and enable both adapters.
+The recipe chooses the executor for each call.
 
 ```yaml
 version: "1.0"
@@ -207,16 +216,30 @@ steps:
     with:
       target: "${{ inputs.target }}"
       review: "${{ steps.review.output }}"
+  - id: revise
+    uses: acme-cmd-revise-review
+    executor: claude
+    with:
+      review: "${{ steps.review.output }}"
+      feedback: "${{ steps.verify.output }}"
 outputs:
   result:
-    value: "${{ steps.verify.output }}"
+    value: "${{ steps.revise.output }}"
 ```
 
-The verification prompt should check each finding against the diff, discard unsupported claims and return a
-final report. After completing both commands and the recipe, run `validate` and `sync`, then invoke
+After completing all three commands and the recipe, run `validate` and `sync`, then invoke
 `$acme-recipe-reviewed-change target=HEAD` in Codex or `/acme-recipe-reviewed-change target=HEAD` in Claude.
-The invoking AI coordinates both calls. The second step receives the first report automatically.
+The invoking AI remains the coordinator regardless of the executors selected for individual steps.
+
+The coordinator records Claude's complete review output. The engine resolves `steps.review.output` into
+the verification command's `review` input, so Codex can inspect those findings. The final Claude step receives
+both the original review and Codex's feedback as explicit inputs. The recipe returns the revised report.
+These inputs carry the exchange; conversation history is not automatically shared between executors.
+
+Feedback rounds are declared steps: another verification or revision requires another step with its own id
+and references to earlier results. The recipe does not automatically repeat until an AI is satisfied.
 Steps run in declared order and stop on failure; forward references and dependency cycles are rejected.
+See [how AIs exchange results](recipe-runtime.md#how-ais-exchange-results) for the coordinator's runtime responsibilities.
 
 Without `--catalog`, recipes are created under `skills/custom/recipes` and ignored by Git. Commands always
 belong to the shared catalog. Recipe names use `<namespace>-recipe-<name>`; command names use
