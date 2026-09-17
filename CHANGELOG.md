@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.1.0-beta.5
+
+Changes since `0.1.0-beta.4`.
+On-disk project protocol remains `1.0`.
+
 - Allow recipe-local `references/` trees for coordinator documentation. Require the directory and all nested
   entries to be real files or directories, reject symbolic links and continue rejecting unrelated recipe files.
 - Commands and recipes always use the invoking AI and are published to every enabled target. Reject executor
