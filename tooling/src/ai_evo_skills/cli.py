@@ -391,9 +391,25 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                             recipe = None
                     except EvoError as exc:
                         errors.append(str(exc))
-                extra = [item.name for item in path.parent.iterdir() if item.name not in {"SKILL.md", "recipe.yaml"}]
+                extra = [
+                    item.name for item in path.parent.iterdir()
+                    if item.name not in {"SKILL.md", "recipe.yaml", "references"}
+                ]
                 if extra:
-                    errors.append(f"{path.parent}: recipe directory may contain only SKILL.md and recipe.yaml: {', '.join(extra)}")
+                    errors.append(
+                        f"{path.parent}: recipe directory may contain only SKILL.md, recipe.yaml and references/: "
+                        f"{', '.join(extra)}"
+                    )
+                references = path.parent / "references"
+                if os.path.lexists(references):
+                    if references.is_symlink() or not references.is_dir():
+                        errors.append(f"{references}: recipe references must be a real directory")
+                    else:
+                        for item in sorted(references.rglob("*")):
+                            if item.is_symlink():
+                                errors.append(f"{item}: recipe reference entries may not be symbolic links")
+                            elif not item.is_dir() and not item.is_file():
+                                errors.append(f"{item}: recipe references may contain only files and directories")
             registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe)
 
     profiles: dict[str, dict[str, Any]] = {}

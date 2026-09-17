@@ -76,8 +76,11 @@ See [command scripts](command-scripts.md) for output contracts, verification and
 ## Recipe contract
 
 A recipe directory contains `SKILL.md` for its purpose, coordinator procedure and expected result, plus
-`recipe.yaml` for its formal inputs, ordered steps and output. Start with the generated template
-and the [review, verification and revision example](first-skill.md#compose-skills-into-recipes).
+`recipe.yaml` for its formal inputs, ordered steps and output. It may also contain a real `references/` directory
+with supporting documents that the coordinator reads only when the recipe procedure calls for them. Reference
+entries may be regular files or directories and may not be symbolic links. Other recipe-local files and
+directories remain invalid. Start with the generated template and the
+[review, verification and revision example](first-skill.md#compose-skills-into-recipes).
 
 Recipe inputs follow the same description and required/default rules as command inputs. Each step has a unique
 `id`, a `uses` reference to a command or recipe, and a `with` mapping matching that child's inputs.

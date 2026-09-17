@@ -389,6 +389,46 @@ outputs:
                 self.assertEqual(0, planned.returncode, planned.stderr)
                 self.assertEqual("claude", json.loads(planned.stdout)["execution"]["steps"][0]["application"]["executor"])
 
+    def test_recipe_references_are_validated_and_published_with_the_recipe(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "codex")
+            self.add_command(root)
+            recipe = root / ".ai-evo-prj/skills/catalog/recipes/abc-recipe-flow"
+            recipe.mkdir(parents=True)
+            (recipe / "SKILL.md").write_text(VALID_FLOW_SKILL)
+            (recipe / "recipe.yaml").write_text("""version: "1.0"
+name: abc-recipe-flow
+inputs: {}
+steps:
+  - id: inspect
+    uses: abc-inspect
+outputs:
+  result:
+    value: "${{ steps.inspect.output }}"
+""")
+            references = recipe / "references"
+            (references / "nested").mkdir(parents=True)
+            (references / "work-item.md").write_text("# Work item\n")
+            (references / "nested/details.txt").write_text("details\n")
+
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+            self.assertEqual(0, self.run_cli(root, "sync").returncode)
+            published = root / ".agents/skills/abc-recipe-flow"
+            self.assertTrue(published.is_symlink())
+            self.assertEqual("# Work item\n", (published / "references/work-item.md").read_text())
+
+            (recipe / "assets").mkdir()
+            rejected = self.run_cli(root, "validate")
+            self.assertEqual(1, rejected.returncode, rejected.stdout)
+            self.assertIn("may contain only SKILL.md, recipe.yaml and references/", rejected.stderr)
+            (recipe / "assets").rmdir()
+
+            (references / "outside").symlink_to(root / "AGENTS.md")
+            rejected = self.run_cli(root, "validate")
+            self.assertEqual(1, rejected.returncode, rejected.stdout)
+            self.assertIn("recipe reference entries may not be symbolic links", rejected.stderr)
+
     def test_command_is_published_to_every_enabled_adapter(self):
         temporary, root = self.repository()
         with temporary:

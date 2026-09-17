@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow recipe-local `references/` trees for coordinator documentation. Require the directory and all nested
+  entries to be real files or directories, reject symbolic links and continue rejecting unrelated recipe files.
 - Commands and recipes always use the invoking AI and are published to every enabled target. Reject executor
   declarations in command interfaces and at recipe level, including explicit `current`; only recipe steps
   may declare an executor. Update templates, examples and documentation to this contract.

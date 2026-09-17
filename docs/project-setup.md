@@ -110,9 +110,10 @@ The validator uses the schemas in `schemas/` offline; YAML instances carry proto
 need remote `$schema` URLs. Schema `$id` values are versioned `urn:ai-evo-skills:` identifiers and never trigger a
 network lookup. The validator checks only adapters named by project targets, including disabled targets, and
 rejects unsafe absolute or parent-traversing paths. Skill directories, `SKILL.md` files and `recipe.yaml` files may
-not be symbolic links. `sync` manages only links whose destinations belong to the canonical catalog or personal
-recipe area. A recipe that would be published is invalid when a command or nested call resolves to a disabled
-adapter, even if that step's condition would skip it.
+not be symbolic links. Recipe directories may additionally contain a real `references/` tree without symbolic
+links; other recipe-local entries are rejected. `sync` manages only links whose destinations belong to the
+canonical catalog or personal recipe area. A recipe that would be published is invalid when a command or nested
+call resolves to a disabled adapter, even if that step's condition would skip it.
 
 Step executors must name an adapter supplied by the engine or `current`. The adapter file is validated when
 a project target names it; a published recipe cannot use an adapter absent from the project configuration.
