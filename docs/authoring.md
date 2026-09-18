@@ -73,6 +73,12 @@ Steps can appear in a recipe's `uses` field and are planned with that recipe. `c
 `sync` does not publish them as directly invocable native skills. Use a step for approval preparation, worklog
 management and gates whose meaning depends on outputs from other recipe calls.
 
+> [!TIP]
+> A useful way to recognize a step is to count its upstream results. If an operation requires outputs produced
+> by two or more earlier commands or steps, model it as a recipe-only step. The recipe is responsible for
+> coordinating those results and passing them together. Keep it as a command when direct invocation remains
+> meaningful and it depends on at most one earlier operation.
+
 ### Calling project scripts
 
 A command's `Procedure` may invoke a project script for deterministic detection, name generation,
