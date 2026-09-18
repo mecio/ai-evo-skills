@@ -19,8 +19,10 @@ Codex's feedback back to Claude for a revised report.
 AI Evo Skills is a small, project-local orchestration layer built on the Agent Skills format:
 
 - **Commands** store atomic operations in a `SKILL.md`, with a prompt, named inputs and execution
-  policies. Shared commands belong to the team's catalog.
-- **Recipes** compose commands or other recipes into an ordered workflow. They pass inputs and earlier results
+  policies. They can be invoked directly or composed in recipes.
+- **Steps** store atomic workflow services that can only be invoked by recipes and are not published as native
+  user-facing skills.
+- **Recipes** compose commands, steps or other recipes into an ordered workflow. They pass inputs and earlier results
   between steps, choose an executor for each call, validate dependencies and stop at the first failure.
 - **Adapters** publish the relevant skills into each enabled AI client's native project directory and translate
   common execution policies into its CLI controls. Bundled adapters support Codex and Claude Code.
@@ -147,8 +149,9 @@ flowchart LR
     D --> E[Run task or sequential recipe]
 ```
 
-The engine validates the catalog and publishes skills to enabled clients. The AI resolves the invocation and
-runs the task under its declared policies; recipes pass results between steps and stop on failure.
+The engine validates the catalog and publishes commands and recipes to enabled clients. Recipe-only steps remain
+internal to the catalog and are embedded in resolved recipe plans. The AI resolves the invocation and runs the
+task under its declared policies; recipes pass results between steps and stop on failure.
 See the [execution reference](docs/execution.md) for delegation, native restrictions and session handling.
 
 ## Documentation

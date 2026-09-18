@@ -4,6 +4,7 @@ description: "TODO: explain when the AI must use this atomic command and what re
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # TODO: command title

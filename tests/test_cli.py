@@ -19,6 +19,7 @@ description: Inspect a target and report the result.
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Inspect

@@ -26,7 +26,8 @@ A normal installation can use a separate specification repository:
 ├── scripts/                                optional project-owned helpers
 └── skills/
     ├── catalog/
-    │   ├── commands/                       shared, team-reviewed building blocks
+    │   ├── commands/                       directly invocable shared operations
+    │   ├── steps/                          atomic services available only to recipes
     │   └── recipes/                        shared compositions
     ├── custom/recipes/                     personal, Git-ignored compositions
     └── config/                            effort profiles and optional helper configuration
@@ -110,8 +111,8 @@ The validator uses the schemas in `schemas/` offline; YAML instances carry proto
 need remote `$schema` URLs. Schema `$id` values are versioned `urn:ai-evo-skills:` identifiers and never trigger a
 network lookup. The validator checks only adapters named by project targets, including disabled targets, and
 rejects unsafe absolute or parent-traversing paths. Skill directories, `SKILL.md` files and `recipe.yaml` files may
-not be symbolic links. Recipe directories may additionally contain a real `references/` tree without symbolic
-links; other recipe-local entries are rejected. `sync` manages only links whose destinations belong to the
+not be symbolic links. Command, step and recipe directories may additionally contain a real `references/` tree
+without symbolic links; other artifact-local entries are rejected. `sync` manages only links whose destinations belong to the
 canonical catalog or personal recipe area. A recipe that would be published is invalid when a command or nested
 call resolves to a disabled adapter, even if that step's condition would skip it.
 
@@ -120,7 +121,8 @@ a project target names it; a published recipe cannot use an adapter absent from 
 
 The frontmatter accepts the Agent Skills fields `name`, `description`, `license`, `compatibility`, `metadata` and
 `allowed-tools`. AI Evo Skills additionally validates their basic types and uses the string metadata keys
-`ai-evo-kind` and `ai-evo-version` for its protocol.
+`ai-evo-kind` and `ai-evo-version` for its protocol. Commands and steps also require the boolean metadata key
+`ai-evo-recipe-only`, respectively `false` and `true`.
 
 The engine validates structure, produces native execution arguments and launches resolved delegated handoffs.
 The executing AI and its CLI remain responsible for following the plan, honoring native restrictions and

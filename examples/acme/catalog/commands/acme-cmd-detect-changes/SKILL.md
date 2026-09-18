@@ -4,6 +4,7 @@ description: Detect whether the tracked working tree differs from a local Git ta
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Detect tracked changes

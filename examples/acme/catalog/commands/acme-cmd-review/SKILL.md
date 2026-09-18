@@ -4,6 +4,7 @@ description: Review tracked changes against a local Git target and report action
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Review tracked changes

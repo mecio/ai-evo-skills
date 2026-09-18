@@ -4,6 +4,7 @@ description: Summarize a supplied review and clearly distinguish a completed rev
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Report a review outcome

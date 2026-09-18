@@ -4,6 +4,7 @@ description: Combine supplied legacy and Unit results while distinguishing a com
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Report applicable test results

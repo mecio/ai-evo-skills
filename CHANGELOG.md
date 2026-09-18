@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-No unreleased changes.
+- Add recipe-only step skills under `skills/catalog/steps`, with `ai-evo-kind: step`, the
+  `<namespace>-step-<name>` naming convention and `create step`. Steps share the command interface but can only
+  be resolved through recipes and are not published as directly invocable native skills.
+- Require the boolean `ai-evo-recipe-only` metadata key on commands and steps. Commands use `false`; steps use
+  `true`.
+- Allow commands and steps to carry the same validated, non-symlink `references/` tree supported by recipes.
 
 ## 0.1.0-beta.5
 

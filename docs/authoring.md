@@ -9,12 +9,14 @@ when extending the catalog. Keep the generated planning and handoff instructions
 
 ```bash
 ./.ai-evo/bin/ai-evo-skills create command review
+./.ai-evo/bin/ai-evo-skills create step approval
 ./.ai-evo/bin/ai-evo-skills create recipe reviewed-change
 ./.ai-evo/bin/ai-evo-skills create recipe team-review --catalog
 ./.ai-evo/bin/ai-evo-skills create effort-profile careful
 ```
 
-Commands are always created in the shared catalog. Recipes default to the local, Git-ignored
+Commands and steps are always created in the shared catalog. Commands are directly invocable; steps are atomic
+services available only through recipes and are not published to native skill directories. Recipes default to the local, Git-ignored
 `skills/custom/recipes`; `--catalog` makes them shared. Templates live under `.ai-evo/templates/`, organized by
 artifact type. Generated `TODO` markers must be completed before validation and synchronization can succeed.
 Creation validates project integration, storage and reserved names, but allows incomplete draft content.
@@ -23,11 +25,11 @@ You can create several commands, recipes and profiles before completing them. Al
 Examples under `.ai-evo/examples/` are documentation and are never installed by `init`.
 
 Recipe names must be `<namespace>-recipe-<name>` in both collections; directory names, `SKILL.md` frontmatter,
-`recipe.yaml` and references to nested recipes must agree. New commands use `<namespace>-cmd-<name>`
-consistently in the directory, frontmatter, planning instructions and invocations. The complete skill name
+`recipe.yaml` and references to nested recipes must agree. New commands use `<namespace>-cmd-<name>` and new
+steps use `<namespace>-step-<name>` consistently in their directory and frontmatter. The complete skill name
 must fit within 64 characters, including its marker.
 
-Pass short names to `create`; it adds the namespace and the `cmd-` or `recipe-` marker.
+Pass short names to `create`; it adds the namespace and the `cmd-`, `step-` or `recipe-` marker.
 For commands, `create command review` produces `<namespace>-cmd-review`. Already prefixed names such as
 `cmd-review` or `<namespace>-cmd-review` are rejected; pass `review`. Existing commands with legacy names
 remain valid. To rename one, update its directory, frontmatter, planning instructions, invocations and recipe
@@ -61,6 +63,16 @@ step to reuse the same command with different AIs.
 
 Execution restrictions and native prompt delivery are described in the [execution reference](execution.md).
 
+## Step contract
+
+A step has the same formal interface and execution policy as a command, but lives under
+`skills/catalog/steps`, declares `ai-evo-kind: step` and `ai-evo-recipe-only: true`, and uses an
+`<namespace>-step-<name>` name. A command must instead declare `ai-evo-recipe-only: false`.
+
+Steps can appear in a recipe's `uses` field and are planned with that recipe. `command plan` rejects them and
+`sync` does not publish them as directly invocable native skills. Use a step for approval preparation, worklog
+management and gates whose meaning depends on outputs from other recipe calls.
+
 ### Calling project scripts
 
 A command's `Procedure` may invoke a project script for deterministic detection, name generation,
@@ -83,7 +95,7 @@ directories remain invalid. Start with the generated template and the
 [review, verification and revision example](first-skill.md#compose-skills-into-recipes).
 
 Recipe inputs follow the same description and required/default rules as command inputs. Each step has a unique
-`id`, a `uses` reference to a command or recipe, and a `with` mapping matching that child's inputs.
+`id`, a `uses` reference to a command, step or recipe, and a `with` mapping matching that child's inputs.
 `${{ inputs.name }}` reads a recipe input; `${{ steps.id.output }}` reads an earlier step's output.
 Recipes form a directed acyclic graph and execute in declared sequence. Unknown skills, unknown inputs,
 forward references, duplicate step ids and direct or indirect cycles are validation errors.

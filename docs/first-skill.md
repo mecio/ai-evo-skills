@@ -52,6 +52,7 @@ description: Review a Git diff without modifying files and report actionable fin
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Review a Git diff

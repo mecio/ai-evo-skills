@@ -155,6 +155,21 @@ def validate_inputs(inputs: Any, label: str) -> list[str]:
     return errors
 
 
+def validate_references(directory: Path, artifact_kind: str) -> list[str]:
+    references = directory / "references"
+    if not os.path.lexists(references):
+        return []
+    if references.is_symlink() or not references.is_dir():
+        return [f"{references}: {artifact_kind} references must be a real directory"]
+    errors = []
+    for item in sorted(references.rglob("*")):
+        if item.is_symlink():
+            errors.append(f"{item}: {artifact_kind} reference entries may not be symbolic links")
+        elif not item.is_dir() and not item.is_file():
+            errors.append(f"{item}: {artifact_kind} references may contain only files and directories")
+    return errors
+
+
 def parse_variable(value: Any) -> tuple[str, str] | None:
     if not isinstance(value, str):
         return None
@@ -247,8 +262,13 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             errors.append(f"{custom_commands}: expected a directory")
         elif any(custom_commands.iterdir()):
             errors.append(f"{custom_commands}: personal commands are not allowed; add commands to the shared catalog")
-    roots = [skills / "catalog/commands", skills / "catalog/recipes", skills / "custom/recipes"]
-    for root in roots:
+    roots = [
+        (skills / "catalog/commands", "command"),
+        (skills / "catalog/steps", "step"),
+        (skills / "catalog/recipes", "recipe"),
+        (skills / "custom/recipes", "recipe"),
+    ]
+    for root, expected_kind in roots:
         if not is_within(root, project):
             errors.append(f"{root}: canonical skill directory resolves outside the project area")
             continue
@@ -278,11 +298,13 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 name = path.parent.name
                 if not NAME_RE.fullmatch(name) or len(name) > 64 or not name.startswith(namespace + "-"):
                     errors.append(f"{path.parent}: invalid namespaced skill name")
-                if root.name == "recipes" and (diagnostic := recipe_name_error(name, namespace)):
+                if expected_kind == "recipe" and (diagnostic := recipe_name_error(name, namespace)):
                     errors.append(f"{path.parent}: {diagnostic}")
+                if expected_kind == "step" and not name.startswith(namespace + "-step-"):
+                    errors.append(f"{path.parent}: step name must use {namespace}-step-<name>")
                 if name in registry:
                     errors.append(f"{path}: duplicate skill name {name}")
-                registry[name] = Skill(name, "command" if root.name == "commands" else "recipe", path, {})
+                registry[name] = Skill(name, expected_kind, path, {})
                 continue
             try:
                 front, body = parse_frontmatter(path)
@@ -292,7 +314,6 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             name = front.get("name")
             metadata = front.get("metadata") if isinstance(front.get("metadata"), dict) else {}
             kind = metadata.get("ai-evo-kind")
-            expected_kind = "command" if root.name == "commands" else "recipe"
             if expected_kind == "recipe":
                 candidates = dict.fromkeys((path.parent.name, name)) if isinstance(name, str) else (path.parent.name,)
                 for candidate in candidates:
@@ -305,6 +326,8 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 continue
             if not name.startswith(namespace + "-"):
                 errors.append(f"{path}: skill name must start with {namespace}-")
+            if expected_kind == "step" and not name.startswith(namespace + "-step-"):
+                errors.append(f"{path}: step name must use {namespace}-step-<name>")
             if name in registry:
                 errors.append(f"{path}: duplicate skill name {name}")
             allowed_frontmatter = {
@@ -318,14 +341,26 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             unknown_frontmatter = set(front) - allowed_frontmatter
             if unknown_frontmatter:
                 errors.append(f"{path}: unsupported frontmatter fields: {', '.join(sorted(unknown_frontmatter))}")
-            if not isinstance(front.get("metadata"), dict) or not all(
-                isinstance(key, str) and isinstance(value, str) for key, value in metadata.items()
-            ):
-                errors.append(f"{path}: metadata must map strings to strings")
+            valid_metadata = isinstance(front.get("metadata"), dict) and all(
+                isinstance(key, str)
+                and (isinstance(value, str) or (key == "ai-evo-recipe-only" and type(value) is bool))
+                for key, value in metadata.items()
+            )
+            if not valid_metadata:
+                errors.append(
+                    f"{path}: metadata must map strings to strings, except ai-evo-recipe-only which must be boolean"
+                )
             if kind != expected_kind:
                 errors.append(f"{path}: ai-evo-kind must be {expected_kind}")
             if metadata.get("ai-evo-version") != PROTOCOL_VERSION:
                 errors.append(f"{path}: ai-evo-version must be {PROTOCOL_VERSION!r}")
+            if expected_kind in {"command", "step"}:
+                expected_recipe_only = expected_kind == "step"
+                if metadata.get("ai-evo-recipe-only") is not expected_recipe_only:
+                    errors.append(
+                        f"{path}: ai-evo-recipe-only must be the boolean "
+                        f"{'true' if expected_recipe_only else 'false'} for {expected_kind}s"
+                    )
             if not isinstance(front.get("description"), str) or not front["description"].strip():
                 errors.append(f"{path}: description is required")
             elif len(front["description"]) > 1024:
@@ -358,10 +393,17 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             recipe = None
             execution_policy = None
             inputs: dict[str, Any] = {}
-            if expected_kind == "command":
-                extra = [item.name for item in path.parent.iterdir() if item.name != "SKILL.md"]
+            if expected_kind in {"command", "step"}:
+                extra = [
+                    item.name for item in path.parent.iterdir()
+                    if item.name not in {"SKILL.md", "references"}
+                ]
                 if extra:
-                    errors.append(f"{path.parent}: command directory may contain only SKILL.md: {', '.join(extra)}")
+                    errors.append(
+                        f"{path.parent}: {expected_kind} directory may contain only SKILL.md and references/: "
+                        f"{', '.join(extra)}"
+                    )
+                errors += validate_references(path.parent, expected_kind)
                 try:
                     inputs, execution_policy = parse_command_interface(body, path)
                 except (EvoError, yaml.YAMLError) as exc:
@@ -400,16 +442,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                         f"{path.parent}: recipe directory may contain only SKILL.md, recipe.yaml and references/: "
                         f"{', '.join(extra)}"
                     )
-                references = path.parent / "references"
-                if os.path.lexists(references):
-                    if references.is_symlink() or not references.is_dir():
-                        errors.append(f"{references}: recipe references must be a real directory")
-                    else:
-                        for item in sorted(references.rglob("*")):
-                            if item.is_symlink():
-                                errors.append(f"{item}: recipe reference entries may not be symbolic links")
-                            elif not item.is_dir() and not item.is_file():
-                                errors.append(f"{item}: recipe references may contain only files and directories")
+                errors += validate_references(path.parent, "recipe")
             registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe)
 
     profiles: dict[str, dict[str, Any]] = {}
@@ -589,7 +622,7 @@ def validate_recipe_executors(context: Context) -> list[str]:
                 continue
             executor = step.get("executor", "current")
             if executor != "current" and executor not in enabled:
-                kind = "command" if child.kind == "command" else "nested recipe"
+                kind = child.kind if child.kind in {"command", "step"} else "nested recipe"
                 errors.append(f"{recipe.name}:steps.{step['id']}: {kind} {child.name} requires disabled adapter {executor}")
     return errors
 
@@ -769,7 +802,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         desired = {
             name: skill
             for name, skill in context.registry.items()
-            if target["enabled"]
+            if target["enabled"] and skill.kind != "step"
         }
         directory = context.repo / target["path"]
         resolved_directory = directory.resolve(strict=False)
@@ -844,7 +877,7 @@ def ensure_short_name(name: str, namespace: str) -> None:
 def cmd_create(args: argparse.Namespace) -> None:
     context = validated_context(for_creation=True)
     namespace, short = context.config["namespace"], args.name
-    marker = {"command": "cmd", "recipe": "recipe"}.get(args.create_kind)
+    marker = {"command": "cmd", "step": "step", "recipe": "recipe"}.get(args.create_kind)
     if marker:
         if short.startswith(namespace + "-"):
             suggestion = short[len(namespace) + 1:]
@@ -866,13 +899,16 @@ def cmd_create(args: argparse.Namespace) -> None:
     name = f"{namespace}-{marker}-{short}" if marker else f"{namespace}-{short}"
     if len(name) > 64:
         raise EvoError("namespaced artifact name must not exceed 64 characters")
-    if args.create_kind in {"command", "recipe"} and name in context.registry:
+    if args.create_kind in {"command", "step", "recipe"} and name in context.registry:
         existing = context.registry[name]
         raise EvoError(f"skill name {name} is already used by {existing.path.parent}")
     replacements = {"namespace": namespace, "skill-name": short, "profile-name": short}
     if args.create_kind == "command":
         destination = context.skills / "catalog/commands" / name
         files = [(context.engine / "templates/skills/command.SKILL.tpl.md", destination / "SKILL.md")]
+    elif args.create_kind == "step":
+        destination = context.skills / "catalog/steps" / name
+        files = [(context.engine / "templates/skills/step.SKILL.tpl.md", destination / "SKILL.md")]
     elif args.create_kind == "recipe":
         base = "catalog/recipes" if args.catalog else "custom/recipes"
         destination = context.skills / base / name
@@ -1012,6 +1048,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     project_directories = [
         project,
         skills / "catalog/commands",
+        skills / "catalog/steps",
         skills / "catalog/recipes",
         skills / "custom/recipes",
         profile.parent,
@@ -1300,9 +1337,12 @@ def parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync"); sync.add_argument("--dry-run", action="store_true"); sync.set_defaults(func=cmd_sync)
     init = sub.add_parser("init"); init.add_argument("--namespace"); init.add_argument("--adapter", action="append", required=True); init.set_defaults(func=cmd_init)
     create = sub.add_parser("create"); create_sub = create.add_subparsers(dest="create_kind", required=True)
-    for kind in ("command", "effort-profile"):
+    for kind in ("command", "step", "effort-profile"):
         item = create_sub.add_parser(kind)
-        prefix = "<namespace>-cmd-" if kind == "command" else "<namespace>-"
+        prefix = {
+            "command": "<namespace>-cmd-",
+            "step": "<namespace>-step-",
+        }.get(kind, "<namespace>-")
         item.add_argument("name", help=f"short name only; {prefix} is added automatically")
         item.set_defaults(func=cmd_create)
     recipe = create_sub.add_parser("recipe")

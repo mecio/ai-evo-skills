@@ -4,6 +4,7 @@ description: Run the project legacy test wrapper in its configured PHP context a
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Run the legacy test suite

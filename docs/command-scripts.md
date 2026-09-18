@@ -16,7 +16,7 @@ flowchart LR
     A -->|Declared input reference| D[Next command]
 ```
 
-The recipe engine runs **command steps**, not arbitrary shell steps. `uses` names a command or recipe;
+The recipe engine runs catalog **commands and steps**, not arbitrary shell steps. `uses` names a command, step or recipe;
 there is no recipe `run:` field or `executor: shell`. A deterministic script does not make an AI's entire
 response deterministic: define how its output must be returned and checked at the command boundary.
 See the [runnable context helper and test workflow](../examples/runtime-tests/README.md).

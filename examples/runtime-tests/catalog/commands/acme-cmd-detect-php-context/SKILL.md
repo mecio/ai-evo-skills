@@ -4,6 +4,7 @@ description: Resolve the current Git worktree to php72 or php83 using the projec
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Detect the configured PHP context

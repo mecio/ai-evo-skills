@@ -4,6 +4,7 @@ description: Run the project unit test wrapper in its configured PHP context and
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"
+  ai-evo-recipe-only: false
 ---
 
 # Run the unit test suite
