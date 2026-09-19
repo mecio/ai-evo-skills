@@ -44,21 +44,49 @@ def validate_request(request: Any) -> None:
     plan = request['plan']
     prior: set[str] = set()
     conditional = False
-    for step in plan['execution']['steps']:
+    iterative = False
+
+    def validate_step_references(step: dict[str, Any], available: set[str], *, allow_item: bool) -> None:
+        nonlocal conditional
         validate_step_consistency(step)
-        sid = step['id']
-        if sid in prior:
-            raise ExecutionError(f'duplicate runtime step id {sid}')
         references = list(step['with'].values())
         if 'when' in step:
             conditional = True
             references.extend(clause['value'] for clause in step['when']['all'])
         for value in references:
-            if isinstance(value, dict) and value['step'] not in prior:
-                raise ExecutionError(f'{sid}: output reference must name a previous step: {value["step"]}')
+            if isinstance(value, dict) and value.get('type') == 'ai-evo-step-output' and value['step'] not in available:
+                raise ExecutionError(f'{step["id"]}: output reference must name a previous step: {value["step"]}')
+            if isinstance(value, dict) and value.get('type') == 'ai-evo-foreach-item' and not allow_item:
+                raise ExecutionError(f'{step["id"]}: foreach item placeholder is outside a for_each template')
+
+    for node in plan['execution']['steps']:
+        sid = node['id']
+        if sid in prior:
+            raise ExecutionError(f'duplicate runtime step id {sid}')
+        if 'for_each' not in node:
+            validate_step_references(node, prior, allow_item=False)
+            prior.add(sid)
+            continue
+        iterative = True
+        items = node['for_each']['items']
+        if isinstance(items, dict) and items.get('type') == 'ai-evo-foreach-item':
+            raise ExecutionError(f'{sid}: foreach items cannot use the current item placeholder')
+        if isinstance(items, dict) and items.get('type') == 'ai-evo-step-output' and items['step'] not in prior:
+            raise ExecutionError(f'{sid}: for_each items must reference a previous step: {items["step"]}')
+        template_prior = set(prior)
+        template_ids: set[str] = set()
+        for step in node['steps']:
+            if step['id'] in template_prior or step['id'] in template_ids:
+                raise ExecutionError(f'{sid}: duplicate foreach template step id {step["id"]}')
+            validate_step_references(step, template_prior | template_ids, allow_item=True)
+            template_ids.add(step['id'])
+        if node['result']['step'] not in template_ids:
+            raise ExecutionError(f'{sid}: foreach result must reference a template step')
         prior.add(sid)
     if conditional and plan['execution'].get('conditions') != 'exact-equals-v1':
         raise ExecutionError('conditional plans require the exact-equals-v1 capability')
+    if iterative and plan['execution'].get('iterations') != 'json-array-sequential-v1':
+        raise ExecutionError('for_each plans require the json-array-sequential-v1 capability')
     if plan['result']['step'] not in prior:
         raise ExecutionError('recipe result must reference an existing step')
 
@@ -92,17 +120,67 @@ def condition_matches(step: dict[str, Any], outputs: dict[str, Any]) -> bool:
     return True
 
 
+def iteration_input(item: Any) -> str:
+    if isinstance(item, str):
+        return item
+    return json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def instantiate_iteration_value(value: Any, loop_id: str, index: int, item: Any) -> Any:
+    if isinstance(value, str):
+        return value
+    if value.get('type') == 'ai-evo-foreach-item':
+        return iteration_input(item)
+    instantiated = deepcopy(value)
+    prefix = loop_id + '.'
+    if instantiated['step'].startswith(prefix):
+        instantiated['step'] = f'{loop_id}.{index}.' + instantiated['step'][len(prefix):]
+    return instantiated
+
+
+def instantiate_iteration_step(step: dict[str, Any], loop_id: str, index: int, item: Any) -> dict[str, Any]:
+    instantiated = deepcopy(step)
+    prefix = loop_id + '.'
+    if not instantiated['id'].startswith(prefix):
+        raise ExecutionError(f'{loop_id}: foreach template step is outside its namespace')
+    instantiated['id'] = f'{loop_id}.{index}.' + instantiated['id'][len(prefix):]
+    instantiated['with'] = {
+        name: instantiate_iteration_value(value, loop_id, index, item)
+        for name, value in instantiated['with'].items()
+    }
+    if 'when' in instantiated:
+        for clause in instantiated['when']['all']:
+            clause['value'] = instantiate_iteration_value(clause['value'], loop_id, index, item)
+    return instantiated
+
+
 def advance_recipe(request: Any) -> dict[str, Any]:
     """Validate an ordered result journal and prepare exactly one next transition."""
     validate_request(request)
     plan, results = request['plan'], request['results']
-    steps = plan['execution']['steps']
-    if len(results) > len(steps):
-        raise ExecutionError('more runtime results than planned steps')
+    nodes = plan['execution']['steps']
     outputs: dict[str, Any] = {}
     transition = {'type': 'ai-evo-recipe-transition', 'version': '1.0'}
-    for step, result in zip(steps, results):
+    cursor = 0
+
+    def advance_step(step: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal cursor
         sid = step['id']
+        if cursor >= len(results):
+            if not condition_matches(step, outputs):
+                return {**transition, 'status': 'skipped', 'result': {
+                    'step': sid, 'status': 'skipped', 'output': skipped_output(sid),
+                }}
+            prepared = deepcopy(step)
+            prepared.pop('when', None)
+            for name, value in step['with'].items():
+                resolved = resolve_output(value, outputs)
+                prepared['with'][name] = (resolved if isinstance(resolved, str) else
+                                          json.dumps(resolved, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
+            if prepared['application']['mode'] == 'delegated':
+                validate_plan(prepared)
+            return {**transition, 'status': 'ready', 'step': prepared}
+        result = results[cursor]
         if result['step'] != sid:
             raise ExecutionError(f'expected result for step {sid}; results must be a sequential prefix')
         applicable = condition_matches(step, outputs)
@@ -112,24 +190,38 @@ def advance_recipe(request: Any) -> dict[str, Any]:
         elif not applicable:
             raise ExecutionError(f'{sid}: condition is false; the step must be skipped')
         if result['status'] == 'failed':
-            if len(results) != len(outputs) + 1:
+            if cursor != len(results) - 1:
                 raise ExecutionError('fail-fast forbids results after a failed step')
             return {**transition, 'status': 'failed', 'result': result}
         outputs[sid] = result['output']
+        cursor += 1
+        return None
 
-    if len(results) == len(steps):
-        return {**transition, 'status': 'complete', 'output': resolve_output(plan['result'], outputs)}
-    step = steps[len(results)]
-    if not condition_matches(step, outputs):
-        return {**transition, 'status': 'skipped', 'result': {
-            'step': step['id'], 'status': 'skipped', 'output': skipped_output(step['id']),
-        }}
-    prepared = deepcopy(step)
-    prepared.pop('when', None)
-    for name, value in step['with'].items():
-        resolved = resolve_output(value, outputs)
-        prepared['with'][name] = (resolved if isinstance(resolved, str) else
-                                  json.dumps(resolved, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
-    if prepared['application']['mode'] == 'delegated':
-        validate_plan(prepared)
-    return {**transition, 'status': 'ready', 'step': prepared}
+    for node in nodes:
+        if 'for_each' not in node:
+            response = advance_step(node)
+            if response is not None:
+                return response
+            continue
+        raw_items = resolve_output(node['for_each']['items'], outputs)
+        try:
+            items = json.loads(raw_items) if isinstance(raw_items, str) else raw_items
+        except json.JSONDecodeError as exc:
+            raise ExecutionError(f'{node["id"]}: for_each items must be a JSON array: {exc}') from exc
+        if not isinstance(items, list):
+            raise ExecutionError(f'{node["id"]}: for_each items must be a JSON array')
+        iteration_outputs = []
+        for index, item in enumerate(items):
+            for template in node['steps']:
+                response = advance_step(instantiate_iteration_step(template, node['id'], index, item))
+                if response is not None:
+                    return response
+            result_ref = instantiate_iteration_value(node['result'], node['id'], index, item)
+            iteration_outputs.append(resolve_output(result_ref, outputs))
+        outputs[node['id']] = json.dumps(
+            iteration_outputs, ensure_ascii=False, sort_keys=True, separators=(',', ':')
+        )
+
+    if cursor != len(results):
+        raise ExecutionError('more runtime results than planned steps')
+    return {**transition, 'status': 'complete', 'output': resolve_output(plan['result'], outputs)}

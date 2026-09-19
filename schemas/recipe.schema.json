@@ -23,6 +23,17 @@
             "type": "string",
             "pattern": "^(current|[a-z][a-z0-9-]*)$"
           },
+          "for_each": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["items"],
+            "properties": {
+              "items": {
+                "type": "string",
+                "pattern": "^\\$\\{\\{ (inputs\\.[a-z][a-z0-9_]*|steps\\.[a-z][a-z0-9_]*\\.output) \\}\\}$"
+              }
+            }
+          },
           "when": {
             "type": "object",
             "additionalProperties": false,
@@ -39,7 +50,9 @@
           "with": {
             "type": "object",
             "propertyNames": { "$ref": "#/$defs/identifier" },
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "type": "string"
+            }
           }
         }
       }

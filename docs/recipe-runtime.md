@@ -1,4 +1,4 @@
-# Conditional recipes and runtime protocol
+# Recipe conditions, iteration and runtime protocol
 
 Recipe orchestration remains the coordinator's responsibility. The core supplies deterministic planning,
 condition evaluation and transitions; `recipe advance` never starts an AI process. Use the same flow with
@@ -105,6 +105,27 @@ at the first false condition, so a skipped outer branch never requires evaluatio
 Flattened ids remain dot-separated (`branch.review`). A nested recipe's output continues to alias its
 declared final descendant; a skip marker identifies that actual descendant, not a synthetic container step.
 
+## Sequential `for_each`
+
+An iterative plan declares `execution.iterations: "json-array-sequential-v1"`. The plan keeps one loop node
+with an unresolved `for_each.items` value and a child recipe template. `recipe advance` resolves the value
+only after all earlier results are present, parses it as a JSON array and materializes one iteration at a time.
+
+Runtime step ids insert the zero-based array index between the loop id and child id, for example
+`implement.0.cover` and `implement.1.cover`. These ids are stable across resume because the original plan and
+the recorded producer output are immutable. Each materialized command has `${{ item }}` replaced by the
+current item: strings remain unchanged and objects, arrays, numbers, booleans and null use canonical compact
+JSON with sorted object keys.
+
+Iterations are ordered and fail-fast. Every command in index 0 completes before index 1 starts. A failed
+command stops the whole recipe, and the journal cannot contain later iterations. After all items complete,
+the loop exposes a compact JSON array of the declared child recipe result for each iteration. Downstream steps
+may reference that aggregate through the ordinary `${{ steps.id.output }}` syntax. An empty source array
+produces `[]`. A non-array or invalid JSON source is a runtime error.
+
+Version 1 supports a single iteration level. A child recipe expanded by `for_each` cannot contain another
+`for_each`, and a loop call cannot also declare `when`.
+
 ## Coordinator loop
 
 Keep the unmodified recipe plan and an ordered `results` array, initially empty. Immediately before each
@@ -190,7 +211,7 @@ The authoring schema remains `schemas/recipe.schema.json`. Runtime requests are 
 `recipe-runtime.schema.json`; the core registers its `planned-step` URN locally, deriving it from
 `execution-plan.schema.json` with typed unresolved inputs, optional conditions and current mode. No schema
 lookup uses the network. Semantic checks additionally enforce reference ordering, session consistency,
-condition capability, journal order and fail-fast.
+condition and iteration capabilities, journal order and fail-fast.
 
 On-disk protocol `1.0` remains unchanged: `when` is an optional, additive feature and does not itself require
 migration. The separate mandatory recipe naming rule does require the migration linked above.
@@ -200,4 +221,7 @@ they cannot safely run conditional recipes. Update the engine and coordinator in
 adopting this capability, available in engine `0.1.0-beta.3`.
 `normalize` is another optional extension within this capability. Earlier engines reject that field through
 their strict schemas rather than silently ignoring it; they must be updated to use conditions with `trim`.
+`for_each` is also additive within protocol `1.0`; iterative plans advertise
+`json-array-sequential-v1`. Coordinators must reject that capability unless they drive every transition through
+`recipe advance`. Earlier engines reject iterative authoring or runtime plans through their strict schemas.
 The release keeps on-disk protocol `1.0`; regenerate execution snapshots when upgrading the engine.

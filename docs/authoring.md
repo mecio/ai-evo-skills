@@ -159,6 +159,32 @@ All branches are validated before execution, including branches that will be ski
 `recipe advance` coordinator loop to resolve outputs and evaluate conditions. The [runtime protocol](recipe-runtime.md)
 defines the condition syntax, typed placeholders, nested recipes and skipped results.
 
+### Sequential iteration
+
+A recipe may invoke a child recipe once for every item in a JSON array produced by an input or an earlier
+step. Declare `for_each.items` on the child recipe call and map the complete current item with `${{ item }}`:
+
+```yaml
+steps:
+  - id: discover
+    uses: acme-cmd-discover-work
+  - id: implement
+    uses: acme-recipe-implement-work
+    for_each:
+      items: "${{ steps.discover.output }}"
+    with:
+      work_item: "${{ item }}"
+```
+
+`for_each` accepts only a complete reference and may invoke only a recipe. The referenced value must resolve
+at runtime to a JSON array. Items run in array order and each child recipe completes before the next begins.
+String items are passed unchanged; every other JSON item is passed as canonical compact JSON. The loop output
+is a JSON array containing each child recipe result in the same order. An empty array produces `[]` without
+running the child. `when` cannot be combined with `for_each`, and nested `for_each` is not supported.
+
+Use iteration when the number of work items is known only after an analysis step. Keep a fixed sequence as
+ordinary recipe steps when its size is known while authoring.
+
 ## Effort profiles
 
 `--ai-effort-profile=<name>` selects one complete profile for a command or entire recipe. When omitted, the

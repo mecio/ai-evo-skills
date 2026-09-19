@@ -32,7 +32,7 @@
         },
         "step": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
         }
       }
     },
@@ -50,7 +50,7 @@
         },
         "step": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+          "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
         },
         "reason": {
           "const": "condition-false"
@@ -64,8 +64,21 @@
         },
         {
           "$ref": "#/$defs/reference"
+        },
+        {
+          "$ref": "#/$defs/foreachItem"
         }
       ]
+    },
+    "foreachItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "const": "ai-evo-foreach-item"
+        }
+      }
     },
     "conditionSet": {
       "type": "object",
@@ -112,7 +125,7 @@
           "properties": {
             "step": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+              "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
             },
             "status": {
               "const": "succeeded"
@@ -133,7 +146,7 @@
           "properties": {
             "step": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+              "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
             },
             "status": {
               "const": "skipped"
@@ -154,7 +167,7 @@
           "properties": {
             "step": {
               "type": "string",
-              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+              "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
             },
             "status": {
               "const": "failed"
@@ -259,27 +272,58 @@
               "type": "array",
               "minItems": 1,
               "items": {
-                "allOf": [
+                "oneOf": [
                   {
-                    "$ref": "urn:ai-evo-skills:schema:planned-step:1.0"
-                  },
-                  {
-                    "required": [
-                      "id",
-                      "uses"
+                    "allOf": [
+                      { "$ref": "urn:ai-evo-skills:schema:planned-step:1.0" },
+                      { "required": ["id", "uses"] }
                     ]
-                  }
+                  },
+                  { "$ref": "#/$defs/foreach" }
                 ]
               }
             },
             "conditions": {
               "const": "exact-equals-v1"
+            },
+            "iterations": {
+              "const": "json-array-sequential-v1"
             }
           }
         },
         "result": {
           "$ref": "#/$defs/reference"
         }
+      }
+    },
+    "foreach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "for_each", "steps", "result"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.(?:[a-z][a-z0-9_]*|[0-9]+))*$"
+        },
+        "for_each": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["items"],
+          "properties": {
+            "items": { "$ref": "#/$defs/value" }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:ai-evo-skills:schema:planned-step:1.0" },
+              { "required": ["id", "uses"] }
+            ]
+          }
+        },
+        "result": { "$ref": "#/$defs/reference" }
       }
     }
   }

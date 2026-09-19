@@ -28,8 +28,10 @@ NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SHORT_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 INPUT_VAR_RE = re.compile(r"^\$\{\{ inputs\.([a-z][a-z0-9_]*) \}\}$")
 STEP_VAR_RE = re.compile(r"^\$\{\{ steps\.([a-z][a-z0-9_]*)\.output \}\}$")
+ITEM_VAR_RE = re.compile(r"^\$\{\{ item \}\}$")
 SECTIONS = ["Purpose", "Interface", "Procedure", "Expected output", "Constraints", "Success criteria", "Examples"]
 STEP_OUTPUT_REFERENCE_TYPE = "ai-evo-step-output"
+FOREACH_ITEM_REFERENCE_TYPE = "ai-evo-foreach-item"
 
 
 class EvoError(Exception):
@@ -179,6 +181,8 @@ def parse_variable(value: Any) -> tuple[str, str] | None:
     match = STEP_VAR_RE.fullmatch(value)
     if match:
         return "steps", match.group(1)
+    if ITEM_VAR_RE.fullmatch(value):
+        return "item", "item"
     return None
 
 
@@ -538,6 +542,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
 def validate_recipes(context: Context) -> list[str]:
     errors: list[str] = []
     graph: dict[str, list[str]] = {}
+    iterative_calls: list[tuple[str, str, str]] = []
     for skill in context.registry.values():
         if skill.kind != "recipe" or not isinstance(skill.recipe, dict):
             continue
@@ -560,6 +565,14 @@ def validate_recipes(context: Context) -> list[str]:
                 continue
             if child.kind == "recipe":
                 graph[skill.name].append(child.name)
+            foreach = step.get("for_each")
+            if foreach is not None:
+                if child.kind != "recipe":
+                    errors.append(f"{skill.name}.{sid}: for_each may only invoke a recipe")
+                else:
+                    iterative_calls.append((skill.name, sid, child.name))
+                if "when" in step:
+                    errors.append(f"{skill.name}.{sid}: for_each and when cannot be combined")
             supplied = step.get("with", {}) or {}
             unknown = set(supplied) - set(child.inputs)
             for name in sorted(unknown):
@@ -574,6 +587,8 @@ def validate_recipes(context: Context) -> list[str]:
             references = dict(supplied)
             if "when" in step:
                 references["when.value"] = step["when"]["value"]
+            if foreach is not None:
+                references["for_each.items"] = foreach["items"]
             for key, value in references.items():
                 variable = parse_variable(value)
                 if isinstance(value, str) and "${{" in value and not variable:
@@ -583,6 +598,8 @@ def validate_recipes(context: Context) -> list[str]:
                     errors.append(f"{skill.name}.{sid}.{key}: unknown recipe input {variable[1]}")
                 elif variable and variable[0] == "steps" and variable[1] not in prior:
                     errors.append(f"{skill.name}.{sid}.{key}: step output must reference a previous step")
+                elif variable and variable[0] == "item" and (foreach is None or key not in supplied):
+                    errors.append(f"{skill.name}.{sid}.{key}: item is only available in for_each child inputs")
             prior.add(sid)
         output = recipe.get("outputs", {}).get("result", {}).get("value", "")
         variable = parse_variable(output)
@@ -604,6 +621,25 @@ def validate_recipes(context: Context) -> list[str]:
     for node in graph:
         if state.get(node, 0) == 0:
             visit(node)
+
+    def contains_iteration(name: str, seen: set[str]) -> bool:
+        if name in seen:
+            return False
+        seen.add(name)
+        child = context.registry.get(name)
+        if not child or not isinstance(child.recipe, dict):
+            return False
+        for step in child.recipe.get("steps", []):
+            if "for_each" in step:
+                return True
+            used = context.registry.get(step.get("uses"))
+            if used and used.kind == "recipe" and contains_iteration(used.name, seen):
+                return True
+        return False
+
+    for recipe, sid, child in iterative_calls:
+        if contains_iteration(child, set()):
+            errors.append(f"{recipe}.{sid}: nested for_each is not supported")
     return errors
 
 
@@ -1164,6 +1200,11 @@ def step_output_reference(step_id: str) -> dict[str, str]:
     return {"type": STEP_OUTPUT_REFERENCE_TYPE, "step": step_id}
 
 
+def foreach_item_reference() -> dict[str, str]:
+    """Return the runtime placeholder for the current for_each item."""
+    return {"type": FOREACH_ITEM_REFERENCE_TYPE}
+
+
 def cmd_profile_resolve(args: argparse.Namespace) -> None:
     context = validated_context()
     print(json.dumps(profile_payload(context, args.profile, args.adapter), indent=2))
@@ -1269,13 +1310,18 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     def expand(
         skill: Skill, supplied: dict[str, Any], prefix: str,
         inherited: list[dict[str, Any]], coordinator: str, delegated_scope: bool,
+        target: list[dict[str, Any]], template_mode: bool = False,
     ) -> Any:
         values = {key: supplied.get(key, spec.get("default")) for key, spec in skill.inputs.items()}
         outputs: dict[str, Any] = {}
         assert skill.recipe is not None
         for step in skill.recipe["steps"]:
             child = context.registry[step["uses"]]
-            child_values = {key: resolve_value(value, values, outputs) for key, value in (step.get("with") or {}).items()}
+            child_values = {}
+            for key, value in (step.get("with") or {}).items():
+                variable = parse_variable(value)
+                child_values[key] = (foreach_item_reference() if variable and variable[0] == "item"
+                                     else resolve_value(value, values, outputs))
             for key, spec in child.inputs.items():
                 if key not in child_values and "default" in spec:
                     child_values[key] = spec["default"]
@@ -1286,12 +1332,30 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
                                "equals": step["when"]["equals"]})
                 if "normalize" in step["when"]:
                     guards[-1]["normalize"] = step["when"]["normalize"]
+            if "for_each" in step:
+                if template_mode:
+                    raise EvoError(f"{skill.name}.{step['id']}: nested for_each is not supported")
+                declared = step.get("executor", "current")
+                child_coordinator = coordinator if declared == "current" else declared
+                templates: list[dict[str, Any]] = []
+                child_result = expand(
+                    child, child_values, full_id, guards, child_coordinator,
+                    delegated_scope or declared != "current", templates, True,
+                )
+                target.append({
+                    "id": full_id,
+                    "for_each": {"items": resolve_value(step["for_each"]["items"], values, outputs)},
+                    "steps": templates,
+                    "result": child_result,
+                })
+                outputs[step["id"]] = step_output_reference(full_id)
+                continue
             if child.kind == "recipe":
                 declared = step.get("executor", "current")
                 child_coordinator = coordinator if declared == "current" else declared
                 outputs[step["id"]] = expand(
                     child, child_values, full_id, guards, child_coordinator,
-                    delegated_scope or declared != "current",
+                    delegated_scope or declared != "current", target, template_mode,
                 )
             else:
                 executor = step.get("executor", "current")
@@ -1299,13 +1363,13 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
                 # Its commands then need delegated execution, even without restrictions.
                 if executor == "current" and (delegated_scope or coordinator != args.adapter):
                     executor = coordinator
-                plan.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter, executor=executor), "handoff": resolved_handoff(child, recipe=True)})
+                target.append({"id": full_id, "uses": child.name, "skill_path": str(child.path), "with": child_values, "application": command_application(context, child, args.profile, args.adapter, executor=executor), "handoff": resolved_handoff(child, recipe=True)})
                 if guards:
-                    plan[-1]["when"] = {"all": guards}
+                    target[-1]["when"] = {"all": guards}
                 outputs[step["id"]] = step_output_reference(full_id)
         return resolve_value(skill.recipe["outputs"]["result"]["value"], values, outputs)
 
-    result = expand(root, initial, "", [], args.adapter, False)
+    result = expand(root, initial, "", [], args.adapter, False, plan)
     payload = {
         "version": PROTOCOL_VERSION,
         "recipe": root.name,
@@ -1313,8 +1377,10 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
         "execution": {"mode": "sequential", "failure": "fail-fast", "steps": plan},
         "result": result,
     }
-    if any("when" in step for step in plan):
+    if any("when" in step or any("when" in child for child in step.get("steps", [])) for step in plan):
         payload["execution"]["conditions"] = "exact-equals-v1"
+    if any("for_each" in step for step in plan):
+        payload["execution"]["iterations"] = "json-array-sequential-v1"
     validate_recipe_snapshot(payload)
     print(json.dumps(payload, indent=2))
 

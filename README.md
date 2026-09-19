@@ -23,7 +23,8 @@ AI Evo Skills is a small, project-local orchestration layer built on the Agent S
 - **Steps** store atomic workflow services that can only be invoked by recipes and are not published as native
   user-facing skills.
 - **Recipes** compose commands, steps or other recipes into an ordered workflow. They pass inputs and earlier results
-  between steps, choose an executor for each call, validate dependencies and stop at the first failure.
+  between steps, iterate child recipes over runtime JSON arrays, choose an executor for each call, validate
+  dependencies and stop at the first failure.
 - **Adapters** publish the relevant skills into each enabled AI client's native project directory and translate
   common execution policies into its CLI controls. Bundled adapters support Codex and Claude Code.
 - **Effort profiles** define shared preferences for reasoning, tests, resource use and reporting.
@@ -170,7 +171,7 @@ See the [execution reference](docs/execution.md) for delegation, native restrict
   effort profile settings.
 - [Execution and adapters](docs/execution.md): internal CLI, native restrictions, process supervision,
   session reuse and maintainer verification.
-- [Recipe runtime](docs/recipe-runtime.md): conditions, input and output resolution, result journals and skips.
+- [Recipe runtime](docs/recipe-runtime.md): conditions, sequential iteration, input and output resolution, journals and skips.
 - [Recipe naming migration](docs/recipe-naming-migration.md): naming rules and manual migration steps.
 - [Changelog](CHANGELOG.md): unreleased changes and release history.
 
