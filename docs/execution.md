@@ -14,6 +14,30 @@ Claude policy composition is also exercised with Claude Code `2.1.268`. The adap
 
 ## Execution policies and prompt delivery
 
+Commands may declare `output-schema: references/result.schema.json` in their `ai-evo-interface`.
+The schema must describe an object, use local JSON-pointer references only, and reside inside the
+skill's references directory. It is validated and embedded in the plan, so execution never reloads
+a potentially changed schema from the catalog.
+
+The deterministic extractor accepts a JSON object or exactly one fenced JSON block, optionally
+surrounded by explanatory prose. Fences may use matching backticks or tildes and a `json` or empty
+language label. Markdown links in surrounding prose are allowed. Other fences, additional JSON
+objects or arrays outside the block, duplicate keys,
+nonstandard constants and multiple candidates are rejected. It never guesses boundaries from
+the first/last brace, merges candidates or repairs malformed JSON.
+The extracted object is validated against the complete schema, including conditional and format
+constraints, before being emitted to the consumer. Invalid output with native exit 0 becomes exit 1;
+native nonzero statuses and timeouts remain failures. No adapter-specific schema/output flags are added.
+Success is recorded only after UTF-8 serialization and output write/flush succeed. Serialization
+or delivery errors preserve the native output and produce a nonzero diagnostic with the cause.
+
+For schema-bound commands, `command execute --artifacts-dir NEW_DIRECTORY` stores `native.stdout`,
+`native.stderr`, and `diagnostic.json` with native/effective exit codes and the reason for failure.
+The directory must be new for each attempt. Without the option, a persistent temporary directory
+is created and reported on stderr. On failure stdout preserves the original native bytes for the
+coordinator's failure logger; on success the original response remains in the artifact directory.
+Commands without `output-schema` keep their existing streaming behavior. Old plans must be regenerated.
+
 `execution-policy.workspace` accepts `read-only` or `read-write`. `execution-policy.network` accepts `disabled`,
 `enabled` or `auto`. When read-only workspace access or disabled network access is selected, the adapter must enforce
 that restriction through native CLI controls or planning stops. Codex explicitly maps workspace `read-write`

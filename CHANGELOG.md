@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add optional command `output-schema`, snapshotted into execution plans. Execution accepts a
+  JSON object or extracts a single fenced JSON block, validates it, and emits only the object.
+  Preserve native stdout/stderr and exit diagnostics per attempt; ambiguous, malformed or
+  schema-invalid output fails even when the native CLI exits zero. No native output flags required.
+
 - Allow authenticated GitHub reads in the Claude read-only policy through the fixed
   `bin/ai-evo-github-read` wrapper (auth status, repository identity, issue details).
   Keep arbitrary shell/gh commands and edits unavailable; network-disabled policies and profiles

@@ -115,6 +115,14 @@
             }
           }
         },
+        "output_contract": {
+          "type": "object", "additionalProperties": false,
+          "required": ["format", "schema"],
+          "properties": {
+            "format": { "const": "json-object" },
+            "schema": { "type": "object" }
+          }
+        },
         "session": {
           "type": "object",
           "additionalProperties": false,

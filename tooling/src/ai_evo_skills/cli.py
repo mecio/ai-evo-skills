@@ -19,6 +19,7 @@ from . import __version__
 from .yaml_loading import load_strict_yaml
 from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
+from .output_contract import load_output_schema, execute_structured
 from .recipe_runtime import advance_recipe, validate_recipe_snapshot
 from .naming import recipe_name_error
 from .claude_policy import normalize_claude_arguments, require_claude_grants, ClaudePolicyError
@@ -46,6 +47,7 @@ class Skill:
     inputs: dict[str, Any]
     execution_policy: dict[str, Any] | None = None
     recipe: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
 
 
 @dataclass
@@ -111,15 +113,16 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     return data, match.group(2)
 
 
-def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     blocks = re.findall(r"```yaml ai-evo-interface\n(.*?)\n```", body, re.S)
     if len(blocks) != 1:
         raise EvoError(f"{path}: command must contain exactly one yaml ai-evo-interface block")
     data = load_strict_yaml(blocks[0])
     if isinstance(data, dict) and "executor" in data:
         raise EvoError(f"{path}: commands always use the current AI; executor is only supported on recipe steps")
-    if not isinstance(data, dict) or set(data) != {"inputs", "execution-policy"}:
-        raise EvoError(f"{path}: interface must contain only inputs and execution-policy")
+    if (not isinstance(data, dict) or not {"inputs", "execution-policy"} <= set(data)
+            or set(data) - {"inputs", "execution-policy", "output-schema"}):
+        raise EvoError(f"{path}: interface requires inputs and execution-policy; only output-schema is optional")
     policy = data.get("execution-policy")
     if not isinstance(data.get("inputs"), dict) or not isinstance(policy, dict):
         raise EvoError(f"{path}: malformed command interface")
@@ -136,7 +139,8 @@ def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict
                 or any(not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+", name) for name in names)
                 or len(set(names)) != len(names)):
             raise EvoError(f"{path}: {key} must be a list of unique capability names")
-    return data["inputs"], policy
+    schema = load_output_schema(path, data["output-schema"]) if "output-schema" in data else None
+    return data["inputs"], policy, schema
 
 
 def validate_inputs(inputs: Any, label: str) -> list[str]:
@@ -402,6 +406,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 errors.append(f"{path}: unresolved TODO placeholder")
             recipe = None
             execution_policy = None
+            output_schema = None
             inputs: dict[str, Any] = {}
             if expected_kind in {"command", "step"}:
                 extra = [
@@ -415,8 +420,8 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                     )
                 errors += validate_references(path.parent, expected_kind)
                 try:
-                    inputs, execution_policy = parse_command_interface(body, path)
-                except (EvoError, yaml.YAMLError) as exc:
+                    inputs, execution_policy, output_schema = parse_command_interface(body, path)
+                except (EvoError, ExecutionError, yaml.YAMLError) as exc:
                     errors.append(str(exc))
                 errors += validate_inputs(inputs, f"{path}:inputs")
             else:
@@ -453,7 +458,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                         f"{', '.join(extra)}"
                     )
                 errors += validate_references(path.parent, "recipe")
-            registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe)
+            registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe, output_schema)
 
     profiles: dict[str, dict[str, Any]] = {}
     profiles_root = skills / "config/effort-profiles"
@@ -821,8 +826,12 @@ def command_application(
             compact.extend([deny_option, ",".join(dict.fromkeys(denied))])
         arguments = compact
     restrictive_policy = policy.get("workspace") == "read-only" or policy.get("network") == "disabled"
-    delegated = executor != "current" or restrictive_policy
+    output_contract = None
+    if skill.output_schema is not None:
+        output_contract = {"format": "json-object", "schema": skill.output_schema}
+    delegated = executor != "current" or restrictive_policy or output_contract is not None
     return {
+        **({"output_contract": output_contract} if output_contract else {}),
         "executor": adapter_id,
         "mode": "delegated" if delegated else "current",
         "command": command,
@@ -1301,9 +1310,13 @@ def cmd_command_execute(args: argparse.Namespace) -> None:
         argv = [*command, prompt, *argv[len(command):]]
     elif delivery == "argument-after-options":
         argv.append(prompt)
-    status = run_delegated(
+    runner = execute_structured if "output_contract" in application else run_delegated
+    if args.artifacts_dir and runner is run_delegated:
+        raise EvoError("--artifacts-dir requires a command with output-schema")
+    extra = {"contract": application["output_contract"], "artifacts_dir": args.artifacts_dir} if runner is execute_structured else {}
+    status = runner(
         argv, cwd=directory, env={**os.environ, "AI_EVO_EXECUTION_HANDOFF": "resolved"},
-        prompt=prompt if delivery == "stdin" else None, timeout=args.timeout,
+        prompt=prompt if delivery == "stdin" else None, timeout=args.timeout, **extra,
     )
     raise SystemExit(status)
 
@@ -1457,7 +1470,7 @@ def parser() -> argparse.ArgumentParser:
     resolve = profile_sub.add_parser("resolve"); resolve.add_argument("--adapter", required=True); resolve.add_argument("--ai-effort-profile", dest="profile"); resolve.set_defaults(func=cmd_profile_resolve)
     command_root = sub.add_parser("command"); command_sub = command_root.add_subparsers(dest="command_command", required=True)
     command_plan = command_sub.add_parser("plan"); command_plan.add_argument("name"); command_plan.add_argument("--adapter", required=True); command_plan.add_argument("--ai-effort-profile", dest="profile"); command_plan.add_argument("--input", action="append", default=[]); command_plan.set_defaults(func=cmd_command_plan)
-    execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.add_argument("--timeout", type=positive_timeout, default=900.0); execute.set_defaults(func=cmd_command_execute)
+    execute = command_sub.add_parser("execute"); execute.add_argument("--resume-session"); execute.add_argument("--correction", action="store_true"); execute.add_argument("--timeout", type=positive_timeout, default=900.0); execute.add_argument("--artifacts-dir"); execute.set_defaults(func=cmd_command_execute)
     recipe_root = sub.add_parser("recipe"); recipe_sub = recipe_root.add_subparsers(dest="recipe_command", required=True)
     plan = recipe_sub.add_parser("plan"); plan.add_argument("name"); plan.add_argument("--adapter", required=True); plan.add_argument("--ai-effort-profile", dest="profile"); plan.add_argument("--input", action="append", default=[]); plan.set_defaults(func=cmd_recipe_plan)
     advance = recipe_sub.add_parser("advance"); advance.set_defaults(func=cmd_recipe_advance)

@@ -40,6 +40,9 @@ def validate_step_consistency(step: dict[str, Any]) -> None:
         raise ExecutionError('inconsistent session capability or reuse policy')
     if app['profile']['adapter'] != app['executor']:
         raise ExecutionError('profile adapter must match the execution adapter')
+    if 'output_contract' in app:
+        from .output_contract import check_schema
+        check_schema(app['output_contract']['schema'])
     recipe = 'resolved' if 'uses' in step else 'not-applicable'
     if step['handoff']['planning']['recipe'] != recipe:
         raise ExecutionError('handoff planning status does not match the plan kind')
@@ -70,7 +73,8 @@ class _InputPump:
             self.stream.close()
 
 
-def run_delegated(argv: list[str], *, cwd: str, env: dict[str, str], prompt: str | None, timeout: float) -> int:
+def run_delegated(argv: list[str], *, cwd: str, env: dict[str, str], prompt: str | None, timeout: float,
+                  stdout=None, stderr=None) -> int:
     """Run supervision in an isolated process, never adopting the caller's orphans."""
     import os
     from pathlib import Path
@@ -98,7 +102,8 @@ def run_delegated(argv: list[str], *, cwd: str, env: dict[str, str], prompt: str
              'import sys; sys.path.insert(0, sys.argv[1]); '
              'from ai_evo_skills.execution_worker import main; main(int(sys.argv[2]), int(sys.argv[3]))',
              str(Path(__file__).resolve().parent.parent), str(writer), str(gate_reader)],
-            stdin=subprocess.PIPE, pass_fds=(writer, gate_reader), start_new_session=True,
+            stdin=subprocess.PIPE, stdout=stdout, stderr=stderr,
+            pass_fds=(writer, gate_reader), start_new_session=True,
         )
         os.close(writer)
         writer = None
