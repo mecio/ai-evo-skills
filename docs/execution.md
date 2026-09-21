@@ -20,12 +20,46 @@ that restriction through native CLI controls or planning stops. Codex explicitly
 to `--sandbox workspace-write`, preserving the network restriction independently. `auto` delegates the choice to the executor.
 
 For Claude Code, read-only commands use non-interactive permission denial, disable editing tools and expose Bash
-only for `.ai-evo/bin/ai-evo-git-read`. That wrapper offers argument-safe `status`, `diff`, `show`, `log`,
+through fixed wrappers. `.ai-evo/bin/ai-evo-git-read` offers argument-safe `status`, `diff`, `show`, `log`,
 `rev-parse`, `merge-base` and `ls-files` operations. This preserves branch and diff inspection without exposing
 arbitrary shell commands. The wrapper disables configured Git conversion filters and compares unfiltered
 worktree content; `status` and `diff` omit submodules to avoid running helpers from nested repositories.
+When explicitly requested by a command, `.ai-evo/bin/ai-evo-github-read` also offers `auth-status`, `repo-view`
+and `issue-view <positive-number>` using authenticated `gh` calls for the checkout's repository.
+It accepts no arbitrary flags, URLs, API endpoints or mutations, suppresses authentication diagnostics,
+disables interactive prompts and bounds each call to 60 seconds. GitHub.com is the supported host.
+No general `gh` or Bash grant is added. A network-disabled command or profile blocks planning if a GitHub capability is required.
 Network-disabled commands also disable web tools and unconfigured MCP servers while
 retaining native edit tools when the workspace policy is read-write.
+
+Commands and steps can declare optional capability lists:
+
+```yaml
+execution-policy:
+  workspace: read-only
+  network: enabled
+  capabilities: [github.auth-status, github.repo-view, github.issue-view]
+  deny-capabilities: []
+```
+
+Each capability is a required operation, not an arbitrary executable name. The adapter's
+`capability-translation` maps it to native grants. Only requested operations extend the workspace
+allowlist; invocation/session ceilings and all native denies retain precedence. An explicit denial,
+disabled network, unknown capability, or a grant excluded by a native ceiling stops planning with
+a diagnostic naming the capability. Uncertain overlap with a native deny also stops planning.
+An omitted or empty list adds no grants. Deny-only entries are translated to native denies.
+Capability plans disable unconfigured MCP servers and use non-interactive permission denial.
+
+The initial mappings support the three GitHub read operations on Claude with `workspace: read-only`.
+Codex and read-write capability mappings are not implemented: requests in those modes fail planning.
+Existing commands without capability declarations retain their baseline policy. To add support,
+implement and verify native enforcement before exposing another adapter mapping; prompt instructions
+alone do not satisfy the contract. Rebuild saved plans after changing command declarations or adapters.
+
+Read-write/auto steps do not automatically authorize the host client's permission prompts or paths outside
+its allowed directories. A silent CLI can still be waiting for host permissions; inspect native tool results
+before attributing a delay to the project script. A coordinator-owned persistence step can use
+`executor: current` to avoid a second delegated session, subject to the coordinator's own permissions.
 
 These Bash restrictions also apply to project scripts and test runners named in a command's instructions.
 The [script guide](command-scripts.md#adapter-permissions) explains adapter selection for those tasks;

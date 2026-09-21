@@ -21,7 +21,7 @@ from .process_tree import ProcessTreeError
 from .execution import ExecutionError, ExecutionTimeout, validate_plan, run_delegated
 from .recipe_runtime import advance_recipe, validate_recipe_snapshot
 from .naming import recipe_name_error
-from .claude_policy import normalize_claude_arguments, ClaudePolicyError
+from .claude_policy import normalize_claude_arguments, require_claude_grants, ClaudePolicyError
 
 PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -44,7 +44,7 @@ class Skill:
     kind: str
     path: Path
     inputs: dict[str, Any]
-    execution_policy: dict[str, str] | None = None
+    execution_policy: dict[str, Any] | None = None
     recipe: dict[str, Any] | None = None
 
 
@@ -111,7 +111,7 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     return data, match.group(2)
 
 
-def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     blocks = re.findall(r"```yaml ai-evo-interface\n(.*?)\n```", body, re.S)
     if len(blocks) != 1:
         raise EvoError(f"{path}: command must contain exactly one yaml ai-evo-interface block")
@@ -124,12 +124,18 @@ def parse_command_interface(body: str, path: Path) -> tuple[dict[str, Any], dict
     if not isinstance(data.get("inputs"), dict) or not isinstance(policy, dict):
         raise EvoError(f"{path}: malformed command interface")
     if (
-        set(policy) != {"workspace", "network"}
-        or not all(isinstance(value, str) for value in policy.values())
-        or policy["workspace"] not in {"read-only", "read-write"}
-        or policy["network"] not in {"disabled", "enabled", "auto"}
+        not {"workspace", "network"} <= set(policy)
+        or set(policy) - {"workspace", "network", "capabilities", "deny-capabilities"}
+        or policy.get("workspace") not in ("read-only", "read-write")
+        or policy.get("network") not in ("disabled", "enabled", "auto")
     ):
         raise EvoError(f"{path}: invalid execution-policy")
+    for key in ("capabilities", "deny-capabilities"):
+        names = policy.get(key, [])
+        if (not isinstance(names, list)
+                or any(not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+", name) for name in names)
+                or len(set(names)) != len(names)):
+            raise EvoError(f"{path}: {key} must be a list of unique capability names")
     return data["inputs"], policy
 
 
@@ -748,7 +754,24 @@ def command_application(
     arguments.extend(adapter.get("session-translation", {}).get(reuse, []))
     policy_instructions: list[str] = []
     policy = skill.execution_policy or {}
-    for dimension, value in policy.items():
+    required_grants = {}
+    denied_grants = []
+    for name in dict.fromkeys(policy.get("capabilities", []) + policy.get("deny-capabilities", [])):
+        mapping = adapter.get("capability-translation", {}).get(name)
+        if (adapter_id != "claude" or not mapping or mapping.get("enforcement") != "native"
+                or policy.get("workspace") not in mapping["workspaces"]):
+            raise EvoError(f"adapter {adapter_id} cannot enforce capability {name} for {skill.name} with workspace={policy.get('workspace')}")
+        if name in policy.get("deny-capabilities", []):
+            denied_grants.extend(mapping["allow-tools"])
+        if name in policy.get("capabilities", []):
+            if name in policy.get("deny-capabilities", []):
+                raise EvoError(f"capability {name} required by {skill.name} is explicitly denied")
+            if mapping["requires-network"] and (policy.get("network") == "disabled" or context.profiles[payload["profile"]]["resources"]["network"] == "disabled"):
+                raise EvoError(f"capability {name} required by {skill.name} is blocked by network=disabled")
+            required_grants[name] = mapping["allow-tools"]
+            policy_instructions.extend(mapping.get("instructions", []))
+    for dimension in ("workspace", "network"):
+        value = policy.get(dimension)
         if (dimension, value) == ("workspace", "read-write"):
             translation = adapter["execution-policy-translation"].get("workspace-read-write")
             if translation:
@@ -761,13 +784,29 @@ def command_application(
         translation = adapter["execution-policy-translation"].get(key)
         if not translation or translation.get("enforcement") != "native":
             raise EvoError(f"adapter {adapter_id} cannot enforce {key} for {skill.name}")
-        arguments.extend(translation["cli-arguments"])
+        translated = list(translation["cli-arguments"])
+        # Extend only the adapter's workspace baseline. Invocation, session and
+        # profile ceilings are composed below and must never be widened.
+        if dimension == "workspace" and required_grants:
+            if "--allowedTools" not in translated:
+                raise EvoError(f"adapter {adapter_id} cannot enforce capabilities: workspace translation has no native allowlist")
+            index = translated.index("--allowedTools") + 1
+            translated[index] += "," + ",".join(rule for rules in required_grants.values() for rule in rules)
+        arguments.extend(translated)
         policy_instructions.extend(translation.get("instructions", []))
+    if denied_grants:
+        arguments.extend(["--disallowedTools", ",".join(denied_grants)])
+    if required_grants or denied_grants:
+        arguments.append("--strict-mcp-config")
     deny_option = adapter["profile-translation"]["delegated-cli"].get("disallowed-tools-option") if adapter["profile-translation"]["delegated-cli"] else None
     command = adapter["invocation"]["command"]
     if adapter_id == "claude":
         try:
             arguments = normalize_claude_arguments(command[1:], arguments)
+            for name, rules in required_grants.items():
+                require_claude_grants(arguments, rules, name)
+            for name in policy.get("deny-capabilities", []):
+                require_claude_grants(arguments, [], name)
         except ClaudePolicyError as exc:
             raise EvoError(str(exc)) from exc
         command = command[:1]

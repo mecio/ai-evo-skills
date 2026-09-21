@@ -227,7 +227,8 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
             actual = options(step['application']['cli_arguments'])
             self.assertEqual('Bash,Glob,Grep,Read', actual['--tools'])
             self.assertEqual(GIT_RULE + ',Glob,Grep,Read', actual['--allowedTools'])
-            self.assertEqual('Agent,Edit,NotebookEdit,WebFetch,WebSearch,Write', actual['--disallowedTools'])
+            self.assertEqual('Agent,Bash(.ai-evo/bin/ai-evo-github-read *),Edit,NotebookEdit,WebFetch,WebSearch,Write',
+                             actual['--disallowedTools'])
             self.assertEqual('dontAsk', actual['--permission-mode'])
             self.assertEqual('none', actual['--permission-prompts'])
             self.assertTrue(actual['-p'])

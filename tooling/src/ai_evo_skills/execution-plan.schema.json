@@ -92,6 +92,14 @@
             "network"
           ],
           "properties": {
+            "capabilities": {
+              "type": "array", "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$" }
+            },
+            "deny-capabilities": {
+              "type": "array", "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$" }
+            },
             "workspace": {
               "enum": [
                 "read-only",

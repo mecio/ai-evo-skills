@@ -24,6 +24,7 @@ profile-translation:
       network:
         - WebSearch
         - WebFetch
+        - Bash(.ai-evo/bin/ai-evo-github-read *)
 
 execution-policy-translation:
   workspace-read-only:
@@ -57,3 +58,26 @@ execution-policy-translation:
       - WebSearch,WebFetch
     instructions:
       - Use .ai-evo/bin/ai-evo-git-read for Git inspection; arbitrary shell and network commands are unavailable.
+
+capability-translation:
+  github.auth-status:
+    enforcement: native
+    workspaces: [read-only]
+    requires-network: true
+    allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read auth-status)"]
+    instructions:
+      - Use .ai-evo/bin/ai-evo-github-read auth-status to check GitHub authentication.
+  github.repo-view:
+    enforcement: native
+    workspaces: [read-only]
+    requires-network: true
+    allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read repo-view)"]
+    instructions:
+      - Use .ai-evo/bin/ai-evo-github-read repo-view to read the current GitHub repository.
+  github.issue-view:
+    enforcement: native
+    workspaces: [read-only]
+    requires-network: true
+    allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read issue-view *)"]
+    instructions:
+      - Use .ai-evo/bin/ai-evo-github-read issue-view NUMBER to read an issue; the wrapper accepts only a positive integer.

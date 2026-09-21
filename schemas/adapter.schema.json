@@ -68,6 +68,21 @@
         }
       }
     },
+    "capability-translation": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$" },
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["enforcement", "workspaces", "requires-network", "allow-tools"],
+        "properties": {
+          "enforcement": { "const": "native" },
+          "workspaces": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "const": "read-only" } },
+          "requires-network": { "type": "boolean" },
+          "allow-tools": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "instructions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
     "execution-policy-translation": {
       "type": "object", "additionalProperties": false, "required": ["workspace-read-only", "network-disabled"],
       "properties": {

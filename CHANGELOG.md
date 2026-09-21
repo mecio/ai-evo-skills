@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Allow authenticated GitHub reads in the Claude read-only policy through the fixed
+  `bin/ai-evo-github-read` wrapper (auth status, repository identity, issue details).
+  Keep arbitrary shell/gh commands and edits unavailable; network-disabled policies and profiles
+  reject required GitHub capabilities. Commands explicitly declare `capabilities` and optional
+  `deny-capabilities`; adapter mappings grant only requested operations. Native denies take precedence,
+  and unsupported or conflicting contracts fail planning. Initial support: Claude/read-only.
+  Regenerate execution plans to use the new allowlist.
+
 - Add recipe-only step skills under `skills/catalog/steps`, with `ai-evo-kind: step`, the
   `<namespace>-step-<name>` naming convention and `create step`. Steps share the command interface but can only
   be resolved through recipes and are not published as directly invocable native skills.

@@ -51,6 +51,40 @@ def _intersect(left: set[str], right: set[str]) -> set[str]:
     }
 
 
+def require_claude_grants(arguments: list[str], grants: list[str], capability: str) -> None:
+    """Verify required grants after all ceilings and vetoes have been composed.
+
+    Unknown overlap with a scoped deny fails closed. This deliberately does not
+    try to prove arbitrary native glob expressions disjoint.
+    """
+    values = {}
+    for index, arg in enumerate(arguments):
+        option, equals, value = arg.partition("=")
+        if option in {"--dangerously-skip-permissions", "--mcp-config"}:
+            raise ClaudePolicyError(f"capability {capability} cannot be enforced with native option {option}")
+        if option in LIST_OPTIONS:
+            values[option] = _rules(value if equals else arguments[index + 1], option)
+    for grant in grants:
+        name = grant.split("(", 1)[0]
+        if not any(_covers(rule, grant) for rule in values.get("--allowedTools", set())):
+            raise ClaudePolicyError(f"capability {capability} cannot be granted: {grant} excluded by native tool ceilings or denies")
+        for deny in values.get("--disallowedTools", set()):
+            if deny.split("(", 1)[0] != name:
+                continue
+            # For the mapped fixed Bash operations, differing literal command
+            # prefixes before a trailing wildcard are provably disjoint.
+            def literal_prefix(rule):
+                if not rule.startswith("Bash(") or not rule.endswith(")"):
+                    return None
+                body = rule[5:-1]
+                prefix = body[:-1] if body.endswith("*") else body
+                return prefix if not any(c in prefix for c in "*?[]:") else None
+            left, right = literal_prefix(deny), literal_prefix(grant)
+            if left and right and not (left.startswith(right) or right.startswith(left)):
+                continue
+            raise ClaudePolicyError(f"capability {capability} conflicts with native deny {deny}")
+
+
 def normalize_claude_arguments(*layers: list[str]) -> list[str]:
     """Intersect capabilities/grants, union denies, and fail closed on conflicts.
 

@@ -90,8 +90,12 @@ With the bundled adapters:
 
 - Codex can run a local Python helper under a read-only, network-disabled sandbox when the interpreter
   and files are accessible. Helpers must respect the sandbox; a test command may need `read-write`.
-- Claude's `workspace: read-only` **or** `network: disabled` translation restricts Bash to
-  `.ai-evo/bin/ai-evo-git-read`. Arbitrary project scripts and test runners are unavailable in that mode.
+- Claude's `workspace: read-only` translation restricts Bash to the fixed Git wrapper and explicitly declared capabilities.
+  The GitHub wrapper supports only `auth-status`, `repo-view` and `issue-view NUMBER`.
+  With `network: disabled`, only `.ai-evo/bin/ai-evo-git-read` remains available.
+  Declare `github.auth-status`, `github.repo-view` and/or `github.issue-view` in `execution-policy.capabilities`.
+  A network-disabled profile blocks planning when a GitHub capability is required.
+  Arbitrary project scripts and test runners are unavailable in these restricted modes.
   A prompt or effort-profile preference cannot add them to the permitted tool set.
 
 The runtime-tests recipe therefore assigns script and test steps to `executor: codex`; Claude may still
