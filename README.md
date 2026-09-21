@@ -157,8 +157,9 @@ See the [execution reference](docs/execution.md) for delegation, native restrict
 
 ## Documentation
 
-- [Acme starter catalog](examples/acme/README.md): a boilerplate with three commands, two recipes and a
-  conditional review, ready to copy into an initialized project.
+- [Examples index](examples/README.md): commands, internal steps, recipes and recovery.
+- [Acme starter catalog](examples/acme/README.md): three commands, a script-backed internal step and two recipes.
+- [Recovery example](examples/recovery/README.md): verified-prefix recovery with an isolated demo and real-run instructions.
 - [Runtime-tests example](examples/runtime-tests/README.md): scripted PHP context detection, conditional suites
   and reporting; supply your application's test wrappers and worktree mapping.
 - [Commands that use scripts](docs/command-scripts.md): placement, output contracts, adapter permissions and

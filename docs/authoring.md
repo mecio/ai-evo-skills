@@ -38,7 +38,7 @@ remain valid. To rename one, update its directory, frontmatter, planning instruc
 
 ## Command contract
 
-Every command directory contains only `SKILL.md`. It uses Agent Skills frontmatter plus one formal interface:
+Every command directory contains `SKILL.md` and may contain `references/` for documents and output schemas. It uses Agent Skills frontmatter plus one formal interface:
 
 ```yaml ai-evo-interface
 execution-policy:
@@ -57,7 +57,7 @@ Every input must declare a non-empty description and exactly one of `required: t
 Unknown, duplicate and missing required inputs stop planning. Invocation uses `key=value`; quote values that
 contain spaces.
 
-Commands always use the invoking AI. Their interfaces contain only `inputs` and `execution-policy`;
+Commands always use the invoking AI. Their interfaces contain `inputs`, `execution-policy` and optionally `output-schema`;
 an `executor` field is invalid, including `executor: current`. Choose another executor only on a recipe
 step to reuse the same command with different AIs.
 
@@ -207,3 +207,36 @@ planner uses `<namespace>-default`. Profiles are isolated: they do not inherit f
 
 Here, `auto` leaves the resource decision to the executing AI. Effort profiles express resource and reporting
 strategy; command execution policies express mandatory restrictions.
+
+### Project capabilities for fixed local operations
+
+A project can declare `skills/config/execution-capabilities.yaml` (schema:
+`schemas/project-capabilities.schema.json`). Capability names must use the project
+namespace. Each entry names an executable basename under `.ai-evo-prj/scripts`,
+a fixed operation, whether arguments are accepted, and supported workspace modes:
+
+```yaml
+version: '1.0'
+capabilities:
+  acme.local-commit:
+    script: acme-git-local
+    operation: commit
+    arguments: true
+    workspaces: [read-write]
+```
+
+A command requires it through `execution-policy.capabilities`. The Claude adapter
+constructs a scoped Bash allow rule for that operation; it never grants generic
+Bash. The project script must validate data arguments and perform only the declared
+operation without accepting arbitrary commands. Missing executables, unsupported
+adapters, incompatible workspace modes and conflicting denies fail planning.
+Adapter policy baselines incorporate these grants; profile and invocation ceilings
+remain restrictive.
+
+Use a hybrid policy: recipe instructions define the authorized objective and
+local-only writes, capabilities grant required operations, and
+`deny-capabilities: [git.remote-write, github.remote-write]` veto known publication
+and remote mutation commands. Denies take precedence. These mappings are command
+patterns, not a network firewall or an exhaustive classification of remote writes.
+Authorized scripts and configured Git hooks remain trusted code. Remote reads can
+use the dedicated read capabilities without authorizing remote writes.

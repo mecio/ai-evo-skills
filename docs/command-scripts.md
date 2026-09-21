@@ -19,7 +19,8 @@ flowchart LR
 The recipe engine runs catalog **commands and steps**, not arbitrary shell steps. `uses` names a command, step or recipe;
 there is no recipe `run:` field or `executor: shell`. A deterministic script does not make an AI's entire
 response deterministic: define how its output must be returned and checked at the command boundary.
-See the [runnable context helper and test workflow](../examples/runtime-tests/README.md).
+See the [runnable context helper and test workflow](../examples/runtime-tests/README.md) and the
+[Acme internal output-check step](../examples/acme/README.md).
 
 ## Location and ownership
 
@@ -27,14 +28,14 @@ Keep project-owned helpers under `.ai-evo-prj/scripts/`, with their configuratio
 `.ai-evo-prj/skills/config/`. Existing application tools can remain under paths such as `scripts/run-unit-tests`.
 Document the working directory, interpreter, dependencies and path in the command's `Procedure`.
 
-AI Evo Skills command directories may contain **only `SKILL.md`**. Although the general Agent Skills format
+AI Evo Skills command and step directories may contain `SKILL.md` and `references/` for supporting documents and schemas. Although the general Agent Skills format
 allows bundled resources, this project's validator rejects a `scripts/` subdirectory inside a command.
 Keep helpers outside command directories and use paths resolved from the application root. With shared
 specifications, the script may live outside the application checkout; use the caller's Git root to identify
 the worktree, not the resolved location of the script itself.
 
 `init` and `sync` do not install project tools or grant permission to execute them. `validate` checks the
-skill contract, not referenced scripts, their dependencies or output schemas. Version and test helpers
+skill contract and declared output schemas, not the behavior of referenced scripts or their dependencies. Version and test helpers
 alongside the specifications or application that owns them.
 
 ## Define the script and command contracts
@@ -71,8 +72,9 @@ when:
 ```
 
 `normalize: trim` applies only to the comparison. It does not rewrite the journal or downstream input.
-The runtime accepts successful output strings; it does not enforce a command-specific token enum or JSON
-schema. The command/coordinator must perform those checks. A typo such as `php8` must fail before it can
+Without an `output-schema`, the runtime accepts successful output strings; the command/coordinator must
+check scalar tokens. For JSON objects, a declared `output-schema` is enforced at the delegated execution
+boundary, even when the native CLI exits zero. A typo such as `php8` must fail before it can
 silently select a skipped branch.
 
 For JSON, pass `${{ steps.plan.output }}` as a whole string input and tell the consuming command how to
@@ -119,8 +121,8 @@ required by this engine. The public example adapts the patterns with generic con
 | Extract business logic | Prepare a branch → cover the controller with tests → review/commit coverage → analyze → extract a stack → analyze/review/verify the result. | AI selects cohesive work items; deterministic scripts produce names and the ordered branch manifest. Implementation consumes the analysis and verification checks the resulting code. |
 | Commit and publish a stack | `enabu-cmd-commit-current-changes` and the separate `enabu-cmd-submit-git-stack`. | Validate a proposed commit message, inspect stack state, then apply authorized changes. Publication is separate from analysis and local implementation. |
 
-In the extraction workflow, iterating over manifest items happens inside the extraction command. It does
-not imply that recipes support dynamic fan-out or loops. Source recipes execute their declared steps in order.
+Recipes can also use sequential `for_each` to expand a JSON array into calls to a nested recipe.
+This is ordered execution, not parallel fan-out; see the [authoring guide](authoring.md).
 
 ## Script inventory and callers
 

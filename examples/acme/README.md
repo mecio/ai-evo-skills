@@ -1,6 +1,6 @@
 # Acme starter catalog
 
-A complete boilerplate with three commands and two recipes. Copy it into an initialized project to try
+A complete boilerplate with three commands, one internal step, a helper and two recipes. Copy it into an initialized project to try
 shared prompts, input defaults, sequential composition and a conditional step. All skills use the `acme`
 namespace and work with either bundled adapter. `init` does not install this catalog automatically.
 
@@ -11,8 +11,13 @@ namespace and work with either bundled adapter. `init` does not install this cat
 | [acme-cmd-detect-changes](catalog/commands/acme-cmd-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
 | [acme-cmd-review](catalog/commands/acme-cmd-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
 | [acme-cmd-report-review](catalog/commands/acme-cmd-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
-| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Always run review, then reporting. |
+| [acme-step-check-review-output](catalog/steps/acme-step-check-review-output/SKILL.md) | Check nonempty UTF-8 output with a local helper; preserve bytes, without claiming semantic validity. |
+| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Run review, the internal output check, then reporting. |
 | [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Detect changes, conditionally review security, then report the review or its skip. |
+
+The internal step is not published as a directly invocable skill; `command plan` rejects direct calls.
+Its helper needs Python 3.11+. It runs directly under the coordinator's permissions using `executor: current`,
+with temporary-file writes only. It grants no additional permissions to a delegated client.
 
 Both recipes reuse the same review and reporting commands. Each recipe directory also contains a complete
 `SKILL.md` with the coordinator procedure. The catalog has no draft placeholders.
@@ -22,11 +27,14 @@ Both recipes reuse the same review and reporting commands. Each recipe directory
 Use an engine checkout that contains this example and supports conditional recipes with `normalize: trim`.
 Follow the [installation guide](../../docs/first-skill.md#install-and-initialize), initializing with namespace
 `acme` and at least one of `codex` or `claude`. Run the following from that application repository, using a
-fresh catalog with none of these five names already present:
+fresh catalog with none of these six names already present:
 
 ```bash
 cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
+cp -R .ai-evo/examples/acme/catalog/steps/. .ai-evo-prj/skills/catalog/steps/
 cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
+mkdir -p .ai-evo-prj/scripts
+cp .ai-evo/examples/acme/scripts/acme-check-review-output.py .ai-evo-prj/scripts/
 ./.ai-evo/bin/ai-evo-skills validate
 ./.ai-evo/bin/ai-evo-skills sync --dry-run
 ./.ai-evo/bin/ai-evo-skills sync
@@ -100,3 +108,9 @@ and worktree configuration before executing suites.
 That example assigns script-backed steps to Codex because the bundled restricted Claude policy permits
 only the Git read wrapper used above. See [command scripts](../../docs/command-scripts.md) for deterministic
 output contracts and an inventory of other workflows, including branch planning and commit validation.
+
+## Recover a previous run
+
+Follow the [recovery example](../recovery/README.md) to retain a verified consecutive prefix in a new runtime.
+It includes an isolated demo without model requests and the separate procedure for real dependency checks.
+The original run remains intact; results after the first invalid step are never cherry-picked.

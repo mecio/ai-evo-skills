@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Support array-root output schemas (`json-array`) alongside object contracts, using the same
+  ambiguity checks, validation and native artifact preservation. Require matching contract format/type.
+
+- Extend the Acme examples with a coordinator-owned internal step and a local output-check helper.
+  Add an isolated recovery demo, real-run recovery instructions and an examples index.
+
 - Make all Claude delegations explicitly non-interactive (`dontAsk`, permission prompts `none`),
   including read-write/auto commands. Preserve scoped grants and deny precedence without granting
   arbitrary shell commands or external directories. Replan existing commands to apply the fix.

@@ -60,6 +60,44 @@ execution-policy-translation:
       - Use .ai-evo/bin/ai-evo-git-read for Git inspection; arbitrary shell and network commands are unavailable.
 
 capability-translation:
+  git.remote-write:
+    enforcement: native
+    workspaces: [read-only, read-write]
+    requires-network: true
+    allow-tools:
+      - "Bash(git push *)"
+      - "Bash(git push)"
+      - "Bash(gh stack submit *)"
+      - "Bash(gh stack submit)"
+      - "Bash(gh stack sync *)"
+      - "Bash(gh stack sync)"
+  github.remote-write:
+    enforcement: native
+    workspaces: [read-only, read-write]
+    requires-network: true
+    allow-tools:
+      - "Bash(gh issue create *)"
+      - "Bash(gh issue edit *)"
+      - "Bash(gh issue close *)"
+      - "Bash(gh issue reopen *)"
+      - "Bash(gh issue delete *)"
+      - "Bash(gh issue comment *)"
+      - "Bash(gh pr create *)"
+      - "Bash(gh pr edit *)"
+      - "Bash(gh pr close *)"
+      - "Bash(gh pr reopen *)"
+      - "Bash(gh pr merge *)"
+      - "Bash(gh pr ready *)"
+      - "Bash(gh pr review *)"
+      - "Bash(gh pr comment *)"
+      - "Bash(gh release create *)"
+      - "Bash(gh release edit *)"
+      - "Bash(gh release delete *)"
+      - "Bash(gh release upload *)"
+      - "Bash(gh api * --method POST *)"
+      - "Bash(gh api * --method PATCH *)"
+      - "Bash(gh api * --method PUT *)"
+      - "Bash(gh api * --method DELETE *)"
   github.auth-status:
     enforcement: native
     workspaces: [read-only]

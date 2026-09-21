@@ -180,6 +180,43 @@ class OutputContractTest(unittest.TestCase):
                 self.assertEqual("", result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_array_contract_uses_same_extractor_and_preserves_evidence(self):
+        temporary, root = self.repository()
+        with temporary:
+            skill, _ = self.prepare(root)
+            schema = {'type': 'array', 'items': SCHEMA}
+            (skill.parent / 'references/output.json').write_text(json.dumps(schema))
+            planned = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'claude')
+            self.assertEqual(0, planned.returncode, planned.stderr)
+            plan = json.loads(planned.stdout)
+            self.assertEqual('json-array', plan['application']['output_contract']['format'])
+            validate_plan(plan)
+            broken = copy.deepcopy(plan)
+            broken['application']['output_contract']['format'] = 'json-object'
+            with self.assertRaisesRegex(ExecutionError, 'format must match'):
+                validate_plan(broken)
+            raw = json.dumps([VALUE]).encode()
+            fenced = b'Intro\n```json\n' + raw + b'\n```\nEnd'
+            cases = [(raw, True), (fenced, True), (b'[]', True),
+                     (json.dumps(VALUE).encode(), False), (b'[{}]', False),
+                     (b'```json\n[}\n```', False), (fenced + b'\n[]', False),
+                     (b'{}\n' + fenced, False), (fenced + b'\n' + fenced, False)]
+            for index, (content, valid) in enumerate(cases):
+                with self.subTest(index=index):
+                    directory = root / f'array-{index}'
+                    result = self.execute(root, plan, content, directory)
+                    self.assertEqual(0 if valid else 1, result.returncode, result.stderr)
+                    self.assertEqual(content, (directory / 'native.stdout').read_bytes())
+                    self.assertEqual(b'native diagnostic\n', (directory / 'native.stderr').read_bytes())
+                    diagnostic = json.loads((directory / 'diagnostic.json').read_text())
+                    self.assertEqual(0, diagnostic['native_exit_code'])
+                    self.assertEqual(result.returncode, diagnostic['exit_code'])
+                    if valid:
+                        self.assertEqual([] if content == b'[]' else [VALUE], json.loads(result.stdout))
+                    else:
+                        self.assertEqual(content, result.stdout)
+                        self.assertEqual('invalid-output', diagnostic['code'])
+
 
 if __name__ == "__main__":
     unittest.main()

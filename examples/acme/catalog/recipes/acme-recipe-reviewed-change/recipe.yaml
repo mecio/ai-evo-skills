@@ -13,10 +13,15 @@ steps:
     with:
       target: "${{ inputs.target }}"
       focus: "${{ inputs.focus }}"
+  - id: check_review
+    uses: acme-step-check-review-output
+    executor: current
+    with:
+      review: "${{ steps.review.output }}"
   - id: report
     uses: acme-cmd-report-review
     with:
-      review: "${{ steps.review.output }}"
+      review: "${{ steps.check_review.output }}"
       target: "${{ inputs.target }}"
       focus: "${{ inputs.focus }}"
 outputs:

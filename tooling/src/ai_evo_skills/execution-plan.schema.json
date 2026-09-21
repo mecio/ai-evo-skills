@@ -119,7 +119,7 @@
           "type": "object", "additionalProperties": false,
           "required": ["format", "schema"],
           "properties": {
-            "format": { "const": "json-object" },
+            "format": { "enum": ["json-object", "json-array"] },
             "schema": { "type": "object" }
           }
         },

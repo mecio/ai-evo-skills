@@ -512,6 +512,31 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 adapters[data["id"]] = data
         except EvoError as exc:
             errors.append(str(exc))
+    capability_path = skills / "config/execution-capabilities.yaml"
+    if capability_path.exists():
+        try:
+            local = load_yaml(capability_path)
+            validation = schema_errors(local, engine / "schemas/project-capabilities.schema.json", capability_path)
+            errors += validation
+            if not validation:
+                for name, definition in local["capabilities"].items():
+                    if not name.startswith(namespace + "."):
+                        errors.append(f"{capability_path}: capability {name} must use the project namespace")
+                        continue
+                    if "claude" not in adapters:
+                        continue
+                    mappings = adapters["claude"].setdefault("capability-translation", {})
+                    if name in mappings:
+                        errors.append(f"{capability_path}: cannot override adapter capability {name}")
+                        continue
+                    native = f".ai-evo-prj/scripts/{definition['script']} {definition['operation']}"
+                    rule = f"Bash({native}{' *' if definition['arguments'] else ''})"
+                    mappings[name] = {"enforcement": "native", "workspaces": definition["workspaces"],
+                                      "requires-network": False, "allow-tools": [rule],
+                                      "project-script": definition["script"],
+                                      "instructions": [f"Use only {native} for capability {name}; no generic shell grant."]}
+        except EvoError as exc:
+            errors.append(str(exc))
     if not (project / "entrypoint.md").is_file():
         errors.append(f"{project / 'entrypoint.md'}: missing project entrypoint")
     for target in config["targets"]:
@@ -773,32 +798,38 @@ def command_application(
                 raise EvoError(f"capability {name} required by {skill.name} is explicitly denied")
             if mapping["requires-network"] and (policy.get("network") == "disabled" or context.profiles[payload["profile"]]["resources"]["network"] == "disabled"):
                 raise EvoError(f"capability {name} required by {skill.name} is blocked by network=disabled")
+            if "project-script" in mapping:
+                script = context.project / "scripts" / mapping["project-script"]
+                if not script.is_file() or not os.access(script, os.X_OK):
+                    raise EvoError(f"capability {name} requires an executable project script: {script}")
             required_grants[name] = mapping["allow-tools"]
             policy_instructions.extend(mapping.get("instructions", []))
+    grant_baseline = False
     for dimension in ("workspace", "network"):
         value = policy.get(dimension)
         if (dimension, value) == ("workspace", "read-write"):
             translation = adapter["execution-policy-translation"].get("workspace-read-write")
-            if translation:
-                arguments.extend(translation["cli-arguments"])
-                policy_instructions.extend(translation.get("instructions", []))
-            continue
-        if (dimension, value) not in {("workspace", "read-only"), ("network", "disabled")}:
+            if not translation:
+                continue
+        elif (dimension, value) not in {("workspace", "read-only"), ("network", "disabled")}:
             continue
         key = f"{dimension}-{value}"
         translation = adapter["execution-policy-translation"].get(key)
         if not translation or translation.get("enforcement") != "native":
             raise EvoError(f"adapter {adapter_id} cannot enforce {key} for {skill.name}")
         translated = list(translation["cli-arguments"])
-        # Extend only the adapter's workspace baseline. Invocation, session and
+        # Extend only the adapter's policy baselines. Invocation, session and
         # profile ceilings are composed below and must never be widened.
-        if dimension == "workspace" and required_grants:
+        if required_grants:
             if "--allowedTools" not in translated:
                 raise EvoError(f"adapter {adapter_id} cannot enforce capabilities: workspace translation has no native allowlist")
             index = translated.index("--allowedTools") + 1
             translated[index] += "," + ",".join(rule for rules in required_grants.values() for rule in rules)
+            grant_baseline = True
         arguments.extend(translated)
         policy_instructions.extend(translation.get("instructions", []))
+    if required_grants and not grant_baseline:
+        arguments.extend(["--allowedTools", ",".join(rule for rules in required_grants.values() for rule in rules)])
     if denied_grants:
         arguments.extend(["--disallowedTools", ",".join(denied_grants)])
     if required_grants or denied_grants:
@@ -828,7 +859,7 @@ def command_application(
     restrictive_policy = policy.get("workspace") == "read-only" or policy.get("network") == "disabled"
     output_contract = None
     if skill.output_schema is not None:
-        output_contract = {"format": "json-object", "schema": skill.output_schema}
+        output_contract = {"format": "json-" + skill.output_schema["type"], "schema": skill.output_schema}
     delegated = executor != "current" or restrictive_policy or output_contract is not None
     return {
         **({"output_contract": output_contract} if output_contract else {}),

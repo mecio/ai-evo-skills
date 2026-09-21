@@ -34,8 +34,8 @@ def check_schema(schema):
         Draft202012Validator.check_schema(schema)
     except SchemaError as exc:
         raise ExecutionError(f"invalid output schema: {exc.message}") from exc
-    if not isinstance(schema, dict) or schema.get("type") != "object":
-        raise ExecutionError("output schema must describe an object")
+    if not isinstance(schema, dict) or schema.get("type") not in ("object", "array"):
+        raise ExecutionError("output schema must describe an object or array")
 
     def visit(node):
         if isinstance(node, dict):
@@ -81,7 +81,7 @@ def decode_result(raw, schema):
         # from the first/last brace or choose among multiple candidates.
         fences = list(re.finditer(r"(?m)^ {0,3}(`{3,}|~{3,})([^\r\n]*)\r?$", text))
         if len(fences) != 2:
-            raise ValueError("expected a single JSON object or exactly one fenced JSON block") from None
+            raise ValueError("expected a single JSON object/array or exactly one fenced JSON block") from None
         start, end = fences
         if (start[1] != end[1] or start[2].strip().lower() not in ("", "json")
                 or end[2].strip()):

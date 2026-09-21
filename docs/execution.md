@@ -16,6 +16,8 @@ Claude policy composition is also exercised with Claude Code `2.1.268`. The adap
 
 ### Recovering a verified recipe prefix
 
+For a runnable demonstration and a real-run walkthrough, see the [recovery example](../examples/recovery/README.md).
+
 `recipe recover` prepares a new runtime state without executing steps or changing the source journal:
 
 ```sh
@@ -46,11 +48,11 @@ as succeeded or replay writes merely because their earlier result was lost. The 
 recreates successful worklog records in a distinct session and publishes executable state last.
 
 Commands may declare `output-schema: references/result.schema.json` in their `ai-evo-interface`.
-The schema must describe an object, use local JSON-pointer references only, and reside inside the
+The schema must describe an object or array, use local JSON-pointer references only, and reside inside the
 skill's references directory. It is validated and embedded in the plan, so execution never reloads
 a potentially changed schema from the catalog.
 
-The deterministic extractor accepts a JSON object or exactly one fenced JSON block, optionally
+The deterministic extractor accepts a JSON object or array, as declared by the schema, or exactly one fenced JSON block, optionally
 surrounded by explanatory prose. Fences may use matching backticks or tildes and a `json` or empty
 language label. Markdown links in surrounding prose are allowed. Other fences, additional JSON
 objects or arrays outside the block, duplicate keys,

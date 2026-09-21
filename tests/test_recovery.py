@@ -27,6 +27,22 @@ class RecoveryTest(unittest.TestCase):
             {"step": "legacy", "status": "succeeded", "output": "passed"},
             {"step": "unit", "status": "failed", "exit_code": 1}]}
 
+    def test_array_output_is_revalidated_before_recovery(self):
+        fixture = self.fixture()
+        with fixture.project() as (root, path, data):
+            plan = fixture.plan(root, path, data)
+            plan['execution']['steps'][0]['application']['output_contract'] = {
+                'format': 'json-array', 'schema': {'type': 'array', 'items': {'type': 'integer'}}}
+            for output, expected in (('[1,2]', ['detect']), ('["invalid"]', [])):
+                source = {'plan': plan, 'results': [
+                    {'step': 'detect', 'status': 'succeeded', 'output': output},
+                    {'step': 'legacy', 'status': 'failed', 'exit_code': 1}]}
+                before = deepcopy(source)
+                recovered, report = recover_prefix(source, plan, evidence(source, plan))
+                self.assertEqual(expected, [r['step'] for r in recovered['results']])
+                self.assertEqual('legacy' if expected else 'detect', report['next_step'])
+                self.assertEqual(before, source)
+
     def test_prefix_stops_at_failure_or_first_invalid_dependency(self):
         fixture = self.fixture()
         with fixture.project() as (root, path, data):

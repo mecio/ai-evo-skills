@@ -72,13 +72,17 @@ def require_claude_grants(arguments: list[str], grants: list[str], capability: s
             if deny.split("(", 1)[0] != name:
                 continue
             # For the mapped fixed Bash operations, differing literal command
-            # prefixes before a trailing wildcard are provably disjoint.
+            # prefixes before the first glob are provably disjoint.
             def literal_prefix(rule):
                 if not rule.startswith("Bash(") or not rule.endswith(")"):
                     return None
                 body = rule[5:-1]
-                prefix = body[:-1] if body.endswith("*") else body
-                return prefix if not any(c in prefix for c in "*?[]:") else None
+                if ":" in body:
+                    return None
+                prefix = body
+                for marker in "*?[]":
+                    prefix = prefix.split(marker, 1)[0]
+                return prefix or None
             left, right = literal_prefix(deny), literal_prefix(grant)
             if left and right and not (left.startswith(right) or right.startswith(left)):
                 continue

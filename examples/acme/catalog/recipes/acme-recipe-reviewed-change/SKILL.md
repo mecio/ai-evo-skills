@@ -1,6 +1,6 @@
 ---
 name: acme-recipe-reviewed-change
-description: "Run a tracked-change review and summarize its findings in sequence, using shared commands."
+description: "Review tracked changes, check that the output is present, and summarize its findings using shared commands and an internal step."
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
@@ -27,6 +27,8 @@ The formal interface is defined in `recipe.yaml`.
 3. On `skipped`, append the returned `result` unchanged and continue without invoking the command.
    On `ready`, execute only the returned `step`: send it to `.ai-evo/bin/ai-evo-skills command execute` on stdin
    for delegated mode, or apply its resolved handoff directly for current mode. Do not replan children.
+   `check_review` runs its helper directly in the coordinator. Nonempty output is only a transport check,
+   not proof that the review passed. Preserve script diagnostics on failure.
 4. Record success as `{"step": "<id>", "status": "succeeded", "output": "<complete output>"}`. Preserve
    whitespace. A skipped upstream output is passed to command inputs as JSON text describing the skip;
    the reporting command must describe that state as a skipped review, never as a completed review.
@@ -35,6 +37,9 @@ The formal interface is defined in `recipe.yaml`.
 6. Repeat `recipe advance` until `complete`, then return its `output` unchanged, including a structured
    skipped result if the recipe's final output names a skipped step. Read `.ai-evo/docs/recipe-runtime.md`
    for the full protocol, including nested recipe conditions.
+7. For a retry, follow `.ai-evo/examples/recovery/README.md` to build a new plan and verified prefix.
+   Continue with the returned state at step 2; do not reset its results or replay recovered steps.
+   This example has no `recover_from_session` recipe input or external worklog importer.
 
 ## Expected output
 

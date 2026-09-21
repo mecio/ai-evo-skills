@@ -43,6 +43,8 @@ def validate_step_consistency(step: dict[str, Any]) -> None:
     if 'output_contract' in app:
         from .output_contract import check_schema
         check_schema(app['output_contract']['schema'])
+        if app['output_contract']['format'] != 'json-' + app['output_contract']['schema']['type']:
+            raise ExecutionError('output contract format must match schema root type')
     recipe = 'resolved' if 'uses' in step else 'not-applicable'
     if step['handoff']['planning']['recipe'] != recipe:
         raise ExecutionError('handoff planning status does not match the plan kind')
