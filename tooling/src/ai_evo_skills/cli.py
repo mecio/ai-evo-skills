@@ -277,6 +277,22 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             errors.append(f"{custom_commands}: expected a directory")
         elif any(custom_commands.iterdir()):
             errors.append(f"{custom_commands}: personal commands are not allowed; add commands to the shared catalog")
+    catalog = skills / "catalog"
+    if catalog.exists() and catalog.is_dir() and not catalog.is_symlink():
+        for collection in sorted(catalog.iterdir()):
+            if collection.name not in {"commands", "recipes"}:
+                errors.append(
+                    f"{collection}: unsupported catalog collection; commands belong in catalog/commands, "
+                    "steps in catalog/recipes/_steps, and recipes in catalog/recipes or "
+                    "catalog/recipes/_iterations"
+                )
+    recipes = skills / "catalog/recipes"
+    if recipes.exists() and recipes.is_dir() and not recipes.is_symlink():
+        for collection in sorted(recipes.iterdir()):
+            if collection.name.startswith("_") and collection.name not in {"_iterations", "_steps"}:
+                errors.append(
+                    f"{collection}: unsupported internal recipe collection; use _steps or _iterations"
+                )
     roots = [
         (skills / "catalog/commands", "command", False),
         (skills / "catalog/recipes", "recipe", False),

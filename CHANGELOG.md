@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Add `skills/catalog/recipes/_iterations` for nested technical recipes. Validate and expand them through
-  parent recipes while excluding them from direct planning and native skill publication.
+  parent recipes while excluding them from direct planning and native skill publication. Reject obsolete or
+  misspelled catalog collections and report the canonical `_steps` and `_iterations` paths.
 
 - Support array-root output schemas (`json-array`) alongside object contracts, using the same
   ambiguity checks, validation and native artifact preservation. Require matching contract format/type.

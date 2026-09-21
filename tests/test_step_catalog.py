@@ -91,6 +91,22 @@ class StepCatalogTest(unittest.TestCase):
             self.assertEqual(1, result.returncode)
             self.assertIn("step name must use abc-step-<name>", result.stderr)
 
+    def test_validator_rejects_noncanonical_internal_collection_paths(self) -> None:
+        for relative, expected in (
+            ("skills/catalog/steps", "steps in catalog/recipes/_steps"),
+            ("skills/catalog/iterations", "recipes in catalog/recipes or catalog/recipes/_iterations"),
+            ("skills/catalog/recipes/_step", "use _steps or _iterations"),
+            ("skills/catalog/recipes/_iteration", "use _steps or _iterations"),
+        ):
+            with self.subTest(relative=relative):
+                temporary, root = self.repository()
+                with temporary:
+                    self.initialize(root, "codex")
+                    (root / ".ai-evo-prj" / relative).mkdir(parents=True)
+                    result = self.run_cli(root, "validate")
+                    self.assertEqual(1, result.returncode)
+                    self.assertIn(expected, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
