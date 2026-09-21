@@ -14,6 +14,37 @@ Claude policy composition is also exercised with Claude Code `2.1.268`. The adap
 
 ## Execution policies and prompt delivery
 
+### Recovering a verified recipe prefix
+
+`recipe recover` prepares a new runtime state without executing steps or changing the source journal:
+
+```sh
+ai-evo-skills recipe recover --source-state old/state.json --plan new-plan.json --inspect > evidence.json
+# Verify dependencies/effects and fill the evidence checks before applying recovery.
+ai-evo-skills recipe recover --source-state old/state.json --plan new-plan.json \
+  --evidence evidence.json --output-dir new-runtime
+```
+
+The inspection emits canonical SHA-256 bindings for the source state, target plan and each successful
+output. Every check starts with `valid: false`. Supply a timezone-aware `checked_at`, an explanatory
+`reason`, and nonempty `source_dependencies` / `current_dependencies` maps of observed fingerprints.
+Reuse requires matching maps and `valid: true`. The coordinator must verify the actual dependencies
+and surviving effects; the engine does not query GitHub or establish semantic validity by itself.
+An output hash alone proves integrity, not freshness. Missing historical evidence means no reuse.
+
+The engine compares resolved step identities, inputs, instructions, policy and executor, validates
+declared output schemas, and reuses only the consecutive succeeded prefix. At the first mismatch,
+failure, skipped step, negative check or missing evidence, all following results are excluded.
+`--session-parameter NAME` permits rebinding only a technical bookkeeping input (for example a logger's
+`session_name`); never use it to bypass changes to functional inputs. Changed recipes are rejected.
+
+The output directory must be new and outside the source runtime directory. It contains `state.json`,
+`source-state.json`, `evidence.json` and `recovery.json` with hashes, provenance, stop reason and next step.
+Core recovery does not recreate external effects or application worklogs. A catalog integration must
+verify/import those before exposing the recovered state for execution. It must never mark failed work
+as succeeded or replay writes merely because their earlier result was lost. The Enabu integration
+recreates successful worklog records in a distinct session and publishes executable state last.
+
 Commands may declare `output-schema: references/result.schema.json` in their `ai-evo-interface`.
 The schema must describe an object, use local JSON-pointer references only, and reside inside the
 skill's references directory. It is validated and embedded in the plan, so execution never reloads

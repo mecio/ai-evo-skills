@@ -1349,6 +1349,34 @@ def cmd_recipe_advance(_: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def cmd_recipe_recover(args: argparse.Namespace) -> None:
+    from .recovery import recover_prefix, evidence_template
+    from .output_contract import strict_json
+    paths = [Path(args.source_state), Path(args.plan)]
+    try:
+        source, target = [strict_json(path.read_text(encoding="utf-8")) for path in paths]
+        if args.inspect:
+            print(json.dumps(evidence_template(source, target), ensure_ascii=True, indent=2))
+            return
+        if not args.evidence or not args.output_dir:
+            raise EvoError("recipe recover requires --evidence and --output-dir unless --inspect is used")
+        evidence = strict_json(Path(args.evidence).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise EvoError(f"invalid recovery input: {exc}") from exc
+    state, report = recover_prefix(source, target, evidence, session_parameter=args.session_parameter)
+    destination = Path(args.output_dir).resolve()
+    if destination == paths[0].resolve().parent or destination.is_relative_to(paths[0].resolve().parent):
+        raise EvoError("recovery destination must be outside the source runtime directory")
+    destination.mkdir(parents=True, exist_ok=False)
+    report["source_state"] = str(paths[0].resolve())
+    for name, value in (("source-state.json", source), ("evidence.json", evidence),
+                        ("recovery.json", report), ("state.json", state)):
+        with (destination / name).open("x", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=True, indent=2)
+            stream.write("\n")
+    print(json.dumps(report, ensure_ascii=True, indent=2))
+
+
 def cmd_recipe_plan(args: argparse.Namespace) -> None:
     context = validated_context()
     if diagnostic := recipe_name_error(args.name, context.config["namespace"]):
@@ -1474,13 +1502,21 @@ def parser() -> argparse.ArgumentParser:
     recipe_root = sub.add_parser("recipe"); recipe_sub = recipe_root.add_subparsers(dest="recipe_command", required=True)
     plan = recipe_sub.add_parser("plan"); plan.add_argument("name"); plan.add_argument("--adapter", required=True); plan.add_argument("--ai-effort-profile", dest="profile"); plan.add_argument("--input", action="append", default=[]); plan.set_defaults(func=cmd_recipe_plan)
     advance = recipe_sub.add_parser("advance"); advance.set_defaults(func=cmd_recipe_advance)
+    recover = recipe_sub.add_parser("recover")
+    recover.add_argument("--source-state", required=True)
+    recover.add_argument("--plan", required=True)
+    recover.add_argument("--evidence")
+    recover.add_argument("--output-dir")
+    recover.add_argument("--inspect", action="store_true")
+    recover.add_argument("--session-parameter")
+    recover.set_defaults(func=cmd_recipe_recover)
     return root
 
 
 def main() -> None:
     try:
         args = parser().parse_args()
-        if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute, cmd_recipe_advance):
+        if os.environ.get("AI_EVO_EXECUTION_HANDOFF") == "resolved" and args.func in (cmd_command_plan, cmd_recipe_plan, cmd_command_execute, cmd_recipe_advance, cmd_recipe_recover):
             raise EvoError("handoff is already resolved: execute the supplied task without planning or delegating again")
         args.func(args)
     except (EvoError, ExecutionError, ProcessTreeError, OSError, KeyError) as exc:

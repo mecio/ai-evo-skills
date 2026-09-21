@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `recipe recover --inspect` and verified consecutive-prefix recovery into a new runtime directory.
+  Bind checks to source/target snapshots and outputs, stop on the first invalid or unverified step,
+  and retain source journal and provenance. Dependency/effect checks remain the coordinator's responsibility.
+
 - Add optional command `output-schema`, snapshotted into execution plans. Execution accepts a
   JSON object or extracts a single fenced JSON block, validates it, and emits only the object.
   Preserve native stdout/stderr and exit diagnostics per attempt; ambiguous, malformed or
