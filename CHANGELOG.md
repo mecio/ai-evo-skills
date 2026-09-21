@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Make all Claude delegations explicitly non-interactive (`dontAsk`, permission prompts `none`),
+  including read-write/auto commands. Preserve scoped grants and deny precedence without granting
+  arbitrary shell commands or external directories. Replan existing commands to apply the fix.
+
 - Add `recipe recover --inspect` and verified consecutive-prefix recovery into a new runtime directory.
   Bind checks to source/target snapshots and outputs, stop on the first invalid or unverified step,
   and retain source journal and provenance. Dependency/effect checks remain the coordinator's responsibility.

@@ -10,7 +10,7 @@ project-entrypoint:
 
 invocation:
   example: "/<skill-name> key=value"
-  command: [claude, -p]
+  command: [claude, -p, --permission-mode, dontAsk, --permission-prompts, none]
   prompt-delivery: stdin
 
 profile-translation:

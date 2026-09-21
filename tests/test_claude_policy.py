@@ -140,6 +140,31 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
+    def test_read_write_auto_is_noninteractive_without_broadening_permissions(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'claude')
+            self.add_command(root)
+            path = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
+            body = fixtures.VALID_COMMAND.replace('workspace: read-only', 'workspace: read-write').replace(
+                'network: disabled', 'network: auto')
+            path.write_text(body)
+            result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'claude')
+            self.assertEqual(0, result.returncode, result.stderr)
+            plan = json.loads(result.stdout)
+            self.assertEqual('current', plan['application']['mode'])
+            actual = options(plan['application']['cli_arguments'])
+            self.assertEqual('dontAsk', actual['--permission-mode'])
+            self.assertEqual('none', actual['--permission-prompts'])
+            self.assertNotIn('--allowedTools', actual)
+            self.assertNotIn('--add-dir', actual)
+            self.assertNotIn('--dangerously-skip-permissions', actual)
+            # A required capability without a read-write mapping must still fail planning.
+            path.write_text(body.replace('network: auto', 'network: auto\n  capabilities: [github.issue-view]'))
+            result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'claude')
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn('cannot enforce capability', result.stderr)
+
     def test_invocation_session_and_profile_restrictions_join_command_policy(self):
         temporary, root = self.repository()
         with temporary:
