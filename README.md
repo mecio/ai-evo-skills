@@ -20,17 +20,32 @@ AI Evo Skills is a small, project-local orchestration layer built on the Agent S
 
 - **Commands** store atomic operations in a `SKILL.md`, with a prompt, named inputs and execution
   policies. They can be invoked directly or composed in recipes.
-- **Steps** store atomic workflow services that can only be invoked by recipes and are not published as native
-  user-facing skills.
-- **Recipes** compose commands, steps or other recipes into an ordered workflow. They pass inputs and earlier results
-  between steps, iterate child recipes over runtime JSON arrays, choose an executor for each call, validate
-  dependencies and stop at the first failure.
+- **Steps** live under `skills/catalog/recipes/_steps`, store atomic workflow services that can only be invoked
+  by recipes and are not published as native user-facing skills.
+- **Recipes** stored directly under `skills/catalog/recipes` are shared entrypoints published to enabled
+  clients. They compose commands, steps or other recipes into an ordered workflow, pass results between calls,
+  choose executors, validate dependencies and stop at the first failure.
+- **Iteration recipes** live under `skills/catalog/recipes/_iterations`, can only be reached through another
+  recipe and are not published as native user-facing skills.
 - **Adapters** publish the relevant skills into each enabled AI client's native project directory and translate
   common execution policies into its CLI controls. Bundled adapters support Codex and Claude Code.
 - **Effort profiles** define shared preferences for reasoning, tests, resource use and reporting.
 
 The engine supplies the CLI, schemas, adapters and templates. Your project supplies the prompts, directives
 and catalog. Initialization creates the structure and a default effort profile; you author the actual skills.
+
+```text
+skills/catalog/
+├── commands/                   published shared commands
+└── recipes/
+    ├── <namespace>-recipe-*/   published shared recipe entrypoints
+    ├── _steps/                 atomic recipe-only services
+    └── _iterations/            nested technical recipes
+```
+
+The underscore collections are implementation details of recipes. The engine resolves their contents while
+planning a public or personal recipe, but `sync` never publishes them as native skills. A recipe in
+`_iterations` also cannot be used as the root of `recipe plan`.
 
 Commands can also call project scripts for deterministic decisions and checks. For example, a script can
 identify a worktree's runtime, a recipe can select the applicable test suites, and an AI can interpret
@@ -150,9 +165,10 @@ flowchart LR
     D --> E[Run task or sequential recipe]
 ```
 
-The engine validates the catalog and publishes commands and recipes to enabled clients. Recipe-only steps remain
-internal to the catalog and are embedded in resolved recipe plans. The AI resolves the invocation and runs the
-task under its declared policies; recipes pass results between steps and stop on failure.
+The engine validates the catalog and publishes commands and directly invocable recipes to enabled clients.
+Recipe-only steps and iteration recipes remain internal to the catalog and are embedded in resolved recipe
+plans. The AI resolves the invocation and runs the task under its declared policies; recipes pass results
+between steps and stop on failure.
 See the [execution reference](docs/execution.md) for delegation, native restrictions and session handling.
 
 ## Documentation

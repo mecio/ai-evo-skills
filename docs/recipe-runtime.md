@@ -8,6 +8,12 @@ Recipe names, including the root `plan.recipe`, must use `<namespace>-recipe-<na
 name the full recipe; flattened executable steps still refer to atomic commands with their unchanged names.
 Migrate legacy recipe names and regenerate snapshots as described in the [migration guide](recipe-naming-migration.md).
 
+Root planning is available for shared recipes stored directly under `skills/catalog/recipes` and for personal
+recipes under `skills/custom/recipes`. Recipes under `skills/catalog/recipes/_iterations` are nested-only:
+the planner expands them when reached through `uses` but rejects their name as a root plan. Atomic steps under
+`skills/catalog/recipes/_steps` follow the same nested-only boundary and are flattened into the resolved plan.
+Neither internal collection is published to native client skill directories.
+
 ## How AIs exchange results
 
 The AI where a recipe is invoked remains its coordinator. A step's `executor` selects the AI that performs

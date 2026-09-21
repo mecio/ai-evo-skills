@@ -15,19 +15,21 @@ when extending the catalog. Keep the generated planning and handoff instructions
 ./.ai-evo/bin/ai-evo-skills create effort-profile careful
 ```
 
-Commands and steps are always created in the shared catalog. Commands are directly invocable; steps are atomic
-services available only through recipes and are not published to native skill directories. Recipes default to the local, Git-ignored
-`skills/custom/recipes`; `--catalog` makes them shared. Templates live under `.ai-evo/templates/`, organized by
-artifact type. Generated `TODO` markers must be completed before validation and synchronization can succeed.
+Commands and steps are always created in the shared catalog. `create command` writes to
+`skills/catalog/commands`; `create step` writes to `skills/catalog/recipes/_steps`. Commands are directly
+invocable, while steps are atomic services available only through recipes and are not published to native
+skill directories. Recipes default to the local, Git-ignored `skills/custom/recipes`; `--catalog` creates a
+directly invocable shared recipe under `skills/catalog/recipes`. Templates live under `.ai-evo/templates/`,
+organized by artifact type. Generated `TODO` markers must be completed before validation and synchronization can succeed.
 Creation validates project integration, storage and reserved names, but allows incomplete draft content.
 You can create several commands, recipes and profiles before completing them. All generated YAML is parsable;
 `validate`, `sync` and planners still reject unresolved TODOs and invalid contracts.
 Examples under `.ai-evo/examples/` are documentation and are never installed by `init`.
 
-Recipe names must be `<namespace>-recipe-<name>` in both collections; directory names, `SKILL.md` frontmatter,
-`recipe.yaml` and references to nested recipes must agree. New commands use `<namespace>-cmd-<name>` and new
-steps use `<namespace>-step-<name>` consistently in their directory and frontmatter. The complete skill name
-must fit within 64 characters, including its marker.
+Recipe names must be `<namespace>-recipe-<name>` in public, iteration and personal collections; directory
+names, `SKILL.md` frontmatter, `recipe.yaml` and references to nested recipes must agree. New commands use
+`<namespace>-cmd-<name>` and new steps use `<namespace>-step-<name>` consistently in their directory and
+frontmatter. The complete skill name must fit within 64 characters, including its marker.
 
 Pass short names to `create`; it adds the namespace and the `cmd-`, `step-` or `recipe-` marker.
 For commands, `create command review` produces `<namespace>-cmd-review`. Already prefixed names such as
@@ -66,7 +68,7 @@ Execution restrictions and native prompt delivery are described in the [executio
 ## Step contract
 
 A step has the same formal interface and execution policy as a command, but lives under
-`skills/catalog/steps`, declares `ai-evo-kind: step` and `ai-evo-recipe-only: true`, and uses an
+`skills/catalog/recipes/_steps`, declares `ai-evo-kind: step` and `ai-evo-recipe-only: true`, and uses an
 `<namespace>-step-<name>` name. A command must instead declare `ai-evo-recipe-only: false`.
 
 Steps can appear in a recipe's `uses` field and are planned with that recipe. `command plan` rejects them and
@@ -107,10 +109,30 @@ Recipes form a directed acyclic graph and execute in declared sequence. Unknown 
 forward references, duplicate step ids and direct or indirect cycles are validation errors.
 `outputs.result.value` is the single public recipe result.
 
+Store a recipe under `skills/catalog/recipes/_iterations/<recipe-name>` when it represents a technical unit
+consumed by another recipe and its inputs do not form a useful direct invocation. The engine validates and
+expands these recipes through `uses`, but rejects them as root plans and does not publish them to native skill
+directories. Their directory still contains the same `SKILL.md`, `recipe.yaml` and optional `references/`
+contract as other recipes.
+
+There is no separate `create iteration` command. Create the recipe with `create recipe <name> --catalog`, then
+move its complete directory from `skills/catalog/recipes/<recipe-name>` into
+`skills/catalog/recipes/_iterations/<recipe-name>` before other recipes reference it. Keep the recipe name
+unchanged. Run `validate` after the move; `sync --dry-run` should omit both `_iterations` recipes and `_steps`.
+
+The two underscore directories are reserved collections:
+
+| Collection | Kind | Root planning | Native publication |
+|---|---|---|---|
+| `recipes/<recipe-name>` | Shared recipe entrypoint | Allowed | Published |
+| `recipes/_iterations/<recipe-name>` | Nested technical recipe | Rejected | Not published |
+| `recipes/_steps/<step-name>` | Atomic recipe-only step | Rejected | Not published |
+| `custom/recipes/<recipe-name>` | Personal recipe entrypoint | Allowed | Published locally |
+
 ### Executor selection
 
-A recipe always uses the invoking AI as its coordinator and is published to every enabled AI. A top-level
-`executor` field is invalid, including `executor: current`. Each step may declare a literal
+A directly invocable recipe always uses the invoking AI as its coordinator and is published to every enabled
+AI. A top-level `executor` field is invalid, including `executor: current`. Each step may declare a literal
 `executor: claude`, `executor: codex`, another installed adapter
 ID, or `executor: current`. Executor is metadata, not a command input; input expressions are not accepted.
 

@@ -28,6 +28,11 @@ use `acme`. `init` creates `.ai-evo-prj`, project configuration and missing clie
 `AGENTS.md` or `CLAUDE.md` files must already reference `.ai-evo-prj/entrypoint.md`; initialization checks them
 and preserves their contents.
 
+The generated catalog separates public entrypoints from recipe internals. Commands live under
+`skills/catalog/commands`, shared recipes directly under `skills/catalog/recipes`, recipe-only steps under
+`skills/catalog/recipes/_steps`, and nested technical recipes under `skills/catalog/recipes/_iterations`.
+Only commands and recipe entrypoints are published to the client skill directories.
+
 Put shared project guidance in `.ai-evo-prj/entrypoint.md` and its directives. For an external specification
 repository, create the `.ai-evo-prj` symlink before `init`. See [project setup](project-setup.md) for the
 full layout, shared worktrees and publication settings.
@@ -179,6 +184,11 @@ Update that source when the team's prompt improves, then validate and synchroniz
 A recipe reuses command prompts and passes results between steps, including steps executed by different AIs.
 For example, Claude can review a change, Codex can verify its findings, and Claude can revise the report
 using Codex's feedback. The AI where you invoke the recipe coordinates all three calls.
+
+Use commands for reusable operations that are meaningful on their own. Use `create step <name>` when an atomic
+service only makes sense inside recipe coordination; the generated source is stored under
+`skills/catalog/recipes/_steps` and will not appear as a native skill. Use an `_iterations` recipe when the
+internal unit is itself a composition, such as one complete work-item cycle repeated with `for_each`.
 
 ```bash
 ./.ai-evo/bin/ai-evo-skills create recipe reviewed-change --catalog

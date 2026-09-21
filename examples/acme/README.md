@@ -11,7 +11,7 @@ namespace and work with either bundled adapter. `init` does not install this cat
 | [acme-cmd-detect-changes](catalog/commands/acme-cmd-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
 | [acme-cmd-review](catalog/commands/acme-cmd-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
 | [acme-cmd-report-review](catalog/commands/acme-cmd-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
-| [acme-step-check-review-output](catalog/steps/acme-step-check-review-output/SKILL.md) | Check nonempty UTF-8 output with a local helper; preserve bytes, without claiming semantic validity. |
+| [acme-step-check-review-output](catalog/recipes/_steps/acme-step-check-review-output/SKILL.md) | Check nonempty UTF-8 output with a local helper; preserve bytes, without claiming semantic validity. |
 | [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Run review, the internal output check, then reporting. |
 | [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Detect changes, conditionally review security, then report the review or its skip. |
 
@@ -31,7 +31,6 @@ fresh catalog with none of these six names already present:
 
 ```bash
 cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
-cp -R .ai-evo/examples/acme/catalog/steps/. .ai-evo-prj/skills/catalog/steps/
 cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
 mkdir -p .ai-evo-prj/scripts
 cp .ai-evo/examples/acme/scripts/acme-check-review-output.py .ai-evo-prj/scripts/

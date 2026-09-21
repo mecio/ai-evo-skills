@@ -27,8 +27,9 @@ A normal installation can use a separate specification repository:
 └── skills/
     ├── catalog/
     │   ├── commands/                       directly invocable shared operations
-    │   ├── steps/                          atomic services available only to recipes
     │   └── recipes/                        shared compositions
+    │       ├── _steps/                     atomic services available only to recipes
+    │       └── _iterations/                nested recipes not published as native skills
     ├── custom/recipes/                     personal, Git-ignored compositions
     └── config/                            effort profiles and optional helper configuration
         └── effort-profiles/
@@ -39,14 +40,21 @@ configuration from the application repository when desired. Both may be shared a
 `.ai-evo-skills.yaml` and generated native links belong to the worktree in which the CLI runs. The CLI always
 finds that worktree with `git rev-parse --show-toplevel`.
 
+Directories immediately below `skills/catalog/recipes` are public recipe entrypoints except for the two
+reserved underscore collections. `_steps` contains `ai-evo-kind: step` services, while `_iterations` contains
+`ai-evo-kind: recipe` compositions used only through another recipe. Both participate in validation and nested
+planning, but neither is published. `recipe plan` accepts public and personal recipe entrypoints as roots and
+rejects `_iterations` recipes; steps can only appear in a recipe's `uses` field.
+
 Project scripts are optional, authored separately from `init`, and called by command procedures when allowed
 by their execution policies. See [commands that use scripts](command-scripts.md) for placement and contracts.
 
 ## Initialization details
 
 Before `init`, `.ai-evo-prj` may be a symbolic link to a dedicated project-specification repository. If it does
-not exist, `init` creates a real directory. It derives the project root from Git, creates only the minimum
-structure, never installs starter skills and never overwrites existing adapter entrypoints. In an interactive
+not exist, `init` creates a real directory. It derives the project root from Git, creates the command, public
+recipe, `_steps` and `_iterations` collections, never installs starter skills and never overwrites existing
+adapter entrypoints. In an interactive
 terminal it asks for a missing namespace; non-interactive use must pass `--namespace`.
 
 When several worktrees share `.ai-evo-prj`, the first `init` creates the project files and default effort profile;
@@ -86,9 +94,10 @@ targets:
     enabled: false
 ```
 
-Commands and recipes always use the invoking AI and are published to every enabled target. They cannot
-declare an executor. Step executors select the AI for individual calls without limiting publication of the
-recipe or child command.
+Commands, public shared recipes and personal recipes always use the invoking AI and are published to every
+enabled target. Recipes under `_iterations` and steps under `_steps` are resolved only through recipe plans and
+are never published. Recipes cannot declare a top-level executor. Step executors select the AI for individual
+calls without limiting publication of the public recipe or child command.
 See [executor selection](authoring.md#executor-selection) for nested calls and precedence.
 
 Every target keeps an expressive `id`, its engine `adapter`, a project-relative native skill `path` and an
@@ -110,8 +119,9 @@ before initialization or synchronization writes any files.
 The validator uses the schemas in `schemas/` offline; YAML instances carry protocol `version: "1.0"` and do not
 need remote `$schema` URLs. Schema `$id` values are versioned `urn:ai-evo-skills:` identifiers and never trigger a
 network lookup. The validator checks only adapters named by project targets, including disabled targets, and
-rejects unsafe absolute or parent-traversing paths. Skill directories, `SKILL.md` files and `recipe.yaml` files may
-not be symbolic links. Command, step and recipe directories may additionally contain a real `references/` tree
+rejects unsafe absolute or parent-traversing paths. `_steps` and `_iterations` must be real directories rather
+than symbolic links. Skill directories, `SKILL.md` files and `recipe.yaml` files may not be symbolic links.
+Command, step and recipe directories may additionally contain a real `references/` tree
 without symbolic links; other artifact-local entries are rejected. `sync` manages only links whose destinations belong to the
 canonical catalog or personal recipe area. A recipe that would be published is invalid when a command or nested
 call resolves to a disabled adapter, even if that step's condition would skip it.

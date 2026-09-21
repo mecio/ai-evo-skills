@@ -136,6 +136,8 @@ class CliIntegrationTest(unittest.TestCase):
             self.initialize(root, "codex")
             self.assertTrue((root / ".ai-evo-prj/entrypoint.md").is_file())
             self.assertTrue((root / ".ai-evo-prj/skills/config/effort-profiles/abc-default.yaml").is_file())
+            self.assertTrue((root / ".ai-evo-prj/skills/catalog/recipes/_steps").is_dir())
+            self.assertTrue((root / ".ai-evo-prj/skills/catalog/recipes/_iterations").is_dir())
             self.assertIn("!AGENTS.md", (root / ".gitignore").read_text())
             self.assertEqual(0, self.run_cli(root, "validate").returncode)
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `skills/catalog/recipes/_iterations` for nested technical recipes. Validate and expand them through
+  parent recipes while excluding them from direct planning and native skill publication.
+
 - Support array-root output schemas (`json-array`) alongside object contracts, using the same
   ambiguity checks, validation and native artifact preservation. Require matching contract format/type.
 
@@ -29,7 +32,7 @@
   and unsupported or conflicting contracts fail planning. Initial support: Claude/read-only.
   Regenerate execution plans to use the new allowlist.
 
-- Add recipe-only step skills under `skills/catalog/steps`, with `ai-evo-kind: step`, the
+- Add recipe-only step skills under `skills/catalog/recipes/_steps`, with `ai-evo-kind: step`, the
   `<namespace>-step-<name>` naming convention and `create step`. Steps share the command interface but can only
   be resolved through recipes and are not published as directly invocable native skills.
 - Require the boolean `ai-evo-recipe-only` metadata key on commands and steps. Commands use `false`; steps use

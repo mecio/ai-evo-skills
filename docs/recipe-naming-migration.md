@@ -9,7 +9,8 @@ or silently rewrite files. The change is released in engine `0.1.0-beta.3`; see 
 
 For example, migrate `acme-reviewed-change` to `acme-recipe-reviewed-change`:
 
-1. Rename its directory under `skills/catalog/recipes` or `skills/custom/recipes`. Keep only the new directory.
+1. Rename its directory under `skills/catalog/recipes`, `skills/catalog/recipes/_iterations` or
+   `skills/custom/recipes`. Keep it in the same collection and keep only the new directory.
 2. Change `name` in both `SKILL.md` frontmatter and `recipe.yaml` to the new directory name.
 3. Update every `uses` reference to that recipe, including references in other shared and personal recipes.
    Keep references to atomic commands unchanged. Update planner commands, native invocations, scripts and
@@ -24,7 +25,8 @@ For example, migrate `acme-reviewed-change` to `acme-recipe-reviewed-change`:
 
 If several worktrees share the specification repository, rename shared recipe sources once and synchronize
 each worktree separately. Personal recipes also require migration and may contain references to shared recipes;
-include them even though they are ignored by Git.
+include them even though they are ignored by Git. Recipes under `_iterations` are not published, but their names
+and every parent `uses` reference must still be migrated together.
 
 `create recipe reviewed-change` now generates `acme-recipe-reviewed-change` directly. With `--catalog` it uses
 the shared catalog; otherwise it uses personal recipes. Supply neither `recipe-` nor a namespace to `create`.

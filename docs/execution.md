@@ -14,6 +14,12 @@ Claude policy composition is also exercised with Claude Code `2.1.268`. The adap
 
 ## Execution policies and prompt delivery
 
+Only commands and recipe entrypoints published by `sync` are intended for direct native invocation. The
+planner also reads `skills/catalog/recipes/_steps` and `skills/catalog/recipes/_iterations` while expanding a
+recipe, but those collections have no native links. `command plan` rejects steps, and `recipe plan` rejects an
+iteration recipe used as the root. Resolved atomic calls still carry their internal skill snapshots and normal
+execution policies, so adapter enforcement is identical regardless of the source collection.
+
 ### Recovering a verified recipe prefix
 
 For a runnable demonstration and a real-run walkthrough, see the [recovery example](../examples/recovery/README.md).

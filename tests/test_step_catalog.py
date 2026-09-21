@@ -24,7 +24,7 @@ class StepCatalogTest(unittest.TestCase):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex")
-            step = root / ".ai-evo-prj/skills/catalog/steps/abc-step-approval/SKILL.md"
+            step = root / ".ai-evo-prj/skills/catalog/recipes/_steps/abc-step-approval/SKILL.md"
             step.parent.mkdir(parents=True)
             step.write_text(VALID_STEP)
 
@@ -61,7 +61,7 @@ class StepCatalogTest(unittest.TestCase):
             self.initialize(root, "codex")
             result = self.run_cli(root, "create", "step", "approval")
             self.assertEqual(0, result.returncode, result.stderr)
-            skill = root / ".ai-evo-prj/skills/catalog/steps/abc-step-approval/SKILL.md"
+            skill = root / ".ai-evo-prj/skills/catalog/recipes/_steps/abc-step-approval/SKILL.md"
             frontmatter = yaml.safe_load(skill.read_text().split("---", 2)[1])
             self.assertEqual("abc-step-approval", frontmatter["name"])
             self.assertEqual("step", frontmatter["metadata"]["ai-evo-kind"])
@@ -84,7 +84,7 @@ class StepCatalogTest(unittest.TestCase):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex")
-            step = root / ".ai-evo-prj/skills/catalog/steps/abc-approval/SKILL.md"
+            step = root / ".ai-evo-prj/skills/catalog/recipes/_steps/abc-approval/SKILL.md"
             step.parent.mkdir(parents=True)
             step.write_text(VALID_STEP.replace("abc-step-approval", "abc-approval"))
             result = self.run_cli(root, "validate")

@@ -48,6 +48,7 @@ class Skill:
     execution_policy: dict[str, Any] | None = None
     recipe: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
+    internal: bool = False
 
 
 @dataclass
@@ -277,12 +278,13 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
         elif any(custom_commands.iterdir()):
             errors.append(f"{custom_commands}: personal commands are not allowed; add commands to the shared catalog")
     roots = [
-        (skills / "catalog/commands", "command"),
-        (skills / "catalog/steps", "step"),
-        (skills / "catalog/recipes", "recipe"),
-        (skills / "custom/recipes", "recipe"),
+        (skills / "catalog/commands", "command", False),
+        (skills / "catalog/recipes", "recipe", False),
+        (skills / "catalog/recipes/_steps", "step", True),
+        (skills / "catalog/recipes/_iterations", "recipe", True),
+        (skills / "custom/recipes", "recipe", False),
     ]
-    for root, expected_kind in roots:
+    for root, expected_kind, internal in roots:
         if not is_within(root, project):
             errors.append(f"{root}: canonical skill directory resolves outside the project area")
             continue
@@ -295,6 +297,10 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
             errors.append(f"{root}: canonical skill directories must be real project directories")
             continue
         for item in sorted(root.iterdir()):
+            if root == skills / "catalog/recipes" and item.name in {"_iterations", "_steps"}:
+                if item.is_symlink() or not item.is_dir():
+                    errors.append(f"{item}: internal recipe collection must be a real project directory")
+                continue
             if item.is_symlink():
                 errors.append(f"{item}: skill directories may not be symbolic links")
             elif not item.is_dir():
@@ -318,7 +324,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                     errors.append(f"{path.parent}: step name must use {namespace}-step-<name>")
                 if name in registry:
                     errors.append(f"{path}: duplicate skill name {name}")
-                registry[name] = Skill(name, expected_kind, path, {})
+                registry[name] = Skill(name, expected_kind, path, {}, internal=internal)
                 continue
             try:
                 front, body = parse_frontmatter(path)
@@ -458,7 +464,9 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                         f"{', '.join(extra)}"
                     )
                 errors += validate_references(path.parent, "recipe")
-            registry[name] = Skill(name, expected_kind, path, inputs, execution_policy, recipe, output_schema)
+            registry[name] = Skill(
+                name, expected_kind, path, inputs, execution_policy, recipe, output_schema, internal
+            )
 
     profiles: dict[str, dict[str, Any]] = {}
     profiles_root = skills / "config/effort-profiles"
@@ -917,7 +925,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         desired = {
             name: skill
             for name, skill in context.registry.items()
-            if target["enabled"] and skill.kind != "step"
+            if target["enabled"] and skill.kind != "step" and not skill.internal
         }
         directory = context.repo / target["path"]
         resolved_directory = directory.resolve(strict=False)
@@ -1022,7 +1030,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         destination = context.skills / "catalog/commands" / name
         files = [(context.engine / "templates/skills/command.SKILL.tpl.md", destination / "SKILL.md")]
     elif args.create_kind == "step":
-        destination = context.skills / "catalog/steps" / name
+        destination = context.skills / "catalog/recipes/_steps" / name
         files = [(context.engine / "templates/skills/step.SKILL.tpl.md", destination / "SKILL.md")]
     elif args.create_kind == "recipe":
         base = "catalog/recipes" if args.catalog else "custom/recipes"
@@ -1163,8 +1171,9 @@ def cmd_init(args: argparse.Namespace) -> None:
     project_directories = [
         project,
         skills / "catalog/commands",
-        skills / "catalog/steps",
         skills / "catalog/recipes",
+        skills / "catalog/recipes/_steps",
+        skills / "catalog/recipes/_iterations",
         skills / "custom/recipes",
         profile.parent,
         *(destination.parent for destination, _ in generated),
@@ -1413,7 +1422,7 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     if diagnostic := recipe_name_error(args.name, context.config["namespace"]):
         raise EvoError(diagnostic)
     root = context.registry.get(args.name)
-    if not root or root.kind != "recipe":
+    if not root or root.kind != "recipe" or root.internal:
         raise EvoError(f"unknown recipe {args.name}")
     initial = resolve_inputs(root.inputs, args.input)
     plan: list[dict[str, Any]] = []

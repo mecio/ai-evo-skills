@@ -33,7 +33,7 @@ class RecipeForEachTest(unittest.TestCase):
                 path.write_text(body)
 
             recipes = root / '.ai-evo-prj/skills/catalog/recipes'
-            child = recipes / 'abc-recipe-item'
+            child = recipes / '_iterations/abc-recipe-item'
             child.mkdir(parents=True)
             (child / 'SKILL.md').write_text(
                 fixtures.VALID_FLOW_SKILL.replace('abc-recipe-flow', 'abc-recipe-item')
@@ -106,6 +106,21 @@ class RecipeForEachTest(unittest.TestCase):
             records.append(self.result('collect', 'complete'))
             self.assertEqual('complete', advance_recipe({'plan': plan, 'results': records})['output'])
 
+    def test_iteration_recipe_is_nested_only_and_not_published(self):
+        with self.project() as (root, path, data):
+            path.write_text(yaml.safe_dump(data, sort_keys=False))
+            direct = self.run_cli(
+                root, 'recipe', 'plan', 'abc-recipe-item', '--adapter', 'codex',
+                '--input', 'item=value'
+            )
+            self.assertEqual(1, direct.returncode)
+            self.assertIn('unknown recipe abc-recipe-item', direct.stderr)
+
+            synced = self.run_cli(root, 'sync')
+            self.assertEqual(0, synced.returncode, synced.stderr)
+            self.assertFalse((root / '.agents/skills/abc-recipe-item').exists())
+            self.assertTrue((root / '.agents/skills/abc-recipe-flow').is_symlink())
+
     def test_empty_array_skips_loop_and_invalid_items_fail(self):
         with self.project() as (root, path, data):
             plan = self.plan(root, path, data)
@@ -154,7 +169,7 @@ class RecipeForEachTest(unittest.TestCase):
     def test_nested_foreach_is_rejected_during_planning(self):
         with self.project() as (root, path, data):
             path.write_text(yaml.safe_dump(data, sort_keys=False))
-            child_path = path.parent.parent / 'abc-recipe-item/recipe.yaml'
+            child_path = path.parent.parent / '_iterations/abc-recipe-item/recipe.yaml'
             child = yaml.safe_load(child_path.read_text())
             child['steps'][0] = {
                 'id': 'nested', 'uses': 'abc-recipe-leaf',
