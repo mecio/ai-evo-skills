@@ -3,8 +3,8 @@
 **License:** Apache-2.0 · **Status:** public beta, Linux-first
 
 AI Evo Skills turns proven prompts into reusable skills with standardized inputs and execution policies.
-Teams maintain those skills in one shared catalog and compose workflows where Codex and Claude Code can
-delegate tasks, exchange results and act on each other's feedback. Once a prompt is captured in a skill,
+Teams maintain those skills in one shared catalog and compose short workflows where Codex and Claude Code can
+delegate a bounded task, exchange a concrete result and stop at a developer decision point. Once a prompt is captured in a skill,
 developers invoke it and supply only the inputs needed for the task, without rewriting or pasting the same
 instructions each time.
 

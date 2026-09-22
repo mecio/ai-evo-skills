@@ -1,8 +1,8 @@
 # Recover the valid prefix of a previous run
 
-This example connects the [Acme command/step/recipe catalog](../acme/README.md) to the core recovery API.
-A review command succeeds, an internal step checks its output, and the reporting command fails.
-A new run can reuse the first two results only if they are still compatible and valid.
+This example connects the [Acme command/recipe catalog](../acme/README.md) to the core recovery API.
+A review command succeeds and the reporting command fails.
+A new run can reuse the review result only if it is still compatible and valid.
 Recovery never changes the failed result into success or selects isolated results after an invalid step.
 
 ## Run the isolated demonstration
@@ -20,7 +20,7 @@ the local check script, recovery and `recipe advance`. Review/report results and
 
 | Case | Recovered steps | Next step |
 |---|---|---|
-| Unchanged fixture | `review`, `check_review` | `report` |
+| Unchanged fixture | `review` | `report` |
 | Changed review dependency | None | `review` |
 
 Both cases verify that the previous state stays byte-for-byte unchanged. Temporary artifacts are removed
@@ -28,7 +28,7 @@ on exit. The evidence shortcuts inside the demo must not be copied into a real r
 
 ## Recover a real run
 
-Install Acme, including its internal step and helper, as described in its README. The coordinator must
+Install Acme as described in its README. The coordinator must
 have retained the original complete plan and ordered results as `previous/state.json`, plus failure
 diagnostics and the historical evidence necessary to establish validity. Missing evidence means no reuse.
 Run from the same application root, with the same adapter, profile and functional inputs:
@@ -43,8 +43,7 @@ Run from the same application root, with the same adapter, profile and functiona
 
 All checks start with `valid: false`. Before changing any check, compare the recorded review's actual
 dependencies with current state: the resolved target commit, relevant tracked contents, review scope and
-directives. A symbolic name such as `HEAD` alone is insufficient. For the internal step, verify the input,
-helper implementation and original output. Fill `checked_at`, `reason`, and matching historical/current
+directives. A symbolic name such as `HEAD` alone is insufficient. Fill `checked_at`, `reason`, and matching historical/current
 dependency fingerprint maps only when supported by evidence. The core binds checks to plans and outputs,
 but does not inspect Git or determine semantic freshness on your behalf.
 

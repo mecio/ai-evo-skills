@@ -4,6 +4,11 @@ Recipe orchestration remains the coordinator's responsibility. The core supplies
 condition evaluation and transitions; `recipe advance` never starts an AI process. Use the same flow with
 Codex or Claude as coordinator. Execution snapshots and journals are trusted local data, not a security boundary.
 
+The runtime supports nested and iterative plans, but they are advanced features. The recommended default is a
+direct recipe that reaches one reviewable checkpoint in a few operations. A developer or outer workflow then
+starts the next independent recipe with the approved artifact. This limits context drift and makes recovery
+local to the failed phase.
+
 Recipe names, including the root `plan.recipe`, must use `<namespace>-recipe-<name>`. Nested `uses` references
 name the full recipe; flattened executable steps still refer to atomic commands with their unchanged names.
 Migrate legacy recipe names and regenerate snapshots as described in the [migration guide](recipe-naming-migration.md).

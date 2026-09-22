@@ -42,14 +42,6 @@ def main():
         source = {'plan': plan, 'results': []}
         review = 'SIMULATED review: fixture text, no repository inspection or AI execution.\n'
         source['results'].append({'step': 'review', 'status': 'succeeded', 'output': review})
-        step = json.loads(cli('recipe', 'advance', payload=source))['step']
-        if step['id'] != 'check_review' or step['application']['mode'] != 'current':
-            raise RuntimeError('expected a coordinator-owned validation step')
-        review_file = root / 'review.txt'
-        review_file.write_text(step['with']['review'], encoding='utf-8')
-        checked = subprocess.run([sys.executable, str(root / '.ai-evo-prj/scripts/acme-check-review-output.py'),
-                                  '--input', str(review_file)], capture_output=True, text=True, check=True)
-        source['results'].append({'step': 'check_review', 'status': 'succeeded', 'output': checked.stdout})
         # Deliberate fixture failure, not the outcome of an actual report command.
         source['results'].append({'step': 'report', 'status': 'failed', 'exit_code': 1})
         if json.loads(cli('recipe', 'advance', payload=source, expected_exit=1))['status'] != 'failed':

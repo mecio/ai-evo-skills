@@ -1,6 +1,6 @@
 ---
 name: acme-recipe-reviewed-change
-description: "Review tracked changes, check that the output is present, and summarize its findings using shared commands and an internal step."
+description: "Review tracked changes and summarize its findings with two direct commands."
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
@@ -10,7 +10,7 @@ metadata:
 
 ## Purpose
 
-Run a tracked-change review and summarize its findings in sequence, using shared commands.
+Run a tracked-change review and summarize its findings in sequence. This is the default direct-recipe pattern.
 
 ## Interface
 
@@ -27,8 +27,6 @@ The formal interface is defined in `recipe.yaml`.
 3. On `skipped`, append the returned `result` unchanged and continue without invoking the command.
    On `ready`, execute only the returned `step`: send it to `.ai-evo/bin/ai-evo-skills command execute` on stdin
    for delegated mode, or apply its resolved handoff directly for current mode. Do not replan children.
-   `check_review` runs its helper directly in the coordinator. Nonempty output is only a transport check,
-   not proof that the review passed. Preserve script diagnostics on failure.
 4. Record success as `{"step": "<id>", "status": "succeeded", "output": "<complete output>"}`. Preserve
    whitespace. A skipped upstream output is passed to command inputs as JSON text describing the skip;
    the reporting command must describe that state as a skipped review, never as a completed review.
@@ -47,7 +45,7 @@ The final Markdown report produced by `acme-cmd-report-review`.
 
 ## Constraints
 
-- Run steps sequentially and stop on failure.
+- Keep the recipe limited to review and reporting; start a separate recipe for any correction.
 - Preserve the review output when passing it to the reporting command.
 
 ## Success criteria

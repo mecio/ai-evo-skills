@@ -5,7 +5,7 @@ you need. Native AI execution requires authenticated clients; the recovery demo 
 
 | Example | What it demonstrates |
 |---|---|
-| [Acme](acme/README.md) | Public commands, an internal script-backed step, sequential and conditional recipes. |
+| [Acme](acme/README.md) | Direct review recipe first; conditional workflow documented as advanced. |
 | [Runtime tests](runtime-tests/README.md) | Scripted context detection and conditional test runners; requires your actual wrappers. |
 | [Recovery](recovery/README.md) | A new runtime from a verified consecutive prefix, with a runnable synthetic demonstration. |
 

@@ -95,6 +95,17 @@ See [command scripts](command-scripts.md) for output contracts, verification and
 
 ## Recipe contract
 
+### Prefer direct, bounded recipes
+
+Default to a directly invocable recipe with one to three meaningful operations and a result a developer can
+review before choosing the next run. Good boundaries include issue specification, technical planning, one
+work item, one review, or final verification. Keep inputs stable during that run and record the final
+artifact as its checkpoint.
+
+Nested recipes, loops, approval chains and recovery remain available for advanced integrations. Use them only
+when the child unit is independently bounded and its inputs, outputs and retry behavior are stable. Do not use
+them to automate an entire evolving issue: changed decisions otherwise invalidate a long prefix.
+
 A recipe directory contains `SKILL.md` for its purpose, coordinator procedure and expected result, plus
 `recipe.yaml` for its formal inputs, ordered steps and output. It may also contain a real `references/` directory
 with supporting documents that the coordinator reads only when the recipe procedure calls for them. Reference

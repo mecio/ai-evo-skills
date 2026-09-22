@@ -1,7 +1,7 @@
 # Acme starter catalog
 
-A complete boilerplate with three commands, one internal step, a helper and two recipes. Copy it into an initialized project to try
-shared prompts, input defaults, sequential composition and a conditional step. All skills use the `acme`
+A complete boilerplate with three commands and two recipes. Copy it into an initialized project to try
+shared prompts, input defaults, a direct recipe and an advanced conditional recipe. All skills use the `acme`
 namespace and work with either bundled adapter. `init` does not install this catalog automatically.
 
 ## What is included?
@@ -11,9 +11,8 @@ namespace and work with either bundled adapter. `init` does not install this cat
 | [acme-cmd-detect-changes](catalog/commands/acme-cmd-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
 | [acme-cmd-review](catalog/commands/acme-cmd-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
 | [acme-cmd-report-review](catalog/commands/acme-cmd-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
-| [acme-step-check-review-output](catalog/recipes/_steps/acme-step-check-review-output/SKILL.md) | Check nonempty UTF-8 output with a local helper; preserve bytes, without claiming semantic validity. |
-| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Run review, the internal output check, then reporting. |
-| [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Detect changes, conditionally review security, then report the review or its skip. |
+| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Direct review followed by reporting. |
+| [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Advanced conditional security review. |
 
 The internal step is not published as a directly invocable skill; `command plan` rejects direct calls.
 Its helper needs Python 3.11+. It runs directly under the coordinator's permissions using `executor: current`,
@@ -32,8 +31,6 @@ fresh catalog with none of these six names already present:
 ```bash
 cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
 cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
-mkdir -p .ai-evo-prj/scripts
-cp .ai-evo/examples/acme/scripts/acme-check-review-output.py .ai-evo-prj/scripts/
 ./.ai-evo/bin/ai-evo-skills validate
 ./.ai-evo/bin/ai-evo-skills sync --dry-run
 ./.ai-evo/bin/ai-evo-skills sync
