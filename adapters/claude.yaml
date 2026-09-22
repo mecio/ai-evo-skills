@@ -27,6 +27,15 @@ profile-translation:
         - Bash(.ai-evo/bin/ai-evo-github-read *)
 
 execution-policy-translation:
+  workspace-read-write:
+    enforcement: native
+    cli-arguments:
+      - --permission-mode
+      - dontAsk
+      - --permission-prompts
+      - none
+      - --allowedTools
+      - Read,Glob,Grep,Edit,Write,NotebookEdit,Bash
   workspace-read-only:
     enforcement: native
     cli-arguments:

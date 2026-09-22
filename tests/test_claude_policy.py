@@ -140,7 +140,7 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
-    def test_read_write_auto_is_noninteractive_without_broadening_permissions(self):
+    def test_read_write_auto_explicitly_allows_native_edit_tools(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, 'claude')
@@ -156,7 +156,7 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
             actual = options(plan['application']['cli_arguments'])
             self.assertEqual('dontAsk', actual['--permission-mode'])
             self.assertEqual('none', actual['--permission-prompts'])
-            self.assertNotIn('--allowedTools', actual)
+            self.assertEqual('Bash,Edit,Glob,Grep,NotebookEdit,Read,Write', actual['--allowedTools'])
             self.assertNotIn('--add-dir', actual)
             self.assertNotIn('--dangerously-skip-permissions', actual)
             # A required capability without a read-write mapping must still fail planning.

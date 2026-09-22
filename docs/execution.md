@@ -120,11 +120,12 @@ implement and verify native enforcement before exposing another adapter mapping;
 alone do not satisfy the contract. Rebuild saved plans after changing command declarations or adapters.
 
 All bundled Claude delegations use `--permission-mode dontAsk --permission-prompts none`, including
-read-write/auto steps. Operations requiring additional permission are denied without waiting for a host
-permission response. This does not grant arbitrary Bash access or access to symlink targets outside the
-allowed directories. Existing explicit grants and denies still apply; unsupported declared capabilities
-fail planning. Required script operations need a supported capability mapping or a coordinator-owned
-`executor: current` step, subject to the coordinator's own permissions. Rebuild old plans to use this policy.
+read-write/auto steps. Read-write workspaces explicitly allow the native read, edit and Bash tools so
+non-interactive execution can inspect the workspace, apply the declared local changes and run required checks.
+Other operations requiring additional permission are denied without waiting for a host permission response.
+Existing explicit grants and denies still apply; unsupported declared capabilities fail planning. Required
+script operations need a supported capability mapping or a coordinator-owned `executor: current` step,
+subject to the coordinator's own permissions. Rebuild old plans to use this policy.
 
 These Bash restrictions also apply to project scripts and test runners named in a command's instructions.
 The [script guide](command-scripts.md#adapter-permissions) explains adapter selection for those tasks;
