@@ -159,8 +159,8 @@ class ClaudeRecipePolicyTest(unittest.TestCase):
             self.assertEqual('Bash,Edit,Glob,Grep,NotebookEdit,Read,Write', actual['--allowedTools'])
             self.assertNotIn('--add-dir', actual)
             self.assertNotIn('--dangerously-skip-permissions', actual)
-            # A required capability without a read-write mapping must still fail planning.
-            path.write_text(body.replace('network: auto', 'network: auto\n  capabilities: [github.issue-view]'))
+            # An unknown required capability must still fail planning.
+            path.write_text(body.replace('network: auto', 'network: auto\n  capabilities: [github.unknown]'))
             result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'claude')
             self.assertNotEqual(0, result.returncode)
             self.assertIn('cannot enforce capability', result.stderr)

@@ -97,7 +97,6 @@ class GitHubReadPolicyTest(unittest.TestCase):
                 ("claude", declared.replace("network: enabled", "network: disabled"), "network=disabled"),
                 ("claude", declared.replace("github.issue-view", "github.unknown"), "cannot enforce capability github.unknown"),
                 ("codex", declared, "cannot enforce capability github.issue-view"),
-                ("claude", declared.replace("workspace: read-only", "workspace: read-write"), "cannot enforce capability github.issue-view"),
                 ("claude", declared.replace("inputs: {}", "  deny-capabilities: [github.issue-view]\ninputs: {}"), "explicitly denied"),
                 ("claude", declared.replace("[github.issue-view]", "github.issue-view"), "list of unique capability names"),
                 ("claude", declared.replace("[github.issue-view]", "[github.issue-view, github.issue-view]"), "list of unique capability names"),
@@ -115,6 +114,30 @@ class GitHubReadPolicyTest(unittest.TestCase):
             result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "claude")
             self.assertNotEqual(0, result.returncode)
             self.assertIn("network=disabled", result.stderr)
+
+    def test_read_write_allows_only_declared_github_read_wrappers(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, "claude")
+            self.add_command(root)
+            profile = root / ".ai-evo-prj/skills/config/effort-profiles/abc-default.yaml"
+            data = yaml.safe_load(profile.read_text())
+            data["resources"]["network"] = "auto"
+            profile.write_text(yaml.safe_dump(data))
+            skill = root / ".ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md"
+            body = fixtures.VALID_COMMAND.replace("workspace: read-only", "workspace: read-write").replace(
+                "network: disabled",
+                "network: enabled\n  capabilities: [github.auth-status, github.repo-view, github.issue-view]",
+            )
+            skill.write_text(body)
+
+            result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "claude")
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            actual = options(json.loads(result.stdout)["application"]["cli_arguments"])
+            self.assertIn("Bash(.ai-evo/bin/ai-evo-github-read auth-status)", actual["--allowedTools"])
+            self.assertIn("Bash(.ai-evo/bin/ai-evo-github-read repo-view)", actual["--allowedTools"])
+            self.assertIn("Bash(.ai-evo/bin/ai-evo-github-read issue-view *)", actual["--allowedTools"])
 
     def test_native_ceilings_and_denies_cannot_be_overridden(self):
         temporary, root = self.repository()

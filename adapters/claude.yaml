@@ -109,21 +109,21 @@ capability-translation:
       - "Bash(gh api * --method DELETE *)"
   github.auth-status:
     enforcement: native
-    workspaces: [read-only]
+    workspaces: [read-only, read-write]
     requires-network: true
     allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read auth-status)"]
     instructions:
       - Use .ai-evo/bin/ai-evo-github-read auth-status to check GitHub authentication.
   github.repo-view:
     enforcement: native
-    workspaces: [read-only]
+    workspaces: [read-only, read-write]
     requires-network: true
     allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read repo-view)"]
     instructions:
       - Use .ai-evo/bin/ai-evo-github-read repo-view to read the current GitHub repository.
   github.issue-view:
     enforcement: native
-    workspaces: [read-only]
+    workspaces: [read-only, read-write]
     requires-network: true
     allow-tools: ["Bash(.ai-evo/bin/ai-evo-github-read issue-view *)"]
     instructions:
