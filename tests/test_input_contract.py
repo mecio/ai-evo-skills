@@ -141,3 +141,34 @@ class InputContractTest(unittest.TestCase):
                                    '--input', 'issue=7', '--input', 'base=main', '--input', 'recovered=explicit')
             self.assertEqual(0, planned.returncode, planned.stderr)
             self.assertEqual('explicit', json.loads(planned.stdout)['execution']['steps'][0]['with']['value'])
+
+    def test_manual_resolver_assessment_allows_complete_explicit_required_inputs(self):
+        with self.project() as (root, _, path, data):
+            resolver = root / '.ai-evo-prj/skills/catalog/commands/abc-report-workflow/SKILL.md'
+            resolver.parent.mkdir(parents=True)
+            resolver.write_text(fixtures.VALID_COMMAND.replace(
+                'name: abc-inspect', 'name: abc-report-workflow').replace(
+                'network: disabled', 'network: disabled\n  capabilities: [abc.workflow-report]').replace(
+                'inputs: {}', 'inputs:\n  issue: {required: true, description: Issue}'))
+            scripts = root / '.ai-evo-prj/scripts'
+            scripts.mkdir()
+            helper = scripts / 'workflow-report'
+            helper.write_text('#!/usr/bin/env python3\nimport json\nprint(json.dumps({"status":"manual-assessment-required","recommended_recipe":None,"resolved_inputs":{},"missing_inputs":[],"reason":"manual"}))\n')
+            helper.chmod(0o755)
+            capabilities = root / '.ai-evo-prj/skills/config/execution-capabilities.yaml'
+            capabilities.write_text(yaml.safe_dump({'version': '1.0', 'capabilities': {
+                'abc.workflow-report': {'script': 'workflow-report', 'operation': 'report',
+                                        'arguments': True, 'workspaces': ['read-only']},
+            }}))
+            data['inputs'] = {
+                'issue': {'required': True, 'description': 'Issue'},
+                'target': {'required': True, 'description': 'Target'},
+            }
+            data['input-resolver'] = {'uses': 'abc-report-workflow', 'with': {'issue': '${{ inputs.issue }}'}}
+            data['steps'][0]['with']['value'] = '${{ inputs.target }}'
+            path.write_text(yaml.safe_dump(data))
+
+            planned = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex',
+                                   '--input', 'issue=7', '--input', 'target=main')
+            self.assertEqual(0, planned.returncode, planned.stderr)
+            self.assertEqual('main', json.loads(planned.stdout)['execution']['steps'][0]['with']['value'])

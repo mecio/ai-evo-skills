@@ -1556,9 +1556,15 @@ def resolve_recipe_inputs(context: Context, root: Skill, explicit: dict[str, str
             raise EvoError(f"input resolver {command.name} returned a non-object JSON value")
         recommendation = report.get("recommended_recipe")
         if recommendation != root.name:
-            reason = report.get("reason")
-            suffix = f": {reason}" if isinstance(reason, str) and reason else ""
-            raise EvoError(f"input resolver {command.name} recommends {recommendation!r}, not {root.name!r}{suffix}")
+            required = [name for name, spec in root.inputs.items() if spec.get("required") is True]
+            manual_override = (
+                report.get("status") == "manual-assessment-required"
+                and all(name in explicit for name in required)
+            )
+            if not manual_override:
+                reason = report.get("reason")
+                suffix = f": {reason}" if isinstance(reason, str) and reason else ""
+                raise EvoError(f"input resolver {command.name} recommends {recommendation!r}, not {root.name!r}{suffix}")
         candidate = report.get("resolved_inputs")
         missing = report.get("missing_inputs")
         if not isinstance(candidate, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in candidate.items()):
