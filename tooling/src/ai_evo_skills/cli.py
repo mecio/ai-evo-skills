@@ -969,7 +969,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
     context = validated_context()
     source_roots = [(context.skills / "catalog").resolve(), (context.skills / "custom").resolve()]
     actions: list[tuple[str, Path, Path | None]] = []
-    physical_ignores: list[str] = []
+    physical_ignores: list[tuple[str, str]] = []
     for target in context.config["targets"]:
         desired = {
             name: skill
@@ -983,7 +983,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         for name in desired:
             relative = (resolved_directory / name).relative_to(context.repo).as_posix()
             escaped = ''.join('\\' + char if char in '\\*?[] ' else char for char in relative)
-            physical_ignores.append('/' + escaped)
+            physical_ignores.append(('/' + escaped, relative))
         for existing in directory.iterdir() if directory.exists() else []:
             if managed_link(existing, source_roots) and existing.name not in desired:
                 actions.append(("remove", existing, None))
@@ -998,7 +998,9 @@ def cmd_sync(args: argparse.Namespace) -> None:
                     raise EvoError(f"{link}: collision with unmanaged file, directory or symlink")
             actions.append(("link", link, skill.path.parent))
     if physical_ignores and not args.dry_run:
-        append_ignore(context.repo / '.gitignore', physical_ignores)
+        append_sync_ignores(
+            context.repo, context.config.get("ignore-file", "git-exclude"), physical_ignores
+        )
     for operation, path, target in actions:
         if args.dry_run:
             print(f"would {operation}: {path}" + (f" -> {target}" if target else ""))
@@ -1028,6 +1030,52 @@ def append_ignore(path: Path, patterns: list[str]) -> None:
     if missing:
         suffix = "\n" if existing and not existing.endswith("\n\n") else ""
         path.write_text(existing + suffix + "# AI Evo Skills\n" + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def ignored_by_git(repo: Path, path: str) -> bool:
+    """Return whether Git ignores path through any configured ignore source."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", "--", path],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.strip() or "git check-ignore failed"
+    raise EvoError(detail)
+
+
+def git_exclude_file(repo: Path) -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise EvoError(result.stderr.strip() or "could not locate Git exclude file")
+    path = Path(result.stdout.strip())
+    return path if path.is_absolute() else repo / path
+
+
+def append_sync_ignores(repo: Path, destination: str, patterns: list[tuple[str, str]]) -> None:
+    """Add only generated links which Git does not already ignore."""
+    if destination == "none":
+        return
+    missing = [pattern for pattern, path in patterns if not ignored_by_git(repo, path)]
+    if not missing:
+        return
+    if destination == "gitignore":
+        path = repo / ".gitignore"
+    else:
+        path = git_exclude_file(repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+    append_ignore(path, missing)
 
 
 def require_directory_path(path: Path) -> None:
@@ -1258,8 +1306,13 @@ def cmd_init(args: argparse.Namespace) -> None:
         'description: "TODO: describe the resource and output policy."',
         "description: Default resource-conscious profile for this project.",
     )
-    config = {"version": PROTOCOL_VERSION, "namespace": namespace, "targets": targets}
-    app_ignores = [".ai-evo", *[target["path"] + "/" for target in targets]]
+    config = {
+        "version": PROTOCOL_VERSION,
+        "namespace": namespace,
+        "ignore-file": "git-exclude",
+        "targets": targets,
+    }
+    app_ignores = [".ai-evo"]
     if project.is_symlink():
         app_ignores.append(".ai-evo-prj")
     app_ignores.extend(f"!{path}" for path in entrypoint_paths)

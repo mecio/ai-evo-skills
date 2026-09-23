@@ -1,4 +1,5 @@
 version: "1.0"
 namespace: "<namespace>"
+ignore-file: git-exclude
 targets:
 <targets>

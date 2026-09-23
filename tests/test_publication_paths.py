@@ -14,6 +14,44 @@ class PublicationPathsTest(unittest.TestCase):
     add_command = fixtures.CliIntegrationTest.add_command
     run_cli = fixtures.CliIntegrationTest.run_cli
 
+    def test_sync_uses_existing_git_exclude_without_modifying_gitignore(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex', 'claude')
+            self.add_command(root)
+            gitignore = root / '.gitignore'
+            gitignore.write_text('# Versioned project rules\n')
+            exclude = root / '.git/info/exclude'
+            exclude.write_text('.agents/skills/\n.claude/skills/\n')
+            before = gitignore.read_bytes()
+
+            result = self.run_cli(root, 'sync')
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(before, gitignore.read_bytes())
+            self.assertTrue((root / '.agents/skills/abc-inspect').is_symlink())
+            self.assertTrue((root / '.claude/skills/abc-inspect').is_symlink())
+
+    def test_sync_writes_uncovered_links_to_configured_destination_idempotently(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex')
+            self.add_command(root)
+            gitignore = root / '.gitignore'
+            gitignore.write_text('# Versioned project rules\n')
+            config_path = root / '.ai-evo-skills.yaml'
+            config = yaml.safe_load(config_path.read_text())
+            config['ignore-file'] = 'gitignore'
+            config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+
+            result = self.run_cli(root, 'sync')
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn('/.agents/skills/abc-inspect', gitignore.read_text())
+            first = gitignore.read_bytes()
+            result = self.run_cli(root, 'sync')
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(first, gitignore.read_bytes())
+
     def test_init_rejects_invalid_targets_without_creating_project_files(self):
         for case in ('file', 'external-alias', 'dangling-alias', 'cyclic-alias', 'cyclic-chain',
                      'overlapping-targets', 'source-overlap'):

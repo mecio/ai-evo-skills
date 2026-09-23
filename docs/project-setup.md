@@ -89,6 +89,7 @@ Updating the engine's dependencies also requires an explicit `uv sync --frozen -
 ```yaml
 version: "1.0"
 namespace: acme
+ignore-file: git-exclude
 targets:
   - id: codex
     adapter: codex
@@ -111,8 +112,11 @@ explicit `enabled` value. Disabled targets remain documented, while `sync` remov
 Target paths must be distinct and must not contain one another, including after resolving symbolic links.
 They must also remain separate from `skills/catalog` and `skills/custom`: a target may not equal, contain
 or sit inside either source area. Client directories may use symbolic links within the worktree;
-published relative links are calculated from their physical directory. `sync` adds anchored Git ignore
-rules for individual generated links at that physical destination. Existing ignore rules are preserved.
+published relative links are calculated from their physical directory. `sync` checks every generated link
+with Git before writing an anchored ignore rule, so rules from `.gitignore`, `.git/info/exclude`, and
+`core.excludesFile` are all honored. `ignore-file` selects where any uncovered links are recorded:
+`git-exclude` (the default) writes to `.git/info/exclude`, `gitignore` writes to the project `.gitignore`,
+and `none` writes no rules. Existing ignore rules are preserved.
 This handles both ordinary target paths changed after `init` and client aliases; `sync --dry-run` does
 not change ignore files. Validation and planning reject overlapping targets, destinations outside the
 worktree, and paths whose existing prefix is not a directory (including dangling aliases). Missing
