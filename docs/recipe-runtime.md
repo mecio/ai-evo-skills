@@ -59,8 +59,10 @@ when:
 
 `when` is optional and requires `value` and `equals`, with optional `normalize: trim`. `value` must be a complete reference to an
 existing recipe input (`${{ inputs.change_state }}`) or the output of a strictly earlier step. `equals` is a literal
-string, including the empty string; it is never interpreted as an expression. No other operators, partial
-interpolation, Boolean expressions, regular expressions or executable expressions are supported.
+string, including the empty string; it is never interpreted as an expression. References in `with`, `when.value`,
+`for_each.items` and `outputs.result.value` must each occupy the complete value: partial interpolation such as
+`"issue ${{ inputs.issue }}"` is unsupported. No other operators, Boolean expressions, regular expressions or
+executable expressions are supported.
 
 By default the comparison is exact equality of decoded Unicode strings. There is no trimming, newline conversion,
 case folding or Unicode normalization. `changed`, `changed\n` and ` changed` differ. JSON escape spelling does not

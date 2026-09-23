@@ -59,6 +59,11 @@ Every input must declare a non-empty description and exactly one of `required: t
 Unknown, duplicate and missing required inputs stop planning. Invocation uses `key=value`; quote values that
 contain spaces.
 
+Every command and step `SKILL.md` must contain exactly one H1 title, followed by these non-empty H2 sections
+once and in this order: `Purpose`, `Interface`, `Procedure`, `Expected output`, `Constraints`, `Success criteria`
+and `Examples`. Use the generated template as the starting point; do not add extra H2 sections or move these
+sections to suit an individual skill.
+
 Commands always use the invoking AI. Their interfaces contain `inputs`, `execution-policy` and optionally `output-schema`;
 an `executor` field is invalid, including `executor: current`. Choose another executor only on a recipe
 step to reuse the same command with different AIs.
@@ -119,6 +124,12 @@ Recipe inputs follow the same description and required/default rules as command 
 Recipes form a directed acyclic graph and execute in declared sequence. Unknown skills, unknown inputs,
 forward references, duplicate step ids and direct or indirect cycles are validation errors.
 `outputs.result.value` is the single public recipe result.
+
+Recipe `SKILL.md` files use the same H1 and ordered H2-section contract as commands and steps. In `with`,
+`when.value` and `for_each.items`, a `${{ ... }}` reference must occupy the complete value.
+`outputs.result.value` must likewise be a complete reference to an existing step output. For example,
+`issue: "${{ inputs.issue }}"` is valid, while `constraints: "Review issue ${{ inputs.issue }}"` is invalid.
+Pass the referenced value as its own child input, or use a literal value when the surrounding text is fixed.
 
 Store a recipe under `skills/catalog/recipes/_iterations/<recipe-name>` when it represents a technical unit
 consumed by another recipe and its inputs do not form a useful direct invocation. The engine validates and

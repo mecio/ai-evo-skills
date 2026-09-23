@@ -46,6 +46,12 @@ reserved underscore collections. `_steps` contains `ai-evo-kind: step` services,
 planning, but neither is published. `recipe plan` accepts public and personal recipe entrypoints as roots and
 rejects `_iterations` recipes; steps can only appear in a recipe's `uses` field.
 
+Each skill collection contains only skill directories. Do not put `README.md` files or other loose documents
+directly in `skills/catalog/commands`, `skills/catalog/recipes`, `skills/custom/recipes`, `_steps` or
+`_iterations`; validation treats every entry as a skill directory. Put catalog-wide documentation outside those
+collections, for example under `skills/` or at the project root, and keep per-skill material in that skill's
+`references/` directory.
+
 Project scripts are optional, authored separately from `init`, and called by command procedures when allowed
 by their execution policies. See [commands that use scripts](command-scripts.md) for placement and contracts.
 
