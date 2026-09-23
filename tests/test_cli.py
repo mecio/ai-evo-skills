@@ -234,7 +234,7 @@ class CliIntegrationTest(unittest.TestCase):
                     self.assertFalse((root / ".agents/skills").exists())
                     self.assertFalse((root / ".claude/skills").exists())
 
-    def test_command_plan_enforces_restrictive_policy_with_delegation(self):
+    def test_command_plan_enforces_restrictive_policy_without_delegation(self):
         temporary, root = self.repository()
         with temporary:
             self.initialize(root, "codex")
@@ -242,7 +242,7 @@ class CliIntegrationTest(unittest.TestCase):
             result = self.run_cli(root, "command", "plan", "abc-inspect", "--adapter", "codex")
             self.assertEqual(0, result.returncode, result.stderr)
             plan = json.loads(result.stdout)
-            self.assertEqual("delegated", plan["application"]["mode"])
+            self.assertEqual("current", plan["application"]["mode"])
             self.assertEqual("stdin", plan["application"]["prompt_delivery"])
             arguments = plan["application"]["cli_arguments"]
             self.assertIn("read-only", arguments)

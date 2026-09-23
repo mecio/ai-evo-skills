@@ -78,11 +78,12 @@ class StepExecutorTest(unittest.TestCase):
                 for step in plan['execution']['steps']:
                     transition = advance_recipe({'plan': plan, 'results': results})
                     self.assertEqual('ready', transition['status'])
-                    validate_plan(transition['step'])
                     app = transition['step']['application']
                     self.assertEqual({'workspace': 'read-only', 'network': 'disabled'}, app['execution_policy'])
                     self.assertEqual(app['executor'], app['profile']['adapter'])
-                    self.assertEqual('delegated', app['mode'])
+                    self.assertEqual('current' if step['id'] == 'local' else 'delegated', app['mode'])
+                    if app['mode'] == 'delegated':
+                        validate_plan(transition['step'])
                     if app['executor'] == 'codex':
                         self.assertEqual('read-only', app['cli_arguments'][app['cli_arguments'].index('--sandbox') + 1])
                         self.assertIn('sandbox_workspace_write.network_access=false', app['cli_arguments'])
@@ -103,6 +104,25 @@ class StepExecutorTest(unittest.TestCase):
                 self.assertEqual('claude', step['application']['executor'])
                 self.assertEqual('delegated', step['application']['mode'])
                 validate_plan(step)
+
+    def test_current_steps_keep_interactive_execution_with_policy_and_output_contract(self):
+        with self.project() as (root, command):
+            references = command.parent / 'references'
+            references.mkdir()
+            (references / 'result.json').write_text('{"type": "object"}')
+            command.write_text(command.read_text().replace(
+                'inputs: {}', 'output-schema: references/result.json\ninputs: {}'))
+            self.recipe(root, 'abc-recipe-flow', [
+                {'id': 'worklog_record', 'uses': 'abc-inspect', 'executor': 'current'},
+            ])
+            for adapter in ('codex', 'claude'):
+                direct = json.loads(self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', adapter).stdout)
+                step = self.plan(root, adapter)['execution']['steps'][0]
+                for application in (direct['application'], step['application']):
+                    self.assertEqual('current', application['mode'])
+                    self.assertEqual({'workspace': 'read-only', 'network': 'disabled'}, application['execution_policy'])
+                    self.assertIn('output_contract', application)
+                    self.assertNotIn('-p', application['command'])
 
     def test_command_executor_is_rejected_including_explicit_current(self):
         with self.project() as (root, command):

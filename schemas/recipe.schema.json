@@ -9,6 +9,23 @@
     "version": { "const": "1.0" },
     "name": { "$ref": "#/$defs/recipeName" },
     "inputs": { "$ref": "#/$defs/inputs" },
+    "input-resolver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uses", "with"],
+      "properties": {
+        "uses": { "$ref": "#/$defs/skillName" },
+        "with": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^\\$\\{\\{ inputs\\.[a-z][a-z0-9_]* \\}\\}$"
+          }
+        }
+      }
+    },
     "steps": {
       "type": "array",
       "minItems": 1,

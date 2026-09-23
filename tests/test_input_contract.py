@@ -104,3 +104,40 @@ class InputContractTest(unittest.TestCase):
                     result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex')
                     self.assertEqual(0, result.returncode, result.stderr)
                     self.assertEqual({'value': expected}, json.loads(result.stdout)['execution']['steps'][1]['with'])
+
+    def test_recipe_input_resolver_precedes_defaults_and_required_inputs(self):
+        with self.project() as (root, _, path, data):
+            resolver = root / '.ai-evo-prj/skills/catalog/commands/abc-report-workflow/SKILL.md'
+            resolver.parent.mkdir(parents=True)
+            resolver.write_text(fixtures.VALID_COMMAND.replace(
+                'name: abc-inspect', 'name: abc-report-workflow').replace(
+                'network: disabled', 'network: disabled\n  capabilities: [abc.workflow-report]').replace(
+                'inputs: {}', 'inputs:\n  issue: {required: true, description: Issue}'))
+            scripts = root / '.ai-evo-prj/scripts'
+            scripts.mkdir()
+            helper = scripts / 'workflow-report'
+            helper.write_text('#!/usr/bin/env python3\nimport json\nprint(json.dumps({"recommended_recipe":"abc-recipe-flow","resolved_inputs":{"recovered":"resolver"},"missing_inputs":["base"]}))\n')
+            helper.chmod(0o755)
+            capabilities = root / '.ai-evo-prj/skills/config/execution-capabilities.yaml'
+            capabilities.write_text(yaml.safe_dump({'version': '1.0', 'capabilities': {
+                'abc.workflow-report': {'script': 'workflow-report', 'operation': 'report',
+                                        'arguments': True, 'workspaces': ['read-only']},
+            }}))
+            data['inputs'] = {
+                'issue': {'required': True, 'description': 'Issue'},
+                'recovered': {'required': True, 'description': 'Recovered'},
+                'base': {'default': 'default-base', 'description': 'Base'},
+            }
+            data['input-resolver'] = {'uses': 'abc-report-workflow', 'with': {'issue': '${{ inputs.issue }}'}}
+            data['steps'][0]['with']['value'] = '${{ inputs.recovered }}'
+            path.write_text(yaml.safe_dump(data))
+
+            missing = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex', '--input', 'issue=7')
+            self.assertEqual(1, missing.returncode)
+            self.assertIn('missing required input base', missing.stderr)
+            self.assertNotIn('recovered', missing.stderr)
+
+            planned = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex',
+                                   '--input', 'issue=7', '--input', 'base=main', '--input', 'recovered=explicit')
+            self.assertEqual(0, planned.returncode, planned.stderr)
+            self.assertEqual('explicit', json.loads(planned.stdout)['execution']['steps'][0]['with']['value'])

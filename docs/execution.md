@@ -82,6 +82,13 @@ Commands without `output-schema` keep their existing streaming behavior. Old pla
 that restriction through native CLI controls or planning stops. Codex explicitly maps workspace `read-write`
 to `--sandbox workspace-write`, preserving the network restriction independently. `auto` delegates the choice to the executor.
 
+`application.mode` is determined only by the resolved step executor. A command or step with `executor: current`
+stays in `current` mode even when its policy is read-only, its network is disabled, or it has an output schema.
+Those controls are still present in the resolved application and apply to the interactive AI. A literal adapter
+executor creates `delegated` mode and is the only case in which `command execute` launches a non-interactive
+native CLI such as `claude -p`. This keeps deterministic current-AI helpers, including worklog recording,
+out of a separate LLM session.
+
 For Claude Code, read-only commands use non-interactive permission denial, disable editing tools and expose Bash
 through fixed wrappers. `.ai-evo/bin/ai-evo-git-read` offers argument-safe `status`, `diff`, `show`, `log`,
 `rev-parse`, `merge-base` and `ls-files` operations. This preserves branch and diff inspection without exposing

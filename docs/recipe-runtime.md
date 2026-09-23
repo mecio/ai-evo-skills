@@ -19,6 +19,25 @@ the planner expands them when reached through `uses` but rejects their name as a
 `skills/catalog/recipes/_steps` follow the same nested-only boundary and are flattened into the resolved plan.
 Neither internal collection is published to native client skill directories.
 
+## Input resolvers
+
+A directly invocable recipe can declare an `input-resolver` for deterministic, project-owned recovery of
+inputs before `recipe plan` applies required-input checks or defaults. The resolver names a command that
+declares exactly one project-script capability; the engine runs that capability's script and operation from
+the repository root, passing each mapped recipe input as `--kebab-case-option value`.
+
+```yaml
+input-resolver:
+  uses: acme-cmd-report-workflow
+  with:
+    issue: "${{ inputs.issue }}"
+```
+
+The resolver returns a JSON object with `recommended_recipe`, `resolved_inputs` and `missing_inputs`.
+The planned recipe must equal `recommended_recipe`. Explicit `--input` values win over `resolved_inputs`,
+which win over recipe defaults. If a name remains in `missing_inputs` and was not supplied explicitly,
+planning stops naming only those inputs. Resolver commands do not start an AI subprocess.
+
 ## How AIs exchange results
 
 The AI where a recipe is invoked remains its coordinator. A step's `executor` selects the AI that performs

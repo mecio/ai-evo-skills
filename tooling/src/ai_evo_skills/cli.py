@@ -61,6 +61,7 @@ class Context:
     registry: dict[str, Skill]
     profiles: dict[str, dict[str, Any]]
     adapters: dict[str, dict[str, Any]]
+    capabilities: dict[str, dict[str, Any]]
 
 
 def repo_root() -> Path:
@@ -536,6 +537,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                 adapters[data["id"]] = data
         except EvoError as exc:
             errors.append(str(exc))
+    capabilities: dict[str, dict[str, Any]] = {}
     capability_path = skills / "config/execution-capabilities.yaml"
     if capability_path.exists():
         try:
@@ -547,6 +549,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
                     if not name.startswith(namespace + "."):
                         errors.append(f"{capability_path}: capability {name} must use the project namespace")
                         continue
+                    capabilities[name] = definition
                     if "claude" not in adapters:
                         continue
                     mappings = adapters["claude"].setdefault("capability-translation", {})
@@ -593,7 +596,7 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
         if not path.is_file() or not re.fullmatch(fr"{namespace}-[a-z0-9]+(?:-[a-z0-9]+)*\.md", path.name):
             errors.append(f"{path}: project directive must use {namespace}-<kebab-case>.md")
 
-    context = Context(repo, engine, project, skills, config, registry, profiles, adapters)
+    context = Context(repo, engine, project, skills, config, registry, profiles, adapters, capabilities)
     errors += validate_recipes(context)
     errors += validate_recipe_executors(context)
     return context, errors
@@ -608,6 +611,30 @@ def validate_recipes(context: Context) -> list[str]:
             continue
         recipe, seen, prior = skill.recipe, set(), set()
         graph[skill.name] = []
+        resolver = recipe.get("input-resolver")
+        if isinstance(resolver, dict):
+            used = resolver.get("uses")
+            child = context.registry.get(used)
+            if not child:
+                errors.append(f"{skill.name}: input-resolver uses unknown command {used}")
+            elif child.kind != "command":
+                errors.append(f"{skill.name}: input-resolver {used} must be a command")
+            else:
+                supplied = resolver.get("with", {})
+                for name in sorted(set(supplied) - set(child.inputs)):
+                    errors.append(f"{skill.name}: input-resolver unknown command input {name}")
+                for name in child.inputs:
+                    if name not in supplied:
+                        errors.append(f"{skill.name}: input-resolver required command input {name} is not mapped")
+                capabilities = child.execution_policy.get("capabilities", [])
+                if len(capabilities) != 1:
+                    errors.append(f"{skill.name}: input-resolver {used} must declare exactly one project capability")
+                elif capabilities[0] not in context.capabilities:
+                    errors.append(f"{skill.name}: input-resolver {used} must use a project-script capability")
+                for name, value in supplied.items():
+                    variable = parse_variable(value)
+                    if not variable or variable[0] != "inputs" or variable[1] not in recipe["inputs"]:
+                        errors.append(f"{skill.name}: input-resolver.{name} must reference a recipe input")
         for step in recipe.get("steps", []):
             if not isinstance(step, dict):
                 continue
@@ -732,6 +759,18 @@ def validated_context(*, for_creation: bool = False) -> Context:
 
 
 def resolve_inputs(definitions: dict[str, Any], values: list[str]) -> dict[str, str]:
+    supplied = explicit_inputs(definitions, values)
+    for key, spec in definitions.items():
+        if key not in supplied:
+            if "default" in spec:
+                supplied[key] = spec["default"]
+            else:
+                raise EvoError(f"missing required input {key}")
+    return supplied
+
+
+def explicit_inputs(definitions: dict[str, Any], values: list[str]) -> dict[str, str]:
+    """Parse user input without applying defaults or required-input checks."""
     supplied: dict[str, str] = {}
     for token in values:
         if "=" not in token:
@@ -742,12 +781,6 @@ def resolve_inputs(definitions: dict[str, Any], values: list[str]) -> dict[str, 
         if key not in definitions:
             raise EvoError(f"unknown input {key}")
         supplied[key] = value
-    for key, spec in definitions.items():
-        if key not in supplied:
-            if "default" in spec:
-                supplied[key] = spec["default"]
-            else:
-                raise EvoError(f"missing required input {key}")
     return supplied
 
 
@@ -884,7 +917,7 @@ def command_application(
     output_contract = None
     if skill.output_schema is not None:
         output_contract = {"format": "json-" + skill.output_schema["type"], "schema": skill.output_schema}
-    delegated = executor != "current" or restrictive_policy or output_contract is not None
+    delegated = executor != "current"
     return {
         **({"output_contract": output_contract} if output_contract else {}),
         "executor": adapter_id,
@@ -1438,6 +1471,64 @@ def cmd_recipe_recover(args: argparse.Namespace) -> None:
     print(json.dumps(report, ensure_ascii=True, indent=2))
 
 
+def resolve_recipe_inputs(context: Context, root: Skill, explicit: dict[str, str]) -> dict[str, str]:
+    """Run a deterministic recipe resolver before defaults and required-input checks."""
+    assert root.recipe is not None
+    resolver = root.recipe.get("input-resolver")
+    resolved: dict[str, str] = {}
+    if isinstance(resolver, dict):
+        command = context.registry[resolver["uses"]]
+        capability_name = command.execution_policy["capabilities"][0]
+        capability = context.capabilities[capability_name]
+        arguments = [str(context.project / "scripts" / capability["script"]), capability["operation"]]
+        for name, reference in resolver["with"].items():
+            source = parse_variable(reference)
+            assert source is not None
+            source_name = source[1]
+            if source_name not in explicit:
+                continue
+            arguments.extend(["--" + name.replace("_", "-"), explicit[source_name]])
+        try:
+            invocation = subprocess.run(arguments, cwd=context.repo, text=True, capture_output=True, check=False)
+        except OSError as exc:
+            raise EvoError(f"input resolver {command.name} cannot start: {exc}") from exc
+        if invocation.returncode:
+            message = invocation.stderr.strip() or invocation.stdout.strip() or f"exit status {invocation.returncode}"
+            raise EvoError(f"input resolver {command.name} failed: {message}")
+        try:
+            report = json.loads(invocation.stdout)
+        except json.JSONDecodeError as exc:
+            raise EvoError(f"input resolver {command.name} returned invalid JSON: {exc}") from exc
+        if not isinstance(report, dict):
+            raise EvoError(f"input resolver {command.name} returned a non-object JSON value")
+        recommendation = report.get("recommended_recipe")
+        if recommendation != root.name:
+            reason = report.get("reason")
+            suffix = f": {reason}" if isinstance(reason, str) and reason else ""
+            raise EvoError(f"input resolver {command.name} recommends {recommendation!r}, not {root.name!r}{suffix}")
+        candidate = report.get("resolved_inputs")
+        missing = report.get("missing_inputs")
+        if not isinstance(candidate, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in candidate.items()):
+            raise EvoError(f"input resolver {command.name} returned invalid resolved_inputs")
+        if not isinstance(missing, list) or not all(isinstance(name, str) for name in missing):
+            raise EvoError(f"input resolver {command.name} returned invalid missing_inputs")
+        unknown = sorted((set(candidate) | set(missing)) - set(root.inputs))
+        if unknown:
+            raise EvoError(f"input resolver {command.name} returned unknown recipe inputs: {', '.join(unknown)}")
+        unresolved = [name for name in missing if name not in explicit]
+        if unresolved:
+            raise EvoError("missing required input " + ", ".join(unresolved))
+        resolved = candidate
+    supplied = {**resolved, **explicit}
+    for key, spec in root.inputs.items():
+        if key not in supplied:
+            if "default" in spec:
+                supplied[key] = spec["default"]
+            else:
+                raise EvoError(f"missing required input {key}")
+    return supplied
+
+
 def cmd_recipe_plan(args: argparse.Namespace) -> None:
     context = validated_context()
     if diagnostic := recipe_name_error(args.name, context.config["namespace"]):
@@ -1445,7 +1536,7 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
     root = context.registry.get(args.name)
     if not root or root.kind != "recipe" or root.internal:
         raise EvoError(f"unknown recipe {args.name}")
-    initial = resolve_inputs(root.inputs, args.input)
+    initial = resolve_recipe_inputs(context, root, explicit_inputs(root.inputs, args.input))
     plan: list[dict[str, Any]] = []
 
     def expand(
