@@ -28,7 +28,7 @@
       ],
       "properties": {
         "type": {
-          "const": "ai-evo-step-output"
+          "enum": ["ai-evo-step-output", "ai-evo-step-output-sha256"]
         },
         "step": {
           "type": "string",

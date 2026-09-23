@@ -28,7 +28,7 @@ PROTOCOL_VERSION = "1.0"
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SHORT_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 INPUT_VAR_RE = re.compile(r"^\$\{\{ inputs\.([a-z][a-z0-9_]*) \}\}$")
-STEP_VAR_RE = re.compile(r"^\$\{\{ steps\.([a-z][a-z0-9_]*)\.output \}\}$")
+STEP_VAR_RE = re.compile(r"^\$\{\{ steps\.([a-z][a-z0-9_]*)\.(output|output_sha256) \}\}$")
 ITEM_VAR_RE = re.compile(r"^\$\{\{ item \}\}$")
 SECTIONS = ["Purpose", "Interface", "Procedure", "Expected output", "Constraints", "Success criteria", "Examples"]
 STEP_OUTPUT_REFERENCE_TYPE = "ai-evo-step-output"
@@ -191,7 +191,7 @@ def parse_variable(value: Any) -> tuple[str, str] | None:
         return "inputs", match.group(1)
     match = STEP_VAR_RE.fullmatch(value)
     if match:
-        return "steps", match.group(1)
+        return ("steps" if match.group(2) == "output" else "steps_sha256"), match.group(1)
     if ITEM_VAR_RE.fullmatch(value):
         return "item", "item"
     return None
@@ -1296,7 +1296,12 @@ def resolve_value(value: str, inputs: dict[str, Any], outputs: dict[str, Any]) -
     variable = parse_variable(value)
     if not variable:
         return value
-    return inputs[variable[1]] if variable[0] == "inputs" else outputs[variable[1]]
+    if variable[0] == "inputs":
+        return inputs[variable[1]]
+    value = outputs[variable[1]]
+    if variable[0] == "steps_sha256":
+        return {"type": "ai-evo-step-output-sha256", "step": value["step"]}
+    return value
 
 
 def step_output_reference(step_id: str) -> dict[str, str]:

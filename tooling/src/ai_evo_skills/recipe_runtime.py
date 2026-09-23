@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 from functools import lru_cache
 from importlib.resources import files
 import json
@@ -105,7 +106,12 @@ def resolve_output(value: Any, outputs: dict[str, Any]) -> Any:
     sid = value['step']
     if sid not in outputs:
         raise ExecutionError(f'missing runtime output for step {sid}')
-    return outputs[sid]
+    output = outputs[sid]
+    if value.get('type') == 'ai-evo-step-output-sha256':
+        if not isinstance(output, str):
+            raise ExecutionError(f'cannot hash non-string runtime output for step {sid}')
+        return hashlib.sha256(output.encode('utf-8')).hexdigest()
+    return output
 
 
 def condition_matches(step: dict[str, Any], outputs: dict[str, Any]) -> bool:
