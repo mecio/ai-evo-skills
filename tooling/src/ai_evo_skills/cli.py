@@ -623,8 +623,8 @@ def validate_recipes(context: Context) -> list[str]:
                 supplied = resolver.get("with", {})
                 for name in sorted(set(supplied) - set(child.inputs)):
                     errors.append(f"{skill.name}: input-resolver unknown command input {name}")
-                for name in child.inputs:
-                    if name not in supplied:
+                for name, spec in child.inputs.items():
+                    if spec.get("required") is True and name not in supplied:
                         errors.append(f"{skill.name}: input-resolver required command input {name} is not mapped")
                 capabilities = child.execution_policy.get("capabilities", [])
                 if len(capabilities) != 1:
@@ -633,7 +633,7 @@ def validate_recipes(context: Context) -> list[str]:
                     errors.append(f"{skill.name}: input-resolver {used} must use a project-script capability")
                 for name, value in supplied.items():
                     variable = parse_variable(value)
-                    if not variable or variable[0] != "inputs" or variable[1] not in recipe["inputs"]:
+                    if variable and (variable[0] != "inputs" or variable[1] not in recipe["inputs"]):
                         errors.append(f"{skill.name}: input-resolver.{name} must reference a recipe input")
         for step in recipe.get("steps", []):
             if not isinstance(step, dict):
@@ -1536,11 +1536,10 @@ def resolve_recipe_inputs(context: Context, root: Skill, explicit: dict[str, str
         arguments = [str(context.project / "scripts" / capability["script"]), capability["operation"]]
         for name, reference in resolver["with"].items():
             source = parse_variable(reference)
-            assert source is not None
-            source_name = source[1]
-            if source_name not in explicit:
-                continue
-            arguments.extend(["--" + name.replace("_", "-"), explicit[source_name]])
+            if source is None:
+                arguments.extend(["--" + name.replace("_", "-"), reference])
+            elif source[1] in explicit:
+                arguments.extend(["--" + name.replace("_", "-"), explicit[source[1]]])
         try:
             invocation = subprocess.run(arguments, cwd=context.repo, text=True, capture_output=True, check=False)
         except OSError as exc:

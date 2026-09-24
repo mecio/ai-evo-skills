@@ -21,7 +21,7 @@
           "propertyNames": { "$ref": "#/$defs/identifier" },
           "additionalProperties": {
             "type": "string",
-            "pattern": "^\\$\\{\\{ inputs\\.[a-z][a-z0-9_]* \\}\\}$"
+            "minLength": 1
           }
         }
       }

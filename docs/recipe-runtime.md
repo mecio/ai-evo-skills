@@ -24,13 +24,17 @@ Neither internal collection is published to native client skill directories.
 A directly invocable recipe can declare an `input-resolver` for deterministic, project-owned recovery of
 inputs before `recipe plan` applies required-input checks or defaults. The resolver names a command that
 declares exactly one project-script capability; the engine runs that capability's script and operation from
-the repository root, passing each mapped recipe input as `--kebab-case-option value`.
+the repository root, passing each mapped recipe input as `--kebab-case-option value`. A `with` value can also
+be a non-empty literal, which is passed unchanged; use it for recipe-owned constants such as the name of the
+recipe being planned. References to inputs still receive only explicit values, because the resolver precedes
+defaults.
 
 ```yaml
 input-resolver:
   uses: acme-cmd-report-workflow
   with:
     issue: "${{ inputs.issue }}"
+    requested_recipe: "acme-recipe-example"
 ```
 
 The resolver returns a JSON object with `recommended_recipe`, `resolved_inputs` and `missing_inputs`.
