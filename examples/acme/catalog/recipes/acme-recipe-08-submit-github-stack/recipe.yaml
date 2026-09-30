@@ -1,0 +1,19 @@
+version: "1.0"
+name: acme-recipe-08-submit-github-stack
+inputs:
+  context:
+    description: Complete approved context for this phase.
+    required: true
+steps:
+  - id: perform
+    uses: acme-cmd-submit-github-stack
+    with:
+      context: "${{ inputs.context }}"
+  - id: save_result
+    uses: acme-cmd-save-worklog-output
+    with:
+      context: "${{ steps.perform.output }}"
+outputs:
+  result:
+    value: "${{ steps.save_result.output }}"
+*** Delete File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-reviewed-change/SKILL.md

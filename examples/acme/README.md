@@ -1,22 +1,22 @@
 # Acme starter catalog
 
-A complete boilerplate with three commands and two recipes. Copy it into an initialized project to try
-shared prompts, input defaults, a direct recipe and an advanced conditional recipe. All skills use the `acme`
-namespace and work with either bundled adapter. `init` does not install this catalog automatically.
+A complete boilerplate with generic GitHub-delivery commands and nine direct workflow recipes. All skills use
+the `acme` namespace; `init` does not install this catalog automatically.
+
+For a production GitHub delivery flow, use the [Acme GitHub issue workflow](github-issue-workflow.md). It adds
+the generic commands and direct recipes for phases 00–08, based on the same design/analyze/breakdown/implement/
+review/verify/publish sequence, without binding a recipe to a particular AI.
 
 ## What is included?
 
 | Artifact | Purpose |
 |---|---|
-| [acme-cmd-detect-changes](catalog/commands/acme-cmd-detect-changes/SKILL.md) | Compare tracked working-tree content with a local Git target; return `changed` or `clean`. |
-| [acme-cmd-review](catalog/commands/acme-cmd-review/SKILL.md) | Review the diff using a requested focus and report findings with evidence. |
-| [acme-cmd-report-review](catalog/commands/acme-cmd-report-review/SKILL.md) | Summarize a supplied review, preserving findings, limits and skipped status. |
-| [acme-recipe-reviewed-change](catalog/recipes/acme-recipe-reviewed-change/recipe.yaml) | Direct review followed by reporting. |
-| [acme-recipe-review-security-if-changed](catalog/recipes/acme-recipe-review-security-if-changed/recipe.yaml) | Advanced conditional security review. |
+| `acme-cmd-<phase>` | Generic design, issue, analysis, breakdown, implementation, review, verification and publication operations. |
+| `acme-cmd-save-worklog-output` | Persists the output consumed by the next phase. |
+| `acme-recipe-00`–`acme-recipe-08` | Direct phases from issue design through stack publication and draft PR submission. |
 
 The internal step is not published as a directly invocable skill; `command plan` rejects direct calls.
-Its helper needs Python 3.11+. It runs directly under the coordinator's permissions using `executor: current`,
-with temporary-file writes only. It grants no additional permissions to a delegated client.
+Its helper needs Python 3.11+ and runs under the coordinator's permissions with temporary-file writes only.
 
 Both recipes reuse the same review and reporting commands. Each recipe directory also contains a complete
 `SKILL.md` with the coordinator procedure. The catalog has no draft placeholders.
