@@ -1,5 +1,8 @@
 version: "1.0"
 name: acme-recipe-07-push-github-stack
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-07-push-github-stack" }
 inputs:
   issue: { required: true, description: "Numero o URL della issue principale o dell'epic proprietario dello stack." }
   verification_report: { required: true, description: "Report `verified` della recipe 05 oppure `accepted` della recipe 06." }

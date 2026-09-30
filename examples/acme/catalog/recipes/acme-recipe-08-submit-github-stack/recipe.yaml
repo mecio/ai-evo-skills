@@ -1,5 +1,8 @@
 version: "1.0"
 name: acme-recipe-08-submit-github-stack
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-08-submit-github-stack" }
 inputs:
   issue: { required: true, description: "Numero o URL della issue principale o dell'epic proprietario dello stack." }
   publication_report: { required: true, description: "Rapporto conclusivo della recipe 07." }

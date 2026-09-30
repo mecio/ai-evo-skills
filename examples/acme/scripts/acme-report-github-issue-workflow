@@ -207,6 +207,29 @@ def report_input(session: dict[str, Any], name: str) -> str | None:
     return value.get(name) if isinstance(value, dict) and isinstance(value.get(name), str) else None
 
 
+def verification_from_lineage(current: dict[str, Any], workflow: list[dict[str, Any]]) -> str | None:
+    """Find the immutable 05/06 verification behind a publication session."""
+    by_name = {item["session"].get("session_name"): item for item in workflow
+               if isinstance(item["session"].get("session_name"), str)}
+    candidate = current
+    seen: set[str] = set()
+    while candidate:
+        name = candidate["session"].get("session_name")
+        if not isinstance(name, str) or name in seen:
+            return None
+        seen.add(name)
+        session_input = candidate["session"].get("session_input")
+        previous = session_input.get("previous_session") if isinstance(session_input, dict) else None
+        candidate = by_name.get(previous) if isinstance(previous, str) else None
+        if candidate is None:
+            return None
+        step = "verify_layer" if candidate["phase"] == "05" else "verify_epic" if candidate["phase"] == "06" else None
+        verification = successful_step_output(candidate, step) if step else None
+        if verification is not None:
+            return json.dumps(verification, ensure_ascii=False, sort_keys=True)
+    return None
+
+
 def review_state(workspace: Path, verification: dict[str, Any]) -> tuple[str, str, str, list[str]]:
     commit, state = verification.get("commit"), verification.get("stack_state")
     if not isinstance(commit, dict) or not isinstance(state, dict):
@@ -690,6 +713,23 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
     if not isinstance(layers, list) or len(layers) < 2:
         return blocked(issue, breakdown_session, "La scomposizione stacked non contiene almeno due layer validi.")
     ordered = sorted((item for item in layers if isinstance(item, dict)), key=lambda item: item.get("sequence", -1))
+    publication_sessions = [item for item in workflow if item["layer_id"] is None and item["phase"] in {"07", "08"}]
+    if publication_sessions:
+        publication_current = max(publication_sessions, key=lambda item: (item["phase"], item["phase_attempt"]))
+        if publication_current["session"].get("status") != "completed":
+            return blocked(issue, publication_current, "La pubblicazione o il submit dello stack è attivo: recuperare prima la stessa sessione.")
+        if publication_current["phase"] == "08":
+            return {
+                "schema_version": 1, "status": "workflow-completed", "issue": issue,
+                "current_session": publication_current["session"]["session_name"],
+                "recommended_recipe": None, "worklog_session_name": None,
+                "resolved_inputs": {}, "missing_inputs": [], "suggested_invocation": None,
+                "reason": "Il submit dello stack è concluso.",
+            }
+        publication = successful_step_output(publication_current, "configure_upstreams")
+        verification = verification_from_lineage(publication_current, workflow) or report_input(publication_current, "verification_report")
+        return propose_submit(issue, publication_current, publication, verification) if publication and verification else blocked(
+            issue, publication_current, "Mancano publication_report o verification_report della recipe 07.")
     analysis = next((item["session"].get("session_name") for item in workflow
                      if item["phase"] == "02" and item["layer_id"] is None and item["session"].get("status") == "completed"), None)
     for layer in ordered:
@@ -878,7 +918,7 @@ def report_completed(issue: int, current: dict[str, Any], workflow: list[dict[st
         return propose_push(issue, current, verification) if verification else blocked(issue, current, "Manca l'output accepted della recipe 06.")
     if phase == "07":
         publication = successful_step_output(current, "configure_upstreams")
-        verification = report_input(current, "verification_report")
+        verification = verification_from_lineage(current, workflow) or report_input(current, "verification_report")
         return propose_submit(issue, current, publication, verification) if publication and verification else blocked(issue, current, "Mancano publication_report o verification_report della recipe 07.")
     if phase == "08":
         return {
