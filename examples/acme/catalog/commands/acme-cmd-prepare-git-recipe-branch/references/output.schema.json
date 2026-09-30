@@ -2,14 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "branch", "branch_type", "remote", "upstream", "action", "oid"],
+  "required": ["status", "branch", "remote", "upstream", "action", "oid"],
   "properties": {
     "status": {"const": "prepared"},
     "branch": {"type": "string", "minLength": 1},
-    "branch_type": {"enum": ["standard", "stacked"]},
     "remote": {"type": "string", "minLength": 1},
     "upstream": {"type": "string", "minLength": 1},
-    "action": {"enum": ["local", "tracking-created", "stack-checked-out"]},
+    "action": {"enum": ["stack-checked-out", "stack-reconstructed"]},
     "oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
   }
 }

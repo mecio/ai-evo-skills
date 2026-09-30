@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safely restore one recipe branch from the configured remote."""
+"""Restore a recipe branch and reconstruct a published gh stack from its worklog when needed."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from lib.acme_script_common import fail, git, git_text, load_simple_yaml, write_json
+from lib.acme_worklog_recovery import order_layers, published_layers, registered_branch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,11 +18,50 @@ BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
 
 
-def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+def run(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     completed = subprocess.run(arguments, env=ENV, capture_output=True, text=True, check=False)
-    if completed.returncode:
+    if check and completed.returncode:
         fail(completed.stderr.strip() or completed.stdout.strip() or f"command failed: {arguments[0]}")
     return completed
+
+
+def checked_branch(value: object, field: str = "branch") -> str:
+    if not isinstance(value, str) or not value or value.startswith("-"):
+        fail(f"{field} is invalid")
+    git("check-ref-format", "--branch", value)
+    return value
+
+
+def parse_request(raw: str) -> tuple[int, str, str]:
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(request, dict) or set(request) - {"issue", "worklog_session", "branch"}:
+        fail("request fields do not match the operation contract")
+    issue = request.get("issue")
+    if isinstance(issue, str) and issue.isdigit():
+        issue = int(issue)
+    if type(issue) is not int or issue < 1:
+        fail("issue must be a positive integer")
+    session = request.get("worklog_session", "")
+    if not isinstance(session, str):
+        fail("worklog_session is invalid")
+    branch = request.get("branch", "")
+    return issue, session, checked_branch(branch) if branch else ""
+
+
+def clean_worktree() -> None:
+    if git("status", "--porcelain=v1", "-z").stdout:
+        fail("worktree must be clean")
+
+
+def configured_remote() -> str:
+    remote = load_simple_yaml(BRANCH_CONFIG).get("stack_remote")
+    if not isinstance(remote, str) or not remote or remote.startswith("-"):
+        fail("stack_remote is missing from branch configuration")
+    git("remote", "get-url", remote)
+    return remote
 
 
 def local_branch_exists(branch: str) -> bool:
@@ -32,52 +72,52 @@ def remote_branch_exists(remote: str, branch: str) -> bool:
     return git("show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}", check=False).returncode == 0
 
 
-def checked_branch(value: object) -> str:
-    if not isinstance(value, str) or not value or value.startswith("-"):
-        fail("branch is invalid")
-    git("check-ref-format", "--branch", value)
-    return value
+def ancestor(older: str, newer: str) -> bool:
+    return git("merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
-def parse_request(raw: str) -> tuple[str, str]:
-    try:
-        request = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        fail(f"request is not valid JSON: {exc}")
-    if not isinstance(request, dict) or set(request) != {"branch", "branch_type"}:
-        fail("request fields do not match the operation contract")
-    branch = checked_branch(request["branch"])
-    branch_type = request["branch_type"]
-    if branch_type not in {"standard", "stacked"}:
-        fail("branch_type must be standard or stacked")
-    return branch, branch_type
+def verify_published_chain(remote: str, trunk: str, layers: list[dict[str, str]]) -> None:
+    if not local_branch_exists(trunk):
+        fail(f"local trunk branch does not exist: {trunk}")
+    for layer in layers:
+        branch = checked_branch(layer["branch"])
+        parent = checked_branch(layer["parent_branch"], "parent_branch")
+        if layer["remote"] != remote:
+            fail(f"worklog remote for {branch} is {layer['remote']}, expected {remote}")
+        if not remote_branch_exists(remote, branch):
+            fail(f"published remote branch does not exist: {remote}/{branch}")
+        remote_ref = f"refs/remotes/{remote}/{branch}"
+        if not ancestor(layer["remote_oid"], remote_ref):
+            fail(f"remote branch was rewritten or no longer contains the published OID: {branch}")
+        parent_ref = f"refs/remotes/{remote}/{parent}" if remote_branch_exists(remote, parent) else f"refs/heads/{parent}"
+        if not ancestor(parent_ref, remote_ref):
+            fail(f"published stack is not linear: {parent} is not an ancestor of {branch}")
+        if local_branch_exists(branch):
+            local_ref = f"refs/heads/{branch}"
+            if not ancestor(local_ref, remote_ref):
+                fail(f"local branch diverges from the published remote branch: {branch}")
+            upstream = git_text("for-each-ref", "--format=%(upstream:short)", local_ref)
+            expected = f"{remote}/{branch}"
+            if upstream and upstream != expected:
+                fail(f"branch upstream is {upstream}, expected {expected}")
 
 
-def clean_worktree() -> None:
-    if git("status", "--porcelain=v1", "-z").stdout:
-        fail("worktree must be clean")
-
-
-def configured_remote() -> str:
-    configuration = load_simple_yaml(BRANCH_CONFIG)
-    remote = configuration.get("stack_remote")
-    if not isinstance(remote, str) or not remote or remote.startswith("-"):
-        fail("stack_remote is missing from branch configuration")
-    git("remote", "get-url", remote)
-    return remote
-
-
-def switch_standard(branch: str, remote: str) -> str:
+def materialize_branch(remote: str, branch: str) -> None:
+    remote_ref = f"refs/remotes/{remote}/{branch}"
     if local_branch_exists(branch):
-        run("git", "switch", branch)
-        return "local"
-    if not remote_branch_exists(remote, branch):
-        fail(f"remote branch does not exist: {remote}/{branch}")
-    run("git", "switch", "--track", "-c", branch, f"{remote}/{branch}")
-    return "tracking-created"
+        old = git_text("rev-parse", f"refs/heads/{branch}")
+        new = git_text("rev-parse", remote_ref)
+        if old != new:
+            run("git", "update-ref", f"refs/heads/{branch}", new, old)
+        return
+    run("git", "branch", "--track", branch, remote_ref)
 
 
-def upstream_for(branch: str, remote: str) -> str:
+def tracked_checkout(branch: str) -> bool:
+    return run("gh", "stack", "checkout", branch, check=False).returncode == 0
+
+
+def require_upstream(branch: str, remote: str) -> str:
     upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{branch}")
     expected = f"{remote}/{branch}"
     if upstream != expected:
@@ -91,29 +131,38 @@ def main() -> int:
     root = Path(git_text("rev-parse", "--show-toplevel")).resolve()
     if Path.cwd().resolve() != root:
         fail("run from the application Git root")
-    branch, branch_type = parse_request(sys.argv[2])
+    issue, session, expected_branch = parse_request(sys.argv[2])
     clean_worktree()
     remote = configured_remote()
     run("git", "fetch", "--prune", remote)
-    if branch_type == "stacked":
-        run("gh", "stack", "checkout", branch)
-        action = "stack-checked-out"
+    layers = published_layers(root, issue, session)
+    fallback_branch = expected_branch or registered_branch(root, issue, session)
+    if layers:
+        trunk, ordered = order_layers(layers, expected_branch)
+        target = ordered[-1]["branch"]
+        verify_published_chain(remote, trunk, ordered)
+        if tracked_checkout(target):
+            action = "stack-checked-out"
+        else:
+            run("git", "switch", trunk)
+            for layer in ordered:
+                materialize_branch(remote, layer["branch"])
+            run("gh", "stack", "init", "--base", trunk, *(layer["branch"] for layer in ordered))
+            run("git", "switch", target)
+            action = "stack-reconstructed"
     else:
-        action = switch_standard(branch, remote)
+        if not fallback_branch:
+            fail("worklog has no published branch and no registered branch for stack checkout")
+        run("gh", "stack", "checkout", fallback_branch)
+        target = fallback_branch
+        action = "stack-checked-out"
     current = git_text("symbolic-ref", "--quiet", "--short", "HEAD")
-    if current != branch:
-        fail(f"current branch is {current or 'detached'}, expected {branch}")
-    upstream = upstream_for(branch, remote)
+    if current != target:
+        fail(f"current branch is {current or 'detached'}, expected {target}")
+    upstream = require_upstream(target, remote)
     run("git", "pull", "--ff-only")
-    write_json({
-        "status": "prepared",
-        "branch": branch,
-        "branch_type": branch_type,
-        "remote": remote,
-        "upstream": upstream,
-        "action": action,
-        "oid": git_text("rev-parse", "HEAD"),
-    })
+    write_json({"status": "prepared", "branch": target, "remote": remote, "upstream": upstream,
+                "action": action, "oid": git_text("rev-parse", "HEAD")})
     return 0
 
 

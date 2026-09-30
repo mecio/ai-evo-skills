@@ -24,31 +24,35 @@ execution-policy:
   capabilities: [acme.git-prepare-recipe-branch]
   deny-capabilities: [git.remote-write, github.remote-write]
 inputs:
-  branch: { required: true, description: "Nome letterale del branch già registrato dalla recipe." }
-  branch_type: { required: true, description: "`standard` per un branch Git ordinario, `stacked` per un layer gh stack." }
+  issue: { required: true, description: "Numero della issue il cui attempt più recente contiene il checkpoint publish_branch." }
+  worklog_session: { default: "", description: "Sessione di worklog da usare al posto dell'attempt più recente." }
+  branch: { default: "", description: "Controllo facoltativo: se valorizzato deve coincidere con il branch pubblicato nel worklog." }
 ```
 
 ## Procedure
 
-1. Ricavare `branch` e `branch_type` dal checkpoint o dagli input immutabili della recipe; non dedurre il branch
-   dal branch corrente. Il tipo `stacked` è obbligatorio per un layer di uno stack.
+1. Leggere dal worklog dell'`issue` i checkpoint `publish_branch` riusciti dell'attempt più recente; se presente,
+   `worklog_session` limita la lettura a quella sessione. Un `branch` esplicito è solo un controllo e deve
+   coincidere con il tipo dello stack registrato.
 2. Dalla root applicativa eseguire `.ai-evo-prj/scripts/acme-git-recipe-branch prepare '<JSON>'`, passando un unico JSON
-   con `branch` e `branch_type` come dato quotato. L'helper richiede una worktree pulita, legge `stack_remote`
-   dalla configurazione, aggiorna i ref remoti e verifica il ref atteso.
-3. Per `standard`, l'helper seleziona il branch locale oppure crea la tracking checkout dal ref remoto. Per
-   `stacked`, esegue `gh stack checkout <branch>` per recuperare o selezionare l'intero stack. In entrambi i casi
-   verifica l'upstream omonimo sul remote configurato ed esegue soltanto `git pull --ff-only`.
-4. Restituire il JSON invariato dell'helper. Al primo errore conservare la diagnostica e non eseguire checkout
+   con `issue`, `worklog_session` e `branch` come dato quotato. L'helper richiede una worktree pulita, legge
+   `stack_remote` dalla configurazione, aggiorna i ref remoti e verifica ogni OID pubblicato.
+3. Se lo stack è già tracciato, esegue `gh stack checkout <branch>`. Altrimenti verifica che ogni ref remoto
+   contenga il rispettivo `remote_oid`, ricostruisce la catena trunk→layer dal campo `parent_branch`, crea i soli
+   tracking branch mancanti e usa `gh stack init --base <trunk> <layer...>` per adottarli. Se non esiste alcun
+   checkpoint pubblicato, usa `gh stack checkout` per il caso di stack già pubblicato tramite PR.
+4. Verifica l'upstream omonimo sul remote configurato ed esegue soltanto `git pull --ff-only`. Restituire il JSON
+   invariato dell'helper. Al primo errore conservare la diagnostica e non eseguire checkout
    alternativi, merge, rebase, `gh stack sync`, push o modifiche del worklog.
 
 ## Expected output
 
-Un JSON conforme a [references/output.schema.json](references/output.schema.json), con branch, tipo, remote,
-upstream, azione eseguita e OID aggiornato.
+Un JSON conforme a [references/output.schema.json](references/output.schema.json), con branch, remote, upstream,
+azione eseguita e OID aggiornato.
 
 ## Constraints
 
-- Il branch deve essere già registrato dalla recipe e presente sul remote configurato.
+- La fonte di verità è il worklog: non cercare branch per convenzione di nome né dedurli da `HEAD`.
 - Richiede worktree pulita e non crea commit, branch alternativi, pull request o scritture remote.
 - `gh stack sync` è vietato: può eseguire rebase e push dello stack.
 
@@ -60,6 +64,6 @@ fast-forward sicuro.
 ## Examples
 
 ```text
-$acme-cmd-prepare-git-recipe-branch branch="feature/0.0_#123_example" branch_type="standard"
-$acme-cmd-prepare-git-recipe-branch branch="feature/0.0_#123_example/01_work_item" branch_type="stacked"
+$acme-cmd-prepare-git-recipe-branch issue="123"
+$acme-cmd-prepare-git-recipe-branch issue="123" branch="feature/0.0_#123_example/00_work_item"
 ```

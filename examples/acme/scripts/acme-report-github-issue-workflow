@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from acme_worklog_paths import layer_session_name
+from lib.acme_worklog_recovery import registered_branch
 
 
 SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
@@ -591,7 +592,7 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
             stack, problem, warnings = implementation_stack_layer(workspace, issue, branch)
             if problem and not local_branch_exists(workspace, branch):
                 return branch_recovery_required(
-                    issue, implementation, branch,
+                    issue, implementation, workspace, branch,
                     with_stack_warnings(problem, recovery_warnings + warnings),
                 )
             if problem:
@@ -710,7 +711,7 @@ def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk
         if problem:
             branch = recorded_branch(current)
             if branch and not local_branch_exists(workspace, branch):
-                return branch_recovery_required(issue, current, branch, with_stack_warnings(problem, warnings))
+                return branch_recovery_required(issue, current, workspace, branch, with_stack_warnings(problem, warnings))
             return blocked(issue, current, with_stack_warnings(problem, warnings))
         assert layer is not None
         name = next_session(issue, workflow_attempt, "05", "review")
@@ -813,12 +814,10 @@ def blocked(issue: int, current: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
-def branch_recovery_required(issue: int, current: dict[str, Any], branch: str, reason: str) -> dict[str, Any]:
+def branch_recovery_required(issue: int, current: dict[str, Any], workspace: Path, branch: str, reason: str) -> dict[str, Any]:
     """Request explicit branch recovery without mutating Git during this report."""
-    invocation = (
-        "$acme-cmd-prepare-git-recipe-branch "
-        f"branch={json.dumps(branch, ensure_ascii=False)} branch_type=\"stacked\""
-    )
+    branch = registered_branch(workspace, issue) or branch
+    invocation = f"$acme-cmd-prepare-git-recipe-branch issue={json.dumps(str(issue))}"
     return {
         "schema_version": 1,
         "status": "branch-recovery-required",
@@ -826,7 +825,7 @@ def branch_recovery_required(issue: int, current: dict[str, Any], branch: str, r
         "current_session": current["session"]["session_name"],
         "recommended_recipe": None,
         "worklog_session_name": None,
-        "resolved_inputs": {"branch": branch, "branch_type": "stacked"},
+        "resolved_inputs": {"issue": str(issue), "branch": branch},
         "missing_inputs": [],
         "suggested_invocation": invocation,
         "reason": (
