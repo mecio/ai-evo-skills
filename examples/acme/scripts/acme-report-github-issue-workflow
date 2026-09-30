@@ -439,6 +439,13 @@ def current_branch(workspace: Path) -> str | None:
     return branch if result.returncode == 0 and branch else None
 
 
+def local_branch_exists(workspace: Path, branch: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(workspace), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0
+
+
 def correction_recommendation(issue: int, source: dict[str, Any], workspace: Path,
                               correction_instructions: str, layer: dict[str, Any] | None = None) -> dict[str, Any]:
     """Resolve an independent correction only from a successful 04 checkpoint."""
@@ -582,6 +589,11 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
             if problem or not branch:
                 return blocked(issue, implementation, with_stack_warnings(problem or "Il branch del layer non è risolvibile.", recovery_warnings))
             stack, problem, warnings = implementation_stack_layer(workspace, issue, branch)
+            if problem and not local_branch_exists(workspace, branch):
+                return branch_recovery_required(
+                    issue, implementation, branch,
+                    with_stack_warnings(problem, recovery_warnings + warnings),
+                )
             if problem:
                 return blocked(issue, implementation, with_stack_warnings(problem, recovery_warnings + warnings))
             assert stack is not None
@@ -696,6 +708,9 @@ def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk
     if phase == "04":
         layer, problem, warnings = implementation_stack_layer(workspace, issue)
         if problem:
+            branch = recorded_branch(current)
+            if branch and not local_branch_exists(workspace, branch):
+                return branch_recovery_required(issue, current, branch, with_stack_warnings(problem, warnings))
             return blocked(issue, current, with_stack_warnings(problem, warnings))
         assert layer is not None
         name = next_session(issue, workflow_attempt, "05", "review")
@@ -795,6 +810,29 @@ def blocked(issue: int, current: dict[str, Any], reason: str) -> dict[str, Any]:
         "missing_inputs": [],
         "suggested_invocation": None,
         "reason": reason,
+    }
+
+
+def branch_recovery_required(issue: int, current: dict[str, Any], branch: str, reason: str) -> dict[str, Any]:
+    """Request explicit branch recovery without mutating Git during this report."""
+    invocation = (
+        "$acme-cmd-prepare-git-recipe-branch "
+        f"branch={json.dumps(branch, ensure_ascii=False)} branch_type=\"stacked\""
+    )
+    return {
+        "schema_version": 1,
+        "status": "branch-recovery-required",
+        "issue": issue,
+        "current_session": current["session"]["session_name"],
+        "recommended_recipe": None,
+        "worklog_session_name": None,
+        "resolved_inputs": {"branch": branch, "branch_type": "stacked"},
+        "missing_inputs": [],
+        "suggested_invocation": invocation,
+        "reason": (
+            "Il branch registrato dalla recipe non è disponibile in uno stack locale coerente. "
+            f"Eseguire il comando di recupero e poi rilanciare il report. Dettaglio: {reason}"
+        ),
     }
 
 

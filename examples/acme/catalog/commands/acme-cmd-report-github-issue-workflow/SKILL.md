@@ -56,9 +56,11 @@ Quando è richiesta la recipe di correzione 04, riconosce solo un checkpoint loc
 `publish_branch`; restituisce una sessione `04-correction`, coordinate e output immutabile della 04. Le
 `correction_instructions` esplicite restano l'unico input non deducibile.
 
-Se `status` è `input-required`, chiedi soltanto i campi elencati in `missing_inputs`; se è
-`manual-assessment-required`, non inventare il passo successivo. Non avviare la recipe suggerita: il comando
-orienta, mentre l'avvio resta una decisione esplicita dello sviluppatore.
+Se `status` è `input-required`, chiedi soltanto i campi elencati in `missing_inputs`. Se è
+`branch-recovery-required`, esegui la `suggested_invocation` di `acme-cmd-prepare-git-recipe-branch` e rilancia il
+report: il comando resta offline e non modifica da solo la checkout. Se è `manual-assessment-required`, non
+inventare il passo successivo. Non avviare la recipe suggerita: il comando orienta, mentre l'avvio resta una
+decisione esplicita dello sviluppatore.
 
 ## Expected output
 
