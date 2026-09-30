@@ -1,34 +1,16 @@
 # Acme starter catalog
 
-A complete boilerplate with generic GitHub-delivery commands and nine direct workflow recipes. All skills use
-the `acme` namespace; `init` does not install this catalog automatically.
+This is a copyable starter catalog for a new project that tracks work in GitHub. It uses the placeholder
+namespace `acme`; replace it consistently if the project has another namespace. Recipes use the AI that
+invokes them. No recipe name or YAML field selects a specific AI.
 
-For a production GitHub delivery flow, use the [Acme GitHub issue workflow](github-issue-workflow.md). It adds
-the generic commands and direct recipes for phases 00–08, based on the same design/analyze/breakdown/implement/
-review/verify/publish sequence, without binding a recipe to a particular AI.
+## Start a new project
 
-## What is included?
-
-| Artifact | Purpose |
-|---|---|
-| `acme-cmd-<phase>` | Generic design, issue, analysis, breakdown, implementation, review, verification and publication operations. |
-| `acme-cmd-save-worklog-output` | Persists the output consumed by the next phase. |
-| `acme-recipe-00`–`acme-recipe-08` | Direct phases from issue design through stack publication and draft PR submission. |
-
-The internal step is not published as a directly invocable skill; `command plan` rejects direct calls.
-Its helper needs Python 3.11+ and runs under the coordinator's permissions with temporary-file writes only.
-
-Both recipes reuse the same review and reporting commands. Each recipe directory also contains a complete
-`SKILL.md` with the coordinator procedure. The catalog has no draft placeholders.
-
-## Copy into a project
-
-Use an engine checkout that contains this example and supports conditional recipes with `normalize: trim`.
-Follow the [installation guide](../../docs/first-skill.md#install-and-initialize), initializing with namespace
-`acme` and at least one of `codex` or `claude`. Run the following from that application repository, using a
-fresh catalog with none of these six names already present:
+Run these commands from the root of the application repository. The engine checkout is assumed to be linked
+as `.ai-evo`.
 
 ```bash
+./.ai-evo/bin/ai-evo-skills init --namespace acme --adapter <your-adapter>
 cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
 cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
 ./.ai-evo/bin/ai-evo-skills validate
@@ -36,77 +18,49 @@ cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes
 ./.ai-evo/bin/ai-evo-skills sync
 ```
 
-If you already created `acme-cmd-review` from the tutorial, choose which implementation to keep before copying;
-the copy commands overwrite matching files. This boilerplate gives `target` a `HEAD` default so the recipes
-and review command can be invoked without arguments. It reuses the default effort profile created by `init`.
+Replace `<your-adapter>` with an enabled adapter identifier. If the project already has a catalog, inspect
+name collisions before copying: the commands intentionally overwrite matching files. Run `validate` after
+every catalog edit and run `sync` again to publish the new skills to the configured client.
 
-For another namespace, replace `acme-` consistently in directory names, frontmatter, planner instructions,
-recipe names, `uses` references and invocation examples before validation. See the
-[authoring guide](../../docs/authoring.md) for naming and input contracts.
+## What the catalog contains
 
-## Try it
+The workflow has nine direct recipes. Each ends with a saved result that the developer reviews before starting
+the next phase.
 
-Open your AI client in the application repository. In Codex:
-
-```text
-$acme-cmd-review
-$acme-recipe-reviewed-change
-$acme-recipe-review-security-if-changed
-```
-
-In Claude Code, replace the leading `$` with `/`. Each line is a separate invocation. Native AI execution
-requires an authenticated CLI and makes model requests.
-
-The ordinary recipe defaults to `target=HEAD` and `focus=correctness`; both can be overridden:
-
-```text
-$acme-recipe-reviewed-change target=main focus=security
-```
-
-The conditional recipe exposes only `target`, defaulting to `HEAD`. It fixes `focus: security` internally,
-as communicated by its name. To compare against another existing local ref:
-
-```text
-$acme-recipe-review-security-if-changed target=main
-```
-
-## How the condition behaves
-
-| Detector outcome | Review step | Report step |
+| Phase | Recipe | Outcome |
 |---|---|---|
-| `changed` | Runs with `focus: security`. | Summarizes the review and its limits. |
-| `clean` | Skipped by `recipe advance`. | Explains that no review ran because the tracked diff was empty. |
-| Inspection failure or invalid token | Workflow stops. | Does not run. |
+| 00 | `acme-recipe-00-design-github-issue` | Approved issue design. |
+| 01 | `acme-recipe-01-refine-github-issue` | Refined issue requirements. |
+| 02 | `acme-recipe-02-analyze-github-issue-code` | Evidence-backed implementation analysis. |
+| 03 | `acme-recipe-03-breakdown-github-issue` | Single-item, stacked, or epic work map. |
+| 04 | `acme-recipe-04-implement-github-issue` | Implemented work item and local evidence. |
+| 05 | `acme-recipe-05-review-github-issue` | Review findings and verification result. |
+| 06 | `acme-recipe-06-verify-github-epic-stack` | Epic-level dependency and completion evidence. |
+| 07 | `acme-recipe-07-push-github-stack` | Authorized publication report. |
+| 08 | `acme-recipe-08-submit-github-stack` | Authorized draft pull-request report. |
 
-`normalize: trim` permits outer whitespace such as `changed\n`; successful detector output is otherwise
-limited to `changed` or `clean`. The recipe's coordinator instructions require invalid tokens to be recorded
-as failures. The core then evaluates `when` and passes a skipped review to the report command as JSON text
-with `type: ai-evo-step-skipped`. The report must not describe skipped work as a passed review.
+Commands remain directly invocable when a developer needs only one operation. The shared
+`acme-cmd-github-workflow-phase` supplies the generic phase contract; [github-issue-workflow.md](github-issue-workflow.md)
+lists the project-specific command names to split out as the catalog grows.
 
-The comparison uses tracked working-tree content against the chosen target. Untracked files and submodules
-are outside its scope. With `HEAD`, a clean tracked diff skips the conditional review; a tracked edit enables
-it. A missing target, including `HEAD` in a repository without commits, is an inspection failure.
+## First use
 
-Commands request read-only workspace access and disabled network access. The detector and review use the
-bundled Git read wrapper; reporting consumes the prior output without repeating inspection. Keep the worktree
-stable during a run so detection and review see the same changes. This example demonstrates conditional AI
-orchestration; the prompts and reports remain tasks performed by the AI.
+Start with phase 00 and describe the problem. After approving its result, pass the saved artifact or its
+relevant context to phase 02. Do not skip to implementation before the issue and analysis are approved.
 
-For the full condition and journal semantics, see the [recipe runtime guide](../../docs/recipe-runtime.md).
+```text
+$acme-recipe-00-design-github-issue context="<initial problem and desired outcome>"
+$acme-recipe-02-analyze-github-issue-code context="<approved issue reference and constraints>"
+$acme-recipe-03-breakdown-github-issue context="<approved analysis>"
+$acme-recipe-04-implement-github-issue context="<approved work item and base branch>"
+```
 
-## Extend the pattern with project scripts
+Use phases 07 and 08 only after explicit authorization to publish remote branches or pull requests. For the
+recipe format, worklog pattern and full command/phase map, read [github-issue-workflow.md](github-issue-workflow.md).
 
-The [runtime-tests catalog](../runtime-tests/README.md) adapts an Enabu workflow: detect the configured PHP
-context with a script, run legacy tests, conditionally run Unit tests and report the results. Its names do
-not collide with this catalog. It includes a runnable context helper and requires your real test wrappers
-and worktree configuration before executing suites.
+## Adapt the boilerplate
 
-That example assigns script-backed steps to Codex because the bundled restricted Claude policy permits
-only the Git read wrapper used above. See [command scripts](../../docs/command-scripts.md) for deterministic
-output contracts and an inventory of other workflows, including branch planning and commit validation.
-
-## Recover a previous run
-
-Follow the [recovery example](../recovery/README.md) to retain a verified consecutive prefix in a new runtime.
-It includes an isolated demo without model requests and the separate procedure for real dependency checks.
-The original run remains intact; results after the first invalid step are never cherry-picked.
+Replace `acme-` in directory names, frontmatter, recipe names, `uses` references and invocation examples as
+one change. Then specialize the generic phase command into commands such as issue analysis, stack preparation,
+implementation and verification while keeping their contracts direct and reusable. See the
+[authoring guide](../../docs/authoring.md) for the command and recipe contracts.
