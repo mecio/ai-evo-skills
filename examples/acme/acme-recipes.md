@@ -30,9 +30,9 @@ Tutte le recipe ricevono questi attributi:
 
 Per le recipe dalla 01 alla 06, `recipe plan` esegue il resolver del workflow prima di validare gli input. La
 recipe 04 pubblica obbligatoriamente il branch appena commitato e ne salva l'evidenza nel worklog, salvo la sessione
-di correzione esplicitamente aperta da un checkpoint di implementazione non pubblicato. La recipe 07
-non usa il resolver: la sua invocazione esplicita, con un report di verifica e `publication_authorized: "true"`,
-autorizza la ripubblicazione finale dell'intero stack dopo la review.
+di correzione esplicitamente aperta da un checkpoint di implementazione non pubblicato. Dopo una review 05 o una
+verifica epic 06 conclusa, il report propone la recipe 07 con il report di verifica risolto e richiede sempre
+`publication_authorized`; dopo la 07 propone analogamente la 08, richiedendo `submit_authorized`.
 Il blocco `input-resolver.with` passa anche il nome letterale della recipe pianificata: il runtime richiede infatti
 che `recommended_recipe` coincida con quella recipe. Se non esiste alcuna sessione locale, la 01 e la 02 possono
 quindi iniziare direttamente da una issue esistente: il resolver, senza accedere alla rete, restituisce

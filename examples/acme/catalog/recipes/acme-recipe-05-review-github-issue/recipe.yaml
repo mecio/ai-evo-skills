@@ -11,6 +11,7 @@ inputs:
   stack_layer: { required: true, description: "Coordinate base, parent, branch e sequenza create dalla recipe 03." }
   work_specification: { default: "", description: "JSON del layer stacked da usare per verificarne obiettivo e perimetro." }
   implementation_instructions: { default: "", description: "Istruzioni con cui la stessa implementazione è stata autorizzata." }
+  previous_review: { default: "", description: "Percorso della review superata; se presente verificare che i finding aperti siano stati chiusi." }
   review_artifact_name: { default: "", description: "Nome dell'artefatto Markdown stabile della review." }
   worklog_session_name: { required: true, description: "Percorso canonico; per una sub-issue l'agente deriva il percorso sotto issue-<epic>/attempt-<nn>/subissues/." }
   worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
@@ -18,11 +19,11 @@ steps:
   - id: review_issue
     uses: acme-cmd-review
     executor: claude
-    with: { target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", issue: "${{ inputs.issue }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", constraints: "Review della sola issue indicata rispetto al parent stacked." }
+    with: { target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", issue: "${{ inputs.issue }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", previous_review: "${{ inputs.previous_review }}", constraints: "Review della sola issue indicata rispetto al parent stacked." }
   - id: verify_review
     uses: acme-cmd-verify-review
     executor: claude
-    with: { review: "${{ steps.review_issue.output }}", target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}" }
+    with: { review: "${{ steps.review_issue.output }}", target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", previous_review: "${{ inputs.previous_review }}" }
   - id: checkpoint_review
     uses: acme-cmd-save-worklog-output
     executor: current

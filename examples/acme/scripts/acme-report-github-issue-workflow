@@ -16,6 +16,7 @@ from lib.acme_worklog_recovery import registered_branch
 
 SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
 LAYER_RE = re.compile(r"^[Ll][0-9]+$")
+RECIPE_ROOT = Path(__file__).resolve().parents[1] / "skills" / "catalog" / "recipes"
 
 NEW_WORKFLOW_RECIPES = {
     "acme-recipe-01-refine-github-issue": ("01", "refine"),
@@ -141,8 +142,39 @@ def artifact(session_dir: Path, pattern: str) -> str | None:
     return str(matches[0]) if len(matches) == 1 else None
 
 
-def next_session(issue: int, workflow_attempt: int, phase: str, action: str) -> str:
-    return f"issue-{issue}/attempt-{workflow_attempt:02d}/{phase}-{action}-attempt-01"
+def next_session(issue: int, workflow_attempt: int, phase: str, action: str,
+                 phase_attempt: int = 1) -> str:
+    return f"issue-{issue}/attempt-{workflow_attempt:02d}/{phase}-{action}-attempt-{phase_attempt:02d}"
+
+
+def declared_recipe_inputs(recipe: str) -> set[str]:
+    """Read the compact recipe input block without adding a YAML runtime dependency."""
+    path = RECIPE_ROOT / recipe / "recipe.yaml"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        fail(f"cannot read recipe input contract for {recipe}: {exc}")
+    inputs: set[str] = set()
+    inside = False
+    for line in lines:
+        if line == "inputs:":
+            inside = True
+            continue
+        if inside and line and not line.startswith(" "):
+            break
+        if inside:
+            match = re.fullmatch(r"  ([a-z][a-z0-9_]*):.*", line)
+            if match:
+                inputs.add(match.group(1))
+    if not inputs:
+        fail(f"recipe {recipe} has no readable inputs block")
+    return inputs
+
+
+def require_declared_recipe_inputs(recipe: str, inputs: dict[str, str]) -> None:
+    unknown = sorted(set(inputs) - declared_recipe_inputs(recipe))
+    if unknown:
+        fail(f"report returns undeclared inputs for {recipe}: {', '.join(unknown)}")
 
 
 CORRECTION_RECIPE = "acme-recipe-04-implement-github-issue-correction"
@@ -168,6 +200,98 @@ def successful_step_output(session: dict[str, Any], step_name: str) -> dict[str,
             return None
         return output if isinstance(output, dict) else None
     return None
+
+
+def report_input(session: dict[str, Any], name: str) -> str | None:
+    value = session["session"].get("session_input")
+    return value.get(name) if isinstance(value, dict) and isinstance(value.get(name), str) else None
+
+
+def review_state(workspace: Path, verification: dict[str, Any]) -> tuple[str, str, str, list[str]]:
+    commit, state = verification.get("commit"), verification.get("stack_state")
+    if not isinstance(commit, dict) or not isinstance(state, dict):
+        return "invalid", "", "", []
+    oid, branch = commit.get("oid"), state.get("current_branch")
+    if not isinstance(oid, str) or not isinstance(branch, str) or not local_branch_exists(workspace, branch):
+        return "invalid", "", "", []
+    head = subprocess.run(["git", "-C", str(workspace), "rev-parse", branch], capture_output=True, text=True, check=False)
+    if head.returncode or not head.stdout.strip():
+        return "invalid", branch, oid, []
+    current = head.stdout.strip()
+    if current == oid:
+        return "current", branch, current, []
+    if subprocess.run(["git", "-C", str(workspace), "merge-base", "--is-ancestor", oid, current], check=False).returncode:
+        return "rewritten", branch, current, []
+    commits = subprocess.run(["git", "-C", str(workspace), "log", "--format=%H %s", f"{oid}..{current}"], capture_output=True, text=True, check=False)
+    return "advanced", branch, current, commits.stdout.splitlines() if not commits.returncode else []
+
+
+def inherited_implementation_instructions(current: dict[str, Any], workflow: list[dict[str, Any]]) -> str:
+    """Recover the original implementation constraints through immutable session lineage."""
+    by_name = {item["session"].get("session_name"): item for item in workflow
+               if isinstance(item["session"].get("session_name"), str)}
+    candidate = current
+    seen: set[str] = set()
+    while candidate:
+        name = candidate["session"].get("session_name")
+        if not isinstance(name, str) or name in seen:
+            return ""
+        seen.add(name)
+        session_input = candidate["session"].get("session_input")
+        if not isinstance(session_input, dict):
+            return ""
+        instructions = session_input.get("implementation_instructions")
+        if isinstance(instructions, str) and instructions:
+            return instructions
+        if candidate["phase"] == "04":
+            instructions = session_input.get("developer_instructions")
+            return instructions if isinstance(instructions, str) else ""
+        previous = session_input.get("previous_session")
+        candidate = by_name.get(previous) if isinstance(previous, str) else None
+    return ""
+
+
+def repeat_review(issue: int, current: dict[str, Any], verification: dict[str, Any], branch: str, head: str,
+                  commits: list[str], workflow: list[dict[str, Any]]) -> dict[str, Any]:
+    state = verification["stack_state"]
+    branches = state.get("branches", []) if isinstance(state, dict) else []
+    entry = next((item for item in branches if isinstance(item, dict) and item.get("name") == branch), {})
+    parent = entry.get("parent", "") if isinstance(entry, dict) else ""
+    trunk = state.get("trunk", "") if isinstance(state, dict) else ""
+    sequence = next((index for index, item in enumerate(branches) if isinstance(item, dict) and item.get("name") == branch), 0)
+    previous_inputs = current["session"].get("session_input")
+    instructions = inherited_implementation_instructions(current, workflow)
+    inputs = {"issue": str(issue), "branch": branch, "base": parent,
+              "review_artifact_name": f"issue-{issue}-review.md",
+              "stack_layer": json.dumps({"base_branch": trunk, "parent_branch": parent, "branch": branch, "sequence": sequence}, ensure_ascii=False, sort_keys=True),
+              "implementation_instructions": instructions}
+    if isinstance(previous_inputs, dict):
+        work_specification = previous_inputs.get("work_specification")
+        if isinstance(work_specification, str):
+            inputs["work_specification"] = work_specification
+    previous_review = artifact(current["path"], f"issue-{issue}-review.md")
+    if previous_review:
+        inputs["previous_review"] = previous_review
+    return recommendation(issue, current, "acme-recipe-05-review-github-issue",
+        next_session(issue, current["workflow_attempt"], "05", "review", current["phase_attempt"] + 1),
+        inputs, [],
+        f"Il branch è avanzato da {verification['commit']['oid']} a {head}; ripetere la review. Commit non revisionati: {'; '.join(commits) or 'nessun dettaglio disponibile'}.")
+
+
+def propose_push(issue: int, current: dict[str, Any], verification: dict[str, Any]) -> dict[str, Any]:
+    return recommendation(issue, current, "acme-recipe-07-push-github-stack",
+        next_session(issue, current["workflow_attempt"], "07", "push"),
+        {"issue": str(issue), "verification_report": json.dumps(verification, ensure_ascii=False, sort_keys=True)},
+        ["publication_authorized"],
+        "La recipe 07 pubblica sul remote lo stack verificato; richiede una conferma esplicita per il push.")
+
+
+def propose_submit(issue: int, current: dict[str, Any], publication: dict[str, Any], verification_report: str) -> dict[str, Any]:
+    return recommendation(issue, current, "acme-recipe-08-submit-github-stack",
+        next_session(issue, current["workflow_attempt"], "08", "submit"),
+        {"issue": str(issue), "publication_report": json.dumps(publication, ensure_ascii=False, sort_keys=True),
+         "verification_report": verification_report}, ["submit_authorized"],
+        "La recipe 08 crea o aggiorna pull request remote; richiede una conferma esplicita per il submit.")
 
 
 def has_unpublished_correction_checkpoint(session: dict[str, Any]) -> bool:
@@ -227,6 +351,7 @@ def new_breakdown_attempt(issue: int, current_workflow: list[dict[str, Any]], al
                   "issue": str(issue), "analysis_session": analysis_session["session"]["session_name"],
                   "previous_workflow_attempt": current["workflow_attempt"], "reason": reason,
               }, ensure_ascii=False, sort_keys=True)}
+    require_declared_recipe_inputs("acme-recipe-03-breakdown-github-issue", inputs)
     invocation = " ".join(["$acme-recipe-03-breakdown-github-issue"] +
                           [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in inputs.items()])
     return {"schema_version": 1, "status": "ready", "issue": issue,
@@ -655,13 +780,19 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
         return stacked_recommendation(issue, breakdown_session, "acme-recipe-04-implement-github-issue",
             layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "04", "implement"), inputs,
             {**layer, "id": layer_id}, "È il primo layer stacked non implementato.", analysis, developer_instructions)
-    return {"schema_version": 1, "status": "workflow-completed", "issue": issue,
-            "current_session": breakdown_session["session"]["session_name"], "recommended_recipe": None,
-            "worklog_session_name": None, "resolved_inputs": {}, "missing_inputs": [], "suggested_invocation": None,
-            "reason": "La review dell'ultimo layer stacked è conclusa."}
+    last_review = latest_layer_session(workflow, str(ordered[-1].get("id", "")).upper(), "05")
+    verification = successful_step_output(last_review, "verify_layer") if last_review else None
+    if verification is None:
+        return blocked(issue, breakdown_session, "Manca l'output verificato della review dell'ultimo layer stacked.")
+    state, branch, head, commits = review_state(workspace, verification)
+    if state == "advanced":
+        return repeat_review(issue, last_review, verification, branch, head, commits, workflow)
+    if state != "current":
+        return blocked(issue, last_review, "Il branch è stato riscritto o non è più verificabile dopo la review.")
+    return propose_push(issue, last_review, verification)
 
 
-def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk: str,
+def report_completed(issue: int, current: dict[str, Any], workflow: list[dict[str, Any]], workspace: Path, trunk: str,
                      developer_instructions: str = "") -> dict[str, Any]:
     phase = current["phase"]
     workflow_attempt = current["workflow_attempt"]
@@ -733,6 +864,23 @@ def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk
             }, [], with_stack_warnings("La precedente recipe è conclusa e il suo artefatto è disponibile.", warnings),
         )
     if phase == "05":
+        verification = successful_step_output(current, "verify_layer")
+        if verification is None:
+            return blocked(issue, current, "Manca l'output verificato della recipe 05.")
+        state, branch, head, commits = review_state(workspace, verification)
+        if state == "advanced":
+            return repeat_review(issue, current, verification, branch, head, commits, workflow)
+        if state != "current":
+            return blocked(issue, current, "Il branch è stato riscritto o non è più verificabile dopo la review.")
+        return propose_push(issue, current, verification)
+    if phase == "06":
+        verification = successful_step_output(current, "verify_epic")
+        return propose_push(issue, current, verification) if verification else blocked(issue, current, "Manca l'output accepted della recipe 06.")
+    if phase == "07":
+        publication = successful_step_output(current, "configure_upstreams")
+        verification = report_input(current, "verification_report")
+        return propose_submit(issue, current, publication, verification) if publication and verification else blocked(issue, current, "Mancano publication_report o verification_report della recipe 07.")
+    if phase == "08":
         return {
             "schema_version": 1,
             "status": "workflow-completed",
@@ -743,20 +891,7 @@ def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk
             "resolved_inputs": {},
             "missing_inputs": [],
             "suggested_invocation": None,
-            "reason": "La review della issue principale è conclusa.",
-        }
-    if phase in {"07", "08"}:
-        return {
-            "schema_version": 1,
-            "status": "workflow-completed",
-            "issue": issue,
-            "current_session": current["session"]["session_name"],
-            "recommended_recipe": None,
-            "worklog_session_name": None,
-            "resolved_inputs": {},
-            "missing_inputs": [],
-            "suggested_invocation": None,
-            "reason": "La pubblicazione o il submit dello stack è concluso.",
+            "reason": "Il submit dello stack è concluso.",
         }
     return blocked(issue, current, "La fase conclusa non ha una recipe successiva definita.")
 
@@ -778,6 +913,8 @@ def recommendation(issue: int, current: dict[str, Any], recipe: str, session_nam
         session_input,
         ensure_ascii=False, sort_keys=True,
     )
+    require_declared_recipe_inputs(recipe, inputs)
+    require_declared_recipe_inputs(recipe, {name: "" for name in missing_inputs})
     invocation_inputs = dict(inputs)
     for name in missing_inputs:
         invocation_inputs[name] = f"<{name}>"
@@ -815,7 +952,7 @@ def blocked(issue: int, current: dict[str, Any], reason: str) -> dict[str, Any]:
 
 
 def branch_recovery_required(issue: int, current: dict[str, Any], workspace: Path, branch: str, reason: str) -> dict[str, Any]:
-    """Request explicit branch recovery without mutating Git during this report."""
+    """Request the explicit recovery command without making this offline report mutate Git."""
     branch = registered_branch(workspace, issue) or branch
     invocation = f"$acme-cmd-prepare-git-recipe-branch issue={json.dumps(str(issue))}"
     return {
@@ -875,10 +1012,12 @@ def new_workflow_report(issue: int, requested_recipe: str | None,
             session_input["developer_instructions"] = developer_instructions
         resolved_inputs = {
             "issue": str(issue),
-            "issue_number": str(issue),
             "worklog_session_name": session_name,
             "worklog_session_input": json.dumps(session_input, ensure_ascii=False, sort_keys=True),
         }
+        if requested_recipe == "acme-recipe-02-analyze-github-issue-code":
+            resolved_inputs["issue_number"] = str(issue)
+        require_declared_recipe_inputs(requested_recipe, resolved_inputs)
         suggested_invocation = " ".join(
             [f"${requested_recipe}"] + [f"{name}={json.dumps(value, ensure_ascii=False)}"
                                       for name, value in resolved_inputs.items()]
@@ -988,7 +1127,7 @@ def main() -> int:
     current = latest_phase(workflow)
     status = current["session"].get("status")
     if status == "completed":
-        result = report_completed(issue, current, workspace, trunk, args.developer_instructions)
+        result = report_completed(issue, current, workflow, workspace, trunk, args.developer_instructions)
     elif status == "active":
         entries = current["session"].get("entries")
         failed = isinstance(entries, list) and bool(entries) and entries[-1].get("outcome") == "failed"

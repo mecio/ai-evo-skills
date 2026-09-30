@@ -30,6 +30,9 @@ inputs:
   implementation_instructions:
     description: Istruzioni esplicite con cui l'implementazione è stata autorizzata.
     default: ""
+  previous_review:
+    description: Percorso della review precedente; se presente verificare esplicitamente la chiusura dei suoi finding aperti.
+    default: ""
   target:
     description: Ambito da revisionare; current include commit del branch e modifiche locali rispetto alla base.
     default: "current"
@@ -57,7 +60,8 @@ inputs:
    `.ai-evo/bin/ai-evo-skills command execute` e restituirne l'output; in modalità `current`, proseguire.
 5. Verificare lo stato Git nella directory risolta. Se la policy limita Bash, eseguire le letture Git soltanto
    tramite `.ai-evo/bin/ai-evo-git-read` e usare gli strumenti nativi di lettura e ricerca per i file.
-6. Se `issue` è valorizzata, limitare la review al lavoro della issue indicata.
+6. Se `issue` è valorizzata, limitare la review al lavoro della issue indicata. Se `previous_review` è valorizzato,
+   leggerlo e verificare esplicitamente che i finding aperti siano stati chiusi oppure riproporli con evidenze aggiornate.
    Se `work_specification` è valorizzata, richiedere stato ready e usare il parent e i vincoli dichiarati. Il perimetro autorizzato è l'unione della specifica e di `implementation_instructions`: gli interventi esplicitamente richiesti vanno elencati nella sezione "Interventi richiesti dallo sviluppatore" e verificati per correttezza e isolamento, senza segnalarli come fuori perimetro. Il lavoro non coperto da nessuno dei due resta un finding di perimetro. Applicare obiettivo, target, base, focus e vincoli ricevuti. Se la `base` è vuota,
    risolverla prima della review: per un branch stacked usare il branch immediatamente sottostante, identificato
    dalle informazioni di stack disponibili o dal più vicino branch di lavoro il cui tip sia un antenato stretto

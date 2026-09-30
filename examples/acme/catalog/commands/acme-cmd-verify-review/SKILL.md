@@ -27,6 +27,9 @@ inputs:
   implementation_instructions:
     description: Istruzioni esplicite con cui l'implementazione è stata autorizzata.
     default: ""
+  previous_review:
+    description: Percorso della review precedente da usare per verificare la chiusura dei finding aperti.
+    default: ""
   review:
     description: Report completo prodotto dalla review precedente.
     required: true
@@ -61,7 +64,8 @@ inputs:
    omonimo e i ref sullo stesso commit. Usare la normale base di integrazione solo in assenza di un branch stacked
    sottostante e fermarsi se più basi restano plausibili. Verificare che coincida con la base dichiarata nel
    report precedente.
-7. Interpretare `target=current` come l'insieme dei commit del branch e delle modifiche staged, non staged e dei
+7. Se `previous_review` è valorizzato, confrontare i finding aperti con il codice corrente e dichiarare per ciascuno
+   se è chiuso, ancora presente o non più riproducibile. Interpretare `target=current` come l'insieme dei commit del branch e delle modifiche staged, non staged e dei
    file non tracciati pertinenti rispetto alla base risolta. Confrontare ogni finding con questo insieme e con il
    codice corrente.
 8. Scartare le osservazioni non riproducibili o non sostenute da evidenze puntuali.
