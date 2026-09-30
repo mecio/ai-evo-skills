@@ -109,8 +109,8 @@ See the [execution reference](execution.md#execution-policies-and-prompt-deliver
 ## Use cases from the Enabu catalog
 
 The following inventory records patterns observed in the local `specs-enabu` catalog. Source names identify
-the commands and scripts that were inspected; those project-specific implementations are not shipped or
-required by this engine. The public example adapts the patterns with generic configuration and wrapper paths.
+the commands and scripts that were inspected. The Acme workflow catalog includes generalized copies with
+placeholder configuration; a project adopting them must configure and validate them before use.
 
 | Workflow | Commands and data flow in the source catalog | Reusable pattern |
 |---|---|---|

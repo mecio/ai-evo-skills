@@ -1,61 +1,21 @@
 version: "1.0"
 name: acme-recipe-01-refine-github-issue
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-01-refine-github-issue", developer_instructions: "${{ inputs.developer_instructions }}" }
 inputs:
-  context:
-    description: Complete approved context for this phase.
-    required: true
+  issue: { required: true, description: "Numero o URL della issue esistente." }
+  developer_instructions: { default: "Rivedi con lo sviluppatore titolo e descrizione; dopo approvazione e autorizzazione esplicita aggiorna la issue.", description: "Istruzioni per la revisione e vincoli o chiarimenti iniziali dello sviluppatore." }
+  worklog_session_name: { required: true, description: "Percorso canonico; se omesso l'agente deriva issue-<numero>/attempt-<nn>/01-refine-attempt-<nn>." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
-  - id: perform
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
+  - id: refine_issue
+    uses: acme-cmd-analyze-github-issue
+    executor: current
+    with: { issue: "${{ inputs.issue }}", developer_instructions: "${{ inputs.developer_instructions }}" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.perform.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-01-refine-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: refine_issue, source_name: acme-cmd-analyze-github-issue, outcome: succeeded, output: "${{ steps.refine_issue.output }}", expected_output_sha256: "${{ steps.refine_issue.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
-*** Add File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-02-analyze-github-issue-code/SKILL.md
----
-name: acme-recipe-02-analyze-github-issue-code
-description: Analyze a GitHub issue, project rules, code, and tests.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
----
-
-# Analyze a GitHub issue, project rules, code, and tests.
-
-## Purpose
-
-Analyze a GitHub issue, project rules, code, and tests.
-
-## Interface
-
-The formal interface is defined in `recipe.yaml`.
-
-## Procedure
-
-1. Plan `acme-recipe-02-analyze-github-issue-code` with the invoking adapter and supplied inputs.
-2. Advance the planned recipe in order, preserving every complete step output.
-3. Stop on failure and let the developer inspect the resulting artifact before a later phase.
-
-## Expected output
-
-The saved result of this workflow phase.
-
-## Constraints
-
-- The invoking AI coordinates this recipe; no executor is declared.
-- Do not invoke a later phase automatically.
-
-## Success criteria
-
-The phase produces one reviewable artifact and an immutable checkpoint.
-
-## Examples
-
-```text
-$acme-recipe-02-analyze-github-issue-code context="<approved context>"
-```
+  result: { value: "${{ steps.save_result.output }}" }

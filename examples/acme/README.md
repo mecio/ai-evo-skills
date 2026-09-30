@@ -1,71 +1,51 @@
-# Acme starter catalog
+# Acme workflow catalog
 
-This is a copyable starter catalog for a new project that tracks work in GitHub. It uses the placeholder
-namespace `acme`; replace it consistently if the project has another namespace. Recipes use the AI that
-invokes them. No recipe name or YAML field selects a specific AI.
+This is a copyable GitHub delivery workflow modeled on a production catalog. `acme` is a placeholder namespace;
+replace it consistently when adopting the catalog. Recipes use the invoking AI and their YAML does not select a
+specific AI.
 
-## Start a new project
+## Install the catalog
 
-Run these commands from the root of the application repository. The engine checkout is assumed to be linked
-as `.ai-evo`.
+Run from the application repository root, with the engine checkout linked as `.ai-evo`.
 
 ```bash
 ./.ai-evo/bin/ai-evo-skills init --namespace acme --adapter <your-adapter>
-cp -R .ai-evo/examples/acme/catalog/commands/. .ai-evo-prj/skills/catalog/commands/
-cp -R .ai-evo/examples/acme/catalog/recipes/. .ai-evo-prj/skills/catalog/recipes/
+cp -R .ai-evo/examples/acme/catalog/. .ai-evo-prj/skills/catalog/
+cp -R .ai-evo/examples/acme/scripts/. .ai-evo-prj/scripts/
+cp -R .ai-evo/examples/acme/config/. .ai-evo-prj/skills/config/
+cp .ai-evo/examples/acme/acme-recipes.md .ai-evo-prj/skills/acme-recipes.md
 ./.ai-evo/bin/ai-evo-skills validate
 ./.ai-evo/bin/ai-evo-skills sync --dry-run
 ./.ai-evo/bin/ai-evo-skills sync
 ```
 
-Replace `<your-adapter>` with an enabled adapter identifier. If the project already has a catalog, inspect
-name collisions before copying: the commands intentionally overwrite matching files. Run `validate` after
-every catalog edit and run `sync` again to publish the new skills to the configured client.
+Before running a recipe, replace every placeholder in `acme-worktrees.yaml` and `acme-git-branches.yaml` with the
+project's worktree roots, runtime and lint commands, branch strategy and stack tool. The helpers are copied as a starting
+implementation; validate their behavior against the repository before allowing commits, pushes or pull requests.
 
-## What the catalog contains
+## Workflow
 
-The workflow has nine primary direct recipes plus an optional phase-04 correction recipe. Each ends with a saved result that the developer reviews before starting
-the next phase.
+The catalog contains 32 direct commands and 11 recipes. Recipe steps call specific operations and record immutable
+worklog checkpoints; there is no generic workflow-phase command.
 
 | Phase | Recipe | Outcome |
 |---|---|---|
-| 00 | `acme-recipe-00-design-github-issue` | Approved issue design. |
-| 01 | `acme-recipe-01-refine-github-issue` | Refined issue requirements. |
-| 02 | `acme-recipe-02-analyze-github-issue-code` | Evidence-backed implementation analysis. |
-| 03 | `acme-recipe-03-breakdown-github-issue` | Single-item, stacked, or epic work map. |
+| 00 | `acme-recipe-00-design-github-issue` | Designed and created issue. |
+| 01 | `acme-recipe-01-refine-github-issue` | Refined requirements. |
+| 02 | `acme-recipe-02-analyze-github-issue-code` | Evidence-backed code analysis. |
+| 03 | `acme-recipe-03-breakdown-github-issue` | Work-item or stacked-work plan. |
+| 04 | `acme-recipe-04-adopt-github-issue-layer` | Approved adoption of an existing layer. |
 | 04 | `acme-recipe-04-implement-github-issue` | Implemented work item and local evidence. |
-| 04 | `acme-recipe-04-implement-github-issue-correction` | Explicit correction of a committed, unpublished implementation. |
-| 05 | `acme-recipe-05-review-github-issue` | Review findings and verification result. |
-| 06 | `acme-recipe-06-verify-github-epic-stack` | Epic-level dependency and completion evidence. |
+| 04 | `acme-recipe-04-implement-github-issue-correction` | Correction of an unpublished implementation. |
+| 05 | `acme-recipe-05-review-github-issue` | Review and branch verification. |
+| 06 | `acme-recipe-06-verify-github-epic-stack` | Epic-level completion evidence. |
 | 07 | `acme-recipe-07-push-github-stack` | Authorized publication report. |
-| 08 | `acme-recipe-08-submit-github-stack` | Authorized draft pull-request report. |
+| 08 | `acme-recipe-08-submit-github-stack` | Authorized pull-request submission. |
 
-Commands remain directly invocable when a developer needs only one operation. The shared
-`acme-cmd-github-workflow-phase` supplies the generic phase contract; [github-issue-workflow.md](github-issue-workflow.md)
-lists the project-specific command names to split out as the catalog grows.
+Start with phase 00. Each later recipe receives its issue, worklog session and immutable input from the previous
+checkpoint through `acme-cmd-report-github-issue-workflow`. Review the resolved input and invoke only the next
+appropriate phase. Phases 07 and 08 require explicit publication authorization.
 
-## First use
-
-Start with phase 00 and describe the problem. After approving its result, pass the saved artifact or its
-relevant context to phase 02. Do not skip to implementation before the issue and analysis are approved.
-
-```text
-$acme-recipe-00-design-github-issue context="<initial problem and desired outcome>"
-$acme-recipe-02-analyze-github-issue-code context="<approved issue reference and constraints>"
-$acme-recipe-03-breakdown-github-issue context="<approved analysis>"
-$acme-recipe-04-implement-github-issue context="<approved work item and base branch>"
-```
-
-If the project records a local implementation checkpoint before publication, it can add the optional correction
-recipe with the immutable checkpoint context and explicit correction instructions. Keep the correction in its own
-worklog session; it does not alter the completed steps of the original phase-04 plan.
-
-Use phases 07 and 08 only after explicit authorization to publish remote branches or pull requests. For the
-recipe format, worklog pattern and full command/phase map, read [github-issue-workflow.md](github-issue-workflow.md).
-
-## Adapt the boilerplate
-
-Replace `acme-` in directory names, frontmatter, recipe names, `uses` references and invocation examples as
-one change. Then specialize the generic phase command into commands such as issue analysis, stack preparation,
-implementation and verification while keeping their contracts direct and reusable. See the
-[authoring guide](../../docs/authoring.md) for the command and recipe contracts.
+`acme-recipes.md` describes the worklog layout and recovery rules. The [authoring guide](../../docs/authoring.md)
+describes command and recipe contracts, while [command scripts](../../docs/command-scripts.md) covers helper
+ownership and verification.

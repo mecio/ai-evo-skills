@@ -1,22 +1,38 @@
 version: "1.0"
 name: acme-recipe-04-implement-github-issue-correction
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-04-implement-github-issue-correction", correction_instructions: "${{ inputs.correction_instructions }}" }
 inputs:
-  context:
-    description: Immutable implementation report and branch coordinates from the prior phase-04 checkpoint.
-    required: true
-  correction_instructions:
-    description: Explicit, non-empty developer corrections to apply before publication.
-    required: true
+  issue: { required: true, description: "Numero o URL della issue esecutiva." }
+  branch: { required: true, description: "Branch già implementato." }
+  parent_branch: { required: true, description: "Parent registrato dalla implementazione." }
+  layer: { default: "", description: "JSON opzionale del layer stacked." }
+  correction_instructions: { required: true, description: "Correzioni esplicite dello sviluppatore." }
+  implementation_report: { required: true, description: "Output registrato della recipe 04." }
+  developer_instructions: { default: "", description: "Vincoli originali." }
+  worklog_session_name: { required: true, description: "Percorso canonico della sessione di correzione." }
+  worklog_session_input: { required: true, description: "JSON immutabile con source implementation e correzioni." }
 steps:
   - id: correct_implementation
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
-      correction_instructions: "${{ inputs.correction_instructions }}"
+    uses: acme-cmd-implement-github-issue-correction
+    executor: claude
+    with: { issue: "${{ inputs.issue }}", branch: "${{ inputs.branch }}", parent_branch: "${{ inputs.parent_branch }}", layer: "${{ inputs.layer }}", correction_instructions: "${{ inputs.correction_instructions }}", implementation_report: "${{ inputs.implementation_report }}", developer_instructions: "${{ inputs.developer_instructions }}" }
+  - id: checkpoint_correction
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-implement-github-issue-correction, session_input: "${{ inputs.worklog_session_input }}", step_name: correct_implementation, source_name: acme-cmd-implement-github-issue-correction, outcome: succeeded, output: "${{ steps.correct_implementation.output }}", expected_output_sha256: "${{ steps.correct_implementation.output_sha256 }}", error: "null", complete: "false" }
+  - id: publish_branch
+    uses: acme-cmd-push-git-stacked-branch
+    executor: current
+    with: { implementation_report: "${{ steps.correct_implementation.output }}" }
+  - id: checkpoint_publication
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-implement-github-issue-correction, session_input: "${{ inputs.worklog_session_input }}", step_name: publish_branch, source_name: acme-cmd-push-git-stacked-branch, outcome: succeeded, output: "${{ steps.publish_branch.output }}", expected_output_sha256: "${{ steps.publish_branch.output_sha256 }}", error: "null", complete: "false" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.correct_implementation.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-implement-github-issue-correction, session_input: "${{ inputs.worklog_session_input }}", step_name: correct_implementation, source_name: acme-cmd-implement-github-issue-correction, outcome: succeeded, output: "${{ steps.checkpoint_correction.output }}", expected_output_sha256: "${{ steps.checkpoint_correction.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
+  result: { value: "${{ steps.save_result.output }}" }

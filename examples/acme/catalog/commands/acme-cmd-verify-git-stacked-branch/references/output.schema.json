@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "stack_state",
+    "commit",
+    "commits"
+  ],
+  "properties": {
+    "status": {
+      "const": "verified"
+    },
+    "stack_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "repository_root",
+        "clean",
+        "status",
+        "current_branch",
+        "trunk",
+        "top",
+        "branches",
+        "valid",
+        "errors"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "repository_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clean": {
+          "const": true
+        },
+        "status": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "current_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trunk": {
+          "type": "string",
+          "minLength": 1
+        },
+        "top": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "parent",
+              "is_current",
+              "recorded_head",
+              "recorded_base",
+              "oid",
+              "parent_is_ancestor",
+              "commits_since_parent",
+              "upstream"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "is_current": {
+                "type": "boolean"
+              },
+              "recorded_head": {
+                "type": "string"
+              },
+              "recorded_base": {
+                "type": "string"
+              },
+              "oid": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              },
+              "parent_is_ancestor": {
+                "const": true
+              },
+              "commits_since_parent": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "upstream": {
+                "type": "string"
+              }
+            }
+          },
+          "minItems": 1
+        },
+        "valid": {
+          "const": true
+        },
+        "errors": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oid",
+        "subject",
+        "files"
+      ],
+      "properties": {
+        "oid": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "commits": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["oid", "subject", "files"],
+        "properties": {
+          "oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+          "subject": {"type": "string", "minLength": 1},
+          "files": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    }
+  }
+}

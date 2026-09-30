@@ -1,0 +1,22 @@
+version: "1.0"
+name: acme-recipe-04-adopt-github-issue-layer
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-04-adopt-github-issue-layer" }
+inputs:
+  issue: { required: true, description: "Numero della issue principale." }
+  layer: { required: true, description: "JSON del layer stacked da adottare." }
+  branch: { required: true, description: "Branch locale già implementato." }
+  worklog_session_name: { required: true, description: "Percorso canonico del checkpoint 04 del layer." }
+  worklog_session_input: { required: true, description: "JSON immutabile con lineage del layer." }
+steps:
+  - id: adopt_layer
+    uses: acme-cmd-adopt-github-issue-layer
+    executor: current
+    with: { issue: "${{ inputs.issue }}", layer: "${{ inputs.layer }}", branch: "${{ inputs.branch }}" }
+  - id: save_result
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-adopt-github-issue-layer, session_input: "${{ inputs.worklog_session_input }}", step_name: adopt_layer, source_name: acme-cmd-adopt-github-issue-layer, outcome: succeeded, output: "${{ steps.adopt_layer.output }}", expected_output_sha256: "${{ steps.adopt_layer.output_sha256 }}", error: "null", complete: "true" }
+outputs:
+  result: { value: "${{ steps.save_result.output }}" }

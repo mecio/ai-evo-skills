@@ -1,42 +1,41 @@
 ---
 name: acme-recipe-00-design-github-issue
-description: Direct GitHub workflow phase 00-design-github-issue.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
+description: Conduce la progettazione dialogica di una issue e la crea su GitHub soltanto dopo approvazione esplicita dello sviluppatore.
+metadata: { ai-evo-kind: recipe, ai-evo-version: "1.0" }
 ---
 
-# GitHub workflow phase 00-design-github-issue
+# Progettazione e creazione di una issue GitHub
 
 ## Purpose
 
-Execute this bounded workflow phase and preserve its reviewable output.
+Conduce la progettazione dialogica di una issue e la crea su GitHub soltanto dopo approvazione esplicita dello sviluppatore.
 
 ## Interface
 
-The formal interface is defined in `recipe.yaml`.
+Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attributi e il passaggio tra le fasi consultare la [guida alle recipe](../../../acme-recipes.md).
 
 ## Procedure
 
-1. Plan the recipe with its received inputs and the invoking adapter.
-2. Advance each step in order, preserving its complete output.
-3. Stop on failure; after success, let the developer explicitly choose the next phase.
+Usala all’inizio del flusso. L’AI discute il problema una domanda alla volta, propone titolo e descrizione, raccoglie l’approvazione del testo e l’autorizzazione esplicita alla creazione remota. La recipe restituisce numero e URL della nuova issue; non analizza il codice, non crea branch e non modifica la worktree.
+
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-00-design-github-issue` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
+
+Se `worklog_session_name` o `worklog_session_input` non sono ricevuti, risolverli prima del piano secondo la convenzione nella [guida alle recipe](../../../acme-recipes.md); non richiederli allo sviluppatore quando sono deducibili dal contesto della fase.
 
 ## Expected output
 
-The saved result of this workflow phase.
+Il valore `outputs.result` definito in `recipe.yaml`, conservato integralmente nel worklog della sessione.
 
 ## Constraints
 
-- The invoking AI coordinates the recipe.
-- Do not automatically start a later phase.
+Rispettare input, ordine e policy degli step dichiarati. Non avviare automaticamente la fase successiva e non ripetere scritture remote fallite.
 
 ## Success criteria
 
-The phase creates one reviewable saved artifact.
+Gli step previsti terminano senza errori e il checkpoint finale conserva il risultato nella sessione richiesta.
 
 ## Examples
 
 ```text
-$acme-recipe-00-design-github-issue context="<approved context>"
+$acme-recipe-00-design-github-issue
 ```

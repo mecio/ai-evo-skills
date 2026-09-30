@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Inspect and validate the active local gh-stack without network access."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from lib.acme_script_common import (
+    current_branch,
+    git,
+    git_text,
+    load_active_stack,
+    local_oid,
+    worktree_status,
+    write_json,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expected-base", default="")
+    parser.add_argument("--expected-top", default="")
+    parser.add_argument("--expected-parent", default="")
+    parser.add_argument("--expected-sequence", type=int)
+    parser.add_argument("--require-clean", action="store_true")
+    parser.add_argument("--require-current-top", action="store_true")
+    parser.add_argument("--require-single-commit", action="store_true")
+    parser.add_argument("--output", type=Path)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    stack = load_active_stack()
+    current = current_branch()
+    trunk = stack.get("trunk", {}).get("branch", "")
+    entries = stack.get("branches", [])
+    errors: list[str] = []
+    status = worktree_status()
+    branches = []
+    parent = trunk
+    for entry in entries:
+        name = entry.get("branch", "")
+        item: dict[str, object] = {
+            "name": name,
+            "parent": parent,
+            "is_current": name == current,
+            "recorded_head": entry.get("head", ""),
+            "recorded_base": entry.get("base", ""),
+        }
+        try:
+            item["oid"] = local_oid(name)
+            ancestor = git("merge-base", "--is-ancestor", parent, name, check=False).returncode == 0
+            item["parent_is_ancestor"] = ancestor
+            item["commits_since_parent"] = int(git_text("rev-list", "--count", f"{parent}..{name}"))
+            if not ancestor:
+                errors.append(f"{parent} is not an ancestor of {name}")
+            upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{name}")
+            item["upstream"] = upstream
+        except SystemExit as exc:
+            errors.append(str(exc))
+        branches.append(item)
+        parent = name
+    top = branches[-1]["name"] if branches else ""
+    if args.expected_base and trunk != args.expected_base:
+        errors.append(f"expected base {args.expected_base}, found {trunk}")
+    if args.expected_top and top != args.expected_top:
+        errors.append(f"expected top {args.expected_top}, found {top}")
+    expected_entry = None
+    if args.expected_top:
+        expected_entry = next((item for item in branches if item["name"] == args.expected_top), None)
+    if args.expected_parent:
+        if expected_entry is None:
+            errors.append("cannot verify expected parent without a matching expected top")
+        elif expected_entry["parent"] != args.expected_parent:
+            errors.append(
+                f"expected parent {args.expected_parent} for {args.expected_top}, found {expected_entry['parent']}"
+            )
+    if args.expected_sequence is not None:
+        if args.expected_sequence < 0:
+            errors.append("expected sequence must be zero or greater")
+        elif expected_entry is None:
+            errors.append("cannot verify expected sequence without a matching expected top")
+        elif branches.index(expected_entry) != args.expected_sequence:
+            errors.append(
+                f"expected sequence {args.expected_sequence} for {args.expected_top}, "
+                f"found {branches.index(expected_entry)}"
+            )
+    if args.require_single_commit:
+        if expected_entry is None:
+            errors.append("cannot require a single commit without a matching expected top")
+        elif expected_entry.get("commits_since_parent") != 1:
+            errors.append(
+                f"expected one commit for {args.expected_top}, "
+                f"found {expected_entry.get('commits_since_parent')}"
+            )
+    if args.require_current_top and current != top:
+        errors.append(f"current branch {current} is not stack top {top}")
+    if args.require_clean and status:
+        errors.append("worktree is not clean")
+    data = {
+        "schema_version": 1,
+        "repository_root": git_text("rev-parse", "--show-toplevel"),
+        "clean": not status,
+        "status": status,
+        "current_branch": current,
+        "trunk": trunk,
+        "top": top,
+        "branches": branches,
+        "valid": not errors,
+        "errors": errors,
+    }
+    write_json(data, args.output)
+    return 0 if not errors else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

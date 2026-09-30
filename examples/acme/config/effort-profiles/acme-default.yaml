@@ -1,0 +1,29 @@
+version: "1.0"
+name: acme-default
+description: Profilo acme predefinito, orientato al risparmio e a esecuzioni controllate.
+
+reasoning:
+  level: medium
+
+resources:
+  subagents: disabled
+  network: auto
+
+execution:
+  concurrent-on-same-worktree: false
+  reuse-session: correction-only
+
+output:
+  delivery: final-only
+  verbose-logs: summarize
+
+tests:
+  strategy: necessary
+  repeat-passed: false
+
+context:
+  repeat-readable-content: false
+  repository-exploration: targeted
+
+report:
+  profile-application: summary

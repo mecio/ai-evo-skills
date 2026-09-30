@@ -1,61 +1,26 @@
 version: "1.0"
 name: acme-recipe-02-analyze-github-issue-code
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", issue_number: "${{ inputs.issue_number }}", requested_recipe: "acme-recipe-02-analyze-github-issue-code", developer_instructions: "${{ inputs.developer_instructions }}" }
 inputs:
-  context:
-    description: Complete approved context for this phase.
-    required: true
+  issue: { required: true, description: "Numero della issue GitHub da analizzare, oppure pending con issue_number valorizzato per collegare la recipe 00." }
+  issue_number: { default: "", description: "Numero reale della issue: obbligatorio con issue=pending e sempre risolto dal workflow per l'analisi." }
+  developer_instructions: { default: "", description: "Vincoli e chiarimenti iniziali dello sviluppatore." }
+  worklog_session_name: { required: true, description: "Percorso canonico; se omesso l'agente deriva issue-<numero>/attempt-<nn>/02-analyze-attempt-<nn>." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
-  - id: perform
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
+  - id: analyze_issue
+    uses: acme-cmd-analyze-github-issue-code
+    executor: current
+    with: { issue: "${{ inputs.issue_number }}", developer_instructions: "${{ inputs.developer_instructions }}" }
+  - id: record_analysis
+    uses: acme-cmd-record-github-issue-analysis
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", analysis: "${{ steps.analyze_issue.output }}" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.perform.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-02-analyze-github-issue-code, session_input: "${{ inputs.worklog_session_input }}", step_name: record_analysis, source_name: acme-cmd-record-github-issue-analysis, outcome: succeeded, output: "${{ steps.record_analysis.output }}", expected_output_sha256: "${{ steps.record_analysis.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
-*** Add File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-03-breakdown-github-issue/SKILL.md
----
-name: acme-recipe-03-breakdown-github-issue
-description: Break an approved issue into a single item, stack, or epic.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
----
-
-# Break an approved issue into a single item, stack, or epic.
-
-## Purpose
-
-Break an approved issue into a single item, stack, or epic.
-
-## Interface
-
-The formal interface is defined in `recipe.yaml`.
-
-## Procedure
-
-1. Plan `acme-recipe-03-breakdown-github-issue` with the invoking adapter and supplied inputs.
-2. Advance the planned recipe in order, preserving every complete step output.
-3. Stop on failure and let the developer inspect the resulting artifact before a later phase.
-
-## Expected output
-
-The saved result of this workflow phase.
-
-## Constraints
-
-- The invoking AI coordinates this recipe; no executor is declared.
-- Do not invoke a later phase automatically.
-
-## Success criteria
-
-The phase produces one reviewable artifact and an immutable checkpoint.
-
-## Examples
-
-```text
-$acme-recipe-03-breakdown-github-issue context="<approved context>"
-```
+  result: { value: "${{ steps.save_result.output }}" }

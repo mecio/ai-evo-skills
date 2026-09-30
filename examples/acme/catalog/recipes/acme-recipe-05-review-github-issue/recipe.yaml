@@ -1,61 +1,39 @@
 version: "1.0"
 name: acme-recipe-05-review-github-issue
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-05-review-github-issue" }
 inputs:
-  context:
-    description: Complete approved context for this phase.
-    required: true
+  issue: { required: true, description: "Numero o URL della issue implementata." }
+  base: { default: "", description: "Parent stacked esplicito; se vuoto risolvere il parent del branch corrente." }
+  focus: { default: "general", description: "Focus della review." }
+  branch: { required: true, description: "Branch stacked già pubblicato e registrato dal checkpoint di implementazione." }
+  stack_layer: { required: true, description: "Coordinate base, parent, branch e sequenza create dalla recipe 03." }
+  work_specification: { default: "", description: "JSON del layer stacked da usare per verificarne obiettivo e perimetro." }
+  implementation_instructions: { default: "", description: "Istruzioni con cui la stessa implementazione è stata autorizzata." }
+  review_artifact_name: { default: "", description: "Nome dell'artefatto Markdown stabile della review." }
+  worklog_session_name: { required: true, description: "Percorso canonico; per una sub-issue l'agente deriva il percorso sotto issue-<epic>/attempt-<nn>/subissues/." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
-  - id: perform
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
+  - id: review_issue
+    uses: acme-cmd-review
+    executor: claude
+    with: { target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", issue: "${{ inputs.issue }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", constraints: "Review della sola issue indicata rispetto al parent stacked." }
+  - id: verify_review
+    uses: acme-cmd-verify-review
+    executor: claude
+    with: { review: "${{ steps.review_issue.output }}", target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}" }
+  - id: checkpoint_review
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-05-review-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: verify_review, source_name: acme-cmd-verify-review, outcome: succeeded, output: "${{ steps.verify_review.output }}", expected_output_sha256: "${{ steps.verify_review.output_sha256 }}", error: "null", artifact_name: "${{ inputs.review_artifact_name }}", complete: "false" }
+  - id: verify_layer
+    uses: acme-cmd-verify-git-stacked-branch
+    executor: claude
+    with: { work_specification: "${{ inputs.stack_layer }}" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.perform.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-05-review-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: verify_layer, source_name: acme-cmd-verify-git-stacked-branch, outcome: succeeded, output: "${{ steps.verify_layer.output }}", expected_output_sha256: "${{ steps.verify_layer.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
-*** Add File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-06-verify-github-epic-stack/SKILL.md
----
-name: acme-recipe-06-verify-github-epic-stack
-description: Verify completed epic work items and their dependencies.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
----
-
-# Verify completed epic work items and their dependencies.
-
-## Purpose
-
-Verify completed epic work items and their dependencies.
-
-## Interface
-
-The formal interface is defined in `recipe.yaml`.
-
-## Procedure
-
-1. Plan `acme-recipe-06-verify-github-epic-stack` with the invoking adapter and supplied inputs.
-2. Advance the planned recipe in order, preserving every complete step output.
-3. Stop on failure and let the developer inspect the resulting artifact before a later phase.
-
-## Expected output
-
-The saved result of this workflow phase.
-
-## Constraints
-
-- The invoking AI coordinates this recipe; no executor is declared.
-- Do not invoke a later phase automatically.
-
-## Success criteria
-
-The phase produces one reviewable artifact and an immutable checkpoint.
-
-## Examples
-
-```text
-$acme-recipe-06-verify-github-epic-stack context="<approved context>"
-```
+  result: { value: "${{ steps.save_result.output }}" }

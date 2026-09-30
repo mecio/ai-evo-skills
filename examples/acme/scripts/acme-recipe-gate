@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Check a persisted approval or final report; pass the input bytes unchanged."""
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def read_object(path):
+    value = json.loads(path.read_bytes(), object_pairs_hook=unique_object)
+    if not isinstance(value, dict):
+        raise ValueError("expected a JSON object")
+    return value
+
+
+def canonical_json(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def describe(value):
+    names = {dict: "object", list: "array", str: "string", int: "integer",
+             float: "number", bool: "boolean", type(None): "null"}
+    return f"{canonical_json(value)} ({names[type(value)]})"
+
+
+def compare_request(expected, received, path="approval_request"):
+    if canonical_json(expected) == canonical_json(received):
+        return
+    if isinstance(expected, dict) and isinstance(received, dict):
+        for key in sorted(set(expected) | set(received)):
+            child = f"{path}[{json.dumps(key, ensure_ascii=False)}]"
+            if key not in received:
+                raise ValueError(f"{child}: campo mancante; atteso {describe(expected[key])}")
+            if key not in expected:
+                raise ValueError(f"{child}: campo inatteso; ricevuto {describe(received[key])}")
+            compare_request(expected[key], received[key], child)
+    elif isinstance(expected, list) and isinstance(received, list):
+        if len(expected) != len(received):
+            raise ValueError(f"{path}: lunghezza attesa {len(expected)}, ricevuta {len(received)}")
+        for index, (left, right) in enumerate(zip(expected, received)):
+            compare_request(left, right, f"{path}[{index}]")
+    else:
+        raise ValueError(f"{path}: atteso {describe(expected)}, ricevuto {describe(received)}")
+
+
+def approval(args):
+    decision = read_object(args.input)
+    request = read_object(args.request)
+    fields = {"schema_version", "status", "decision", "kind", "approval_sha256",
+              "user_note", "approval_request"}
+    if set(decision) != fields or type(decision["schema_version"]) is not int or decision["schema_version"] != 1:
+        raise ValueError("invalid approval decision fields or version")
+    if decision["status"] != "approved" or decision["decision"] != "approved":
+        raise ValueError("approval decision is not approved")
+    if decision["user_note"] is not None and not isinstance(decision["user_note"], str):
+        raise ValueError("invalid user_note")
+    compare_request(request, decision["approval_request"])
+    if (type(request.get("schema_version")) is not int or request.get("schema_version") != 1
+            or request.get("status") != "approval-required"
+            or request.get("kind") != args.kind or decision["kind"] != args.kind):
+        raise ValueError("invalid approval request kind, status or version")
+    digest = request.get("approval_sha256")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("invalid approval fingerprint")
+    payload = {key: value for key, value in request.items() if key != "approval_sha256"}
+    canonical = canonical_json(payload)
+    if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != digest or decision["approval_sha256"] != digest:
+        raise ValueError("approval fingerprint mismatch")
+
+
+def accepted(args):
+    lines = args.input.read_bytes().decode("utf-8").splitlines()
+    first = next((line for line in lines if line.strip()), "")
+    if first != "status: accepted":
+        raise ValueError("final report must start with status: accepted")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="mode", required=True)
+    approve = commands.add_parser("approval")
+    approve.add_argument("--input", type=Path, required=True)
+    approve.add_argument("--request", type=Path, required=True)
+    approve.add_argument(
+        "--kind",
+        choices=("github-issue-approach", "code", "ctrl-biz-extraction"),
+        required=True,
+    )
+    approve.set_defaults(check=approval)
+    final = commands.add_parser("accepted")
+    final.add_argument("--input", type=Path, required=True)
+    final.set_defaults(check=accepted)
+    args = parser.parse_args()
+    try:
+        args.check(args)
+        sys.stdout.buffer.write(args.input.read_bytes())
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

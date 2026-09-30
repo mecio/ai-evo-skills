@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Persist a ready GitHub issue analysis in its session worklog."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from acme_worklog_paths import ensure_session_directory
+
+
+def workspace(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        if (candidate / ".ai-evo").exists():
+            return candidate
+    raise SystemExit("error: cannot find .ai-evo workspace")
+
+
+def write_atomic(path: Path, content: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("record",))
+    parser.add_argument("--session-name", required=True)
+    parser.add_argument("--analysis", required=True, help="JSON document or - for stdin")
+    args = parser.parse_args()
+    raw = os.sys.stdin.read() if args.analysis == "-" else args.analysis
+    try:
+        analysis = json.loads(raw)
+        issue = analysis["issue"]
+        number = issue["number"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise SystemExit("error: analysis must contain an issue object")
+    if analysis.get("status") != "ready" or isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise SystemExit("error: analysis must be ready and contain a positive issue number")
+    encoded = (json.dumps(analysis, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    work_root = workspace(Path.cwd()) / ".ai-evo-work"
+    if work_root.is_symlink():
+        raise SystemExit("error: .ai-evo-work must not be a symbolic link")
+    work_root.mkdir(mode=0o755, exist_ok=True)
+    try:
+        directory, _ = ensure_session_directory(work_root, args.session_name)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}")
+    path = directory / f"issue-{number}-analysis.json"
+    write_atomic(path, encoded)
+    print(json.dumps({"schema_version": 1, "issue_number": number, "path": str(path),
+                      "sha256": hashlib.sha256(encoded).hexdigest()}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Inspect or apply same-name upstreams for the active acme gh stack."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from lib.acme_script_common import (
+    fail,
+    git,
+    git_text,
+    load_active_stack,
+    local_oid,
+    write_json,
+)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="action", required=True)
+    inspect = subparsers.add_parser("inspect")
+    inspect.add_argument("--remote", required=True)
+    inspect.add_argument("--output", type=Path)
+    apply = subparsers.add_parser("apply")
+    apply.add_argument("--manifest", type=Path, required=True)
+    return parser.parse_args()
+
+
+def remote_oid(remote: str, branch: str) -> str:
+    result = git("ls-remote", "--heads", remote, f"refs/heads/{branch}", check=False)
+    if result.returncode != 0:
+        fail(result.stderr.strip() or f"cannot inspect remote {remote}")
+    line = result.stdout.strip()
+    return line.split()[0] if line else ""
+
+
+def inspect(remote: str, output: Path | None) -> int:
+    stack = load_active_stack()
+    branches = []
+    for entry in stack.get("branches", []):
+        name = entry.get("branch", "")
+        local = local_oid(name)
+        remote_head = remote_oid(remote, name)
+        upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{name}")
+        expected = f"{remote}/{name}"
+        branches.append({
+            "branch": name,
+            "local_oid": local,
+            "remote_oid": remote_head,
+            "remote_ref": f"refs/heads/{name}",
+            "current_upstream": upstream,
+            "expected_upstream": expected,
+            "eligible": bool(remote_head) and remote_head == local,
+        })
+    data = {
+        "schema_version": 1,
+        "action": "inspect",
+        "remote": remote,
+        "remote_fetch_url": git_text("remote", "get-url", remote),
+        "remote_push_url": git_text("remote", "get-url", "--push", remote),
+        "branches": branches,
+    }
+    write_json(data, output)
+    return 0
+
+
+def apply(manifest_path: Path) -> int:
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot read manifest: {exc}")
+    if manifest.get("schema_version") != 1 or manifest.get("action") != "inspect":
+        fail("manifest is not an upstream inspection manifest")
+    remote = manifest.get("remote")
+    if not isinstance(remote, str) or not remote:
+        fail("manifest remote is missing")
+    if git_text("remote", "get-url", remote) != manifest.get("remote_fetch_url"):
+        fail("remote fetch URL changed after inspection")
+    if git_text("remote", "get-url", "--push", remote) != manifest.get("remote_push_url"):
+        fail("remote push URL changed after inspection")
+    entries = manifest.get("branches")
+    if not isinstance(entries, list) or not entries:
+        fail("manifest contains no stack branches")
+    stack_names = [entry.get("branch") for entry in load_active_stack().get("branches", [])]
+    manifest_names = [entry.get("branch") for entry in entries]
+    if manifest_names != stack_names:
+        fail("manifest branch order differs from the active local stack")
+    results = []
+    failed = False
+    for entry in entries:
+        name = entry.get("branch", "")
+        approved_local = entry.get("local_oid", "")
+        approved_remote = entry.get("remote_oid", "")
+        status = "skipped"
+        reason = "not eligible in approved manifest"
+        if entry.get("eligible") is not True:
+            failed = True
+        if entry.get("eligible") is True:
+            current_local = local_oid(name)
+            current_remote = remote_oid(remote, name)
+            if current_local != approved_local:
+                reason = "local OID changed after inspection"
+                failed = True
+            elif current_remote != approved_remote or current_remote != current_local:
+                reason = "remote OID changed or differs from local OID"
+                failed = True
+            else:
+                refspec = f"+refs/heads/{name}:refs/remotes/{remote}/{name}"
+                fetched = git("fetch", "--no-tags", remote, refspec, check=False)
+                if fetched.returncode != 0:
+                    reason = fetched.stderr.strip() or "fetch failed"
+                    failed = True
+                else:
+                    configured = git("branch", "--set-upstream-to", f"{remote}/{name}", name, check=False)
+                    if configured.returncode != 0:
+                        reason = configured.stderr.strip() or "set-upstream failed"
+                        failed = True
+                    else:
+                        status = "configured"
+                        reason = ""
+        upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{name}")
+        results.append({"branch": name, "status": status, "reason": reason, "upstream": upstream})
+    write_json({
+        "schema_version": 1,
+        "action": "apply",
+        "remote": remote,
+        "success": not failed,
+        "branches": results,
+    })
+    return 1 if failed else 0
+
+
+def main() -> int:
+    args = parse_args()
+    if args.action == "inspect":
+        return inspect(args.remote, args.output)
+    return apply(args.manifest)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

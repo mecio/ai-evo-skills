@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Build a deterministic local branch manifest for an acme work stack."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from pathlib import Path
+
+from lib.acme_script_common import fail, git, load_simple_yaml, write_json
+
+
+ROOT = Path(__file__).resolve().parent.parent
+NAME_SCRIPT = ROOT / "scripts/acme-git-stacked-branch-name"
+BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("plan",))
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--context", choices=("legacy", "current"), required=True)
+    parser.add_argument("--release", default="")
+    parser.add_argument("--issue-number", required=True)
+    parser.add_argument("--issue-name", required=True)
+    parser.add_argument("--method", action="append", default=[])
+    parser.add_argument("--methods-file", type=Path)
+    parser.add_argument("--item", action="append", default=[])
+    parser.add_argument("--items-file", type=Path)
+    parser.add_argument("--without-cover", action="store_true")
+    parser.add_argument("--check-existing", action="store_true")
+    parser.add_argument("--allow-existing-cover", action="store_true")
+    parser.add_argument("--output", type=Path)
+    return parser.parse_args()
+
+
+def generate(arguments: list[str]) -> str:
+    completed = subprocess.run([str(NAME_SCRIPT), *arguments], capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        fail(completed.stderr.strip() or "branch-name generator failed")
+    return completed.stdout.strip()
+
+
+def main() -> int:
+    args = parse_args()
+    branch_config = load_simple_yaml(BRANCH_CONFIG)
+    release = args.release or branch_config.get("current_release")
+    if not isinstance(release, str) or not release:
+        fail("current release is missing from branch configuration")
+    if git("show-ref", "--verify", "--quiet", f"refs/heads/{args.base}", check=False).returncode != 0:
+        fail(f"local base branch does not exist: {args.base}")
+    methods = list(args.method)
+    if args.methods_file:
+        try:
+            loaded = json.loads(args.methods_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            fail(f"cannot read methods file: {exc}")
+        if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+            fail("methods-file must contain a JSON array of strings")
+        methods.extend(loaded)
+    items = list(args.item)
+    if args.items_file:
+        try:
+            loaded = json.loads(args.items_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            fail(f"cannot read items file: {exc}")
+        if not isinstance(loaded, list) or not all(isinstance(item, str) for item in loaded):
+            fail("items-file must contain a JSON array of strings")
+        items.extend(loaded)
+    if methods and items:
+        fail("method inputs cannot be combined with generic item inputs")
+    work_items = items or methods
+    if not work_items:
+        fail("at least one method or item entry is required")
+    if args.without_cover and args.allow_existing_cover:
+        fail("--allow-existing-cover cannot be used with --without-cover")
+
+    initial_item = work_items[0] if args.without_cover else "cover"
+    initial = [
+        "--context", args.context,
+        "--issue-number", args.issue_number,
+        "--issue-name", args.issue_name,
+        "--sequence", "0",
+        "--item", initial_item,
+    ]
+    if args.release:
+        initial[2:2] = ["--release", args.release]
+    first_branch = generate(initial)
+    stack_root = first_branch.rsplit("/", 1)[0]
+    branches = []
+    parent = args.base
+    all_items = [(0, initial_item, first_branch)]
+    remaining_items = work_items[1:] if args.without_cover else work_items
+    first_sequence = 1
+    for sequence, item in enumerate(remaining_items, first_sequence):
+        name = generate([
+            "--stack-root", stack_root,
+            "--sequence", str(sequence),
+            "--item", item,
+        ])
+        all_items.append((sequence, item, name))
+    names = [name for _, _, name in all_items]
+    if len(names) != len(set(names)):
+        fail("two stack items normalize to the same branch name")
+    for sequence, item, name in all_items:
+        exists = git("show-ref", "--verify", "--quiet", f"refs/heads/{name}", check=False).returncode == 0
+        if args.check_existing and exists and not (
+            sequence == 0 and not args.without_cover and args.allow_existing_cover
+        ):
+            fail(f"local branch already exists: {name}")
+        branches.append({
+            "sequence": sequence,
+            "item": item,
+            "branch": name,
+            "parent": parent,
+            "exists_locally": exists,
+        })
+        parent = name
+    data = {
+        "schema_version": 1,
+        "base": args.base,
+        "context": args.context,
+        "release": release,
+        "issue_number": args.issue_number,
+        "issue_name": args.issue_name,
+        "stack_root": stack_root,
+        "branches": branches,
+    }
+    write_json(data, args.output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

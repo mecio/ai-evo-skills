@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "issue", "current_session", "recommended_recipe", "worklog_session_name", "resolved_inputs", "missing_inputs", "suggested_invocation", "reason"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["ready", "input-required", "manual-assessment-required", "workflow-completed"]},
+    "issue": {"type": "integer", "minimum": 1},
+    "current_session": {"type": ["string", "null"], "minLength": 1},
+    "recommended_recipe": {"type": ["string", "null"]},
+    "worklog_session_name": {"type": ["string", "null"]},
+    "resolved_inputs": {"type": "object", "additionalProperties": {"type": "string"}},
+    "missing_inputs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "suggested_invocation": {"type": ["string", "null"]},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "ready"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
+    {"if": {"properties": {"status": {"const": "input-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"minItems": 1}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
+    {"if": {"properties": {"status": {"enum": ["manual-assessment-required", "workflow-completed"]}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "suggested_invocation": {"type": "null"}}}}
+  ]
+}

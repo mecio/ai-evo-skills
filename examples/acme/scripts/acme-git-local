@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Fixed local Git operations for delegated commands; never accepts arbitrary commands or flags."""
+from __future__ import annotations
+import hashlib
+import json
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+import tempfile
+
+HERE = Path(__file__).resolve().parent
+ENV = {**os.environ, 'GIT_NO_LAZY_FETCH': '1', 'GIT_TERMINAL_PROMPT': '0', 'GIT_PAGER': 'cat'}
+
+
+def run(*args, ok=(0,)):
+    result = subprocess.run(args, env=ENV, capture_output=True)
+    if result.returncode not in ok:
+        raise ValueError(result.stderr.decode(errors='replace').strip() or f'{args[0]} exited {result.returncode}')
+    return result.stdout
+
+
+def git(*args):
+    return run('git', '--no-pager', *args)
+
+
+def text(*args):
+    return git(*args).decode().strip()
+
+
+def strict_json(raw):
+    def pairs(items):
+        value = {}
+        for key, item in items:
+            if key in value:
+                raise ValueError(f'duplicate key {key}')
+            value[key] = item
+        return value
+    def bad_constant(value):
+        raise ValueError(f'invalid JSON constant {value}')
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=bad_constant)
+
+
+def keys(value, required):
+    if not isinstance(value, dict) or set(value) != set(required.split()):
+        raise ValueError('request fields do not match the operation contract')
+
+
+def branch(value):
+    if not isinstance(value, str) or not value or value.startswith('-'):
+        raise ValueError('invalid branch')
+    git('check-ref-format', '--branch', value)
+    return value
+
+
+def clean():
+    if git('status', '--porcelain=v1', '-z'):
+        raise ValueError('worktree must be clean')
+
+
+def snapshot():
+    current = text('symbolic-ref', '--quiet', '--short', 'HEAD')
+    status = git('-c', 'status.renames=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+    files = []
+    for row in status.split(b'\0'):
+        if not row:
+            continue
+        flags, name = row[:2].decode(), os.fsdecode(row[3:])
+        path = Path(name)
+        # All paths originate in git status; reject submodules rather than hashing their internals.
+        index = git('ls-files', '--stage', '--', name)
+        if index.startswith(b'160000 '):
+            raise ValueError('changed submodules require a separate plan')
+        if path.is_symlink():
+            content = os.fsencode(os.readlink(path))
+        elif path.is_file():
+            content = path.read_bytes()
+        elif not path.exists():
+            content = None
+        else:
+            raise ValueError(f'unsupported changed path: {name}')
+        files.append({'path': name, 'change': 'deleted' if content is None else
+                      ('added' if flags == '??' or 'A' in flags else 'modified'),
+                      'sha256': None if content is None else hashlib.sha256(content).hexdigest()})
+    return {'branch': current, 'initial_oid': text('rev-parse', 'HEAD'),
+            'git_identity': {'name': text('config', 'user.name'), 'email': text('config', 'user.email')},
+            'files': sorted(files, key=lambda item: item['path'])}
+
+
+def message_check(message, issue):
+    if not isinstance(message, str) or type(issue) is not int or issue < 1:
+        raise ValueError('message must be text and issue a positive integer')
+    return runpy.run_path(str(HERE / 'acme-git-commit-check'))['validate_message'](message, str(issue))
+
+
+def prepare_branch(request):
+    keys(request, 'base_branch parent_branch branch sequence')
+    base, parent, name = (branch(request[key]) for key in ('base_branch', 'parent_branch', 'branch'))
+    sequence = request['sequence']
+    if type(sequence) is not int or sequence < 0:
+        raise ValueError('invalid sequence')
+    clean()
+    if text('symbolic-ref', '--quiet', '--short', 'HEAD') != parent:
+        raise ValueError('current branch is not the planned parent')
+    for ref in (base, parent):
+        git('rev-parse', '--verify', f'refs/heads/{ref}^{{commit}}')
+    exists = subprocess.run(['git', 'show-ref', '--verify', '--quiet', f'refs/heads/{name}'], env=ENV)
+    if exists.returncode != 1:
+        raise ValueError('branch already exists or cannot be checked')
+    before = text('rev-parse', 'HEAD')
+    if sequence == 0:
+        if parent != base:
+            raise ValueError('first parent must match base')
+        run('gh', 'stack', 'init', '--base', base, name)
+    else:
+        state = strict_json(run(str(HERE / 'acme-git-stack-state'), '--expected-base', base,
+                                '--expected-top', parent, '--expected-sequence', str(sequence - 1),
+                                '--require-current-top', '--require-clean').decode())
+        if not state['valid']:
+            raise ValueError('parent stack is invalid')
+        run('gh', 'stack', 'add', name)
+    if text('symbolic-ref', '--quiet', '--short', 'HEAD') != name or text('rev-parse', 'HEAD') != before:
+        raise ValueError('created branch does not match the plan; inspect local state before retry')
+    return name
+
+
+def commit(request):
+    if request.get('status') == 'skipped':
+        keys(request, 'status reason')
+        if not isinstance(request['reason'], str) or not request['reason'].strip():
+            raise ValueError('skipped plan requires a reason')
+        return request
+    keys(request, 'status issue branch initial_oid git_identity files summary risks missing_verifications message')
+    if request['status'] != 'ready':
+        raise ValueError('commit plan must be ready')
+    checked = message_check(request['message'], request['issue'])
+    if not checked['valid']:
+        raise ValueError('; '.join(checked['errors']))
+    actual = snapshot()
+    for key in ('branch', 'initial_oid', 'git_identity'):
+        if request[key] != actual[key]:
+            raise ValueError(f'commit plan no longer matches {key}')
+    if not isinstance(request['files'], list) or not request['files']:
+        raise ValueError('ready commit requires files')
+    if sorted(request['files'], key=lambda item: item['path']) != actual['files']:
+        raise ValueError('commit plan no longer matches worktree contents')
+    paths = [item['path'] for item in actual['files']]
+    git('add', '--', *paths)
+    staged = [os.fsdecode(name) for name in git('diff', '--cached', '--name-only', '--no-renames', '-z').split(b'\0') if name]
+    if sorted(staged) != sorted(paths):
+        raise ValueError('staged paths differ; inspect the index before retry')
+    for item in actual['files']:
+        if item['change'] == 'deleted':
+            if git('ls-files', '--', item['path']):
+                raise ValueError('deletion was not staged')
+        elif hashlib.sha256(git('cat-file', 'blob', ':' + item['path'])).hexdigest() != item['sha256']:
+            raise ValueError('staged content differs; inspect filters and index before retry')
+    with tempfile.TemporaryDirectory(prefix='acme-local-commit-') as directory:
+        message = Path(directory) / 'message'
+        message.write_text(request['message'], encoding='utf-8')
+        git('commit', '--file', str(message))  # Keep configured Git hooks; no bypass flags.
+    return {'status': 'committed', 'oid': text('rev-parse', 'HEAD'), 'branch': actual['branch'], 'issue': request['issue']}
+
+
+def verify_branch(request):
+    keys(request, 'base_branch parent_branch branch sequence')
+    for key in ('base_branch', 'parent_branch', 'branch'):
+        branch(request[key])
+    if type(request['sequence']) is not int or request['sequence'] < 0:
+        raise ValueError('invalid sequence')
+    state = strict_json(run(str(HERE / 'acme-git-stack-state'), '--expected-base', request['base_branch'],
+                            '--expected-top', request['branch'], '--expected-parent', request['parent_branch'],
+                            '--expected-sequence', str(request['sequence']), '--require-current-top',
+                            '--require-clean').decode())
+    oid = text('rev-parse', 'HEAD')
+    commits = []
+    for commit_oid in text('rev-list', '--reverse', f"{request['parent_branch']}..HEAD").splitlines():
+        commits.append({
+            'oid': commit_oid,
+            'subject': text('log', '-1', '--format=%s', commit_oid),
+            'files': [os.fsdecode(name) for name in git('diff-tree', '--no-commit-id', '--name-only',
+                                                         '-r', '-z', commit_oid).split(b'\0') if name],
+        })
+    if not commits:
+        raise ValueError('layer must contain at least one commit')
+    return {'status': 'verified', 'stack_state': state,
+            'commit': {'oid': oid, 'subject': text('log', '-1', '--format=%s', oid),
+                       'files': [os.fsdecode(name) for name in git('diff-tree', '--no-commit-id', '--name-only',
+                                                                '-r', '-z', oid).split(b'\0') if name]},
+            'commits': commits}
+
+
+def main():
+    if len(sys.argv) not in (2, 3):
+        raise ValueError('expected an operation and, when required, one JSON argument')
+    operation = sys.argv[1]
+    if operation not in ('inspect', 'validate-message', 'prepare-branch', 'commit', 'verify-branch'):
+        raise ValueError('unsupported local operation')
+    root = text('rev-parse', '--show-toplevel')
+    if Path.cwd().resolve() != Path(root).resolve():
+        raise ValueError('run from the application Git root')
+    if operation == 'inspect':
+        if len(sys.argv) != 2:
+            raise ValueError('inspect takes no arguments')
+        result = snapshot()
+    else:
+        if len(sys.argv) != 3:
+            raise ValueError('operation requires exactly one JSON argument')
+        request = strict_json(sys.argv[2])
+        if not isinstance(request, dict):
+            raise ValueError('request must be an object')
+        if operation == 'validate-message':
+            keys(request, 'message issue')
+            result = message_check(request['message'], request['issue'])
+            if not result['valid']:
+                raise ValueError('; '.join(result['errors']))
+        else:
+            result = {'prepare-branch': prepare_branch, 'commit': commit, 'verify-branch': verify_branch}[operation](request)
+    print(result if isinstance(result, str) else json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise SystemExit(f'error: {exc}') from exc

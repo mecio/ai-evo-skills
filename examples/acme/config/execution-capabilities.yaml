@@ -1,0 +1,57 @@
+version: '1.0'
+capabilities:
+  acme.git-inspect:
+    script: acme-git-local
+    operation: inspect
+    arguments: false
+    workspaces: [read-only, read-write]
+  acme.git-validate-message:
+    script: acme-git-local
+    operation: validate-message
+    arguments: true
+    workspaces: [read-only, read-write]
+  acme.git-prepare-branch:
+    script: acme-git-local
+    operation: prepare-branch
+    arguments: true
+    workspaces: [read-write]
+  acme.git-commit:
+    script: acme-git-local
+    operation: commit
+    arguments: true
+    workspaces: [read-write]
+  acme.git-verify-branch:
+    script: acme-git-local
+    operation: verify-branch
+    arguments: true
+    workspaces: [read-only, read-write]
+  acme.git-prepare-recipe-branch:
+    script: acme-git-recipe-branch
+    operation: prepare
+    arguments: true
+    workspaces: [read-write]
+  acme.worklog-record:
+    script: acme-operation-output-worklog
+    operation: record
+    arguments: true
+    workspaces: [read-write]
+  acme.issue-analysis-record:
+    script: acme-record-github-issue-analysis
+    operation: record
+    arguments: true
+    workspaces: [read-write]
+  acme.issue-breakdown-record:
+    script: acme-record-github-issue-breakdown
+    operation: record
+    arguments: true
+    workspaces: [read-write]
+  acme.workflow-report:
+    script: acme-report-github-issue-workflow
+    operation: report
+    arguments: true
+    workspaces: [read-only, read-write]
+  acme.git-stack-plan:
+    script: acme-git-stack-plan
+    operation: plan
+    arguments: true
+    workspaces: [read-only, read-write]

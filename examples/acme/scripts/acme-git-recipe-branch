@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Safely restore one recipe branch from the configured remote."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from lib.acme_script_common import fail, git, git_text, load_simple_yaml, write_json
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+
+
+def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(arguments, env=ENV, capture_output=True, text=True, check=False)
+    if completed.returncode:
+        fail(completed.stderr.strip() or completed.stdout.strip() or f"command failed: {arguments[0]}")
+    return completed
+
+
+def local_branch_exists(branch: str) -> bool:
+    return git("show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0
+
+
+def remote_branch_exists(remote: str, branch: str) -> bool:
+    return git("show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}", check=False).returncode == 0
+
+
+def checked_branch(value: object) -> str:
+    if not isinstance(value, str) or not value or value.startswith("-"):
+        fail("branch is invalid")
+    git("check-ref-format", "--branch", value)
+    return value
+
+
+def parse_request(raw: str) -> tuple[str, str]:
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(request, dict) or set(request) != {"branch", "branch_type"}:
+        fail("request fields do not match the operation contract")
+    branch = checked_branch(request["branch"])
+    branch_type = request["branch_type"]
+    if branch_type not in {"standard", "stacked"}:
+        fail("branch_type must be standard or stacked")
+    return branch, branch_type
+
+
+def clean_worktree() -> None:
+    if git("status", "--porcelain=v1", "-z").stdout:
+        fail("worktree must be clean")
+
+
+def configured_remote() -> str:
+    configuration = load_simple_yaml(BRANCH_CONFIG)
+    remote = configuration.get("stack_remote")
+    if not isinstance(remote, str) or not remote or remote.startswith("-"):
+        fail("stack_remote is missing from branch configuration")
+    git("remote", "get-url", remote)
+    return remote
+
+
+def switch_standard(branch: str, remote: str) -> str:
+    if local_branch_exists(branch):
+        run("git", "switch", branch)
+        return "local"
+    if not remote_branch_exists(remote, branch):
+        fail(f"remote branch does not exist: {remote}/{branch}")
+    run("git", "switch", "--track", "-c", branch, f"{remote}/{branch}")
+    return "tracking-created"
+
+
+def upstream_for(branch: str, remote: str) -> str:
+    upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{branch}")
+    expected = f"{remote}/{branch}"
+    if upstream != expected:
+        fail(f"branch upstream is {upstream or 'unset'}, expected {expected}")
+    return upstream
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "prepare":
+        fail("expected the prepare operation and one JSON request")
+    root = Path(git_text("rev-parse", "--show-toplevel")).resolve()
+    if Path.cwd().resolve() != root:
+        fail("run from the application Git root")
+    branch, branch_type = parse_request(sys.argv[2])
+    clean_worktree()
+    remote = configured_remote()
+    run("git", "fetch", "--prune", remote)
+    if branch_type == "stacked":
+        run("gh", "stack", "checkout", branch)
+        action = "stack-checked-out"
+    else:
+        action = switch_standard(branch, remote)
+    current = git_text("symbolic-ref", "--quiet", "--short", "HEAD")
+    if current != branch:
+        fail(f"current branch is {current or 'detached'}, expected {branch}")
+    upstream = upstream_for(branch, remote)
+    run("git", "pull", "--ff-only")
+    write_json({
+        "status": "prepared",
+        "branch": branch,
+        "branch_type": branch_type,
+        "remote": remote,
+        "upstream": upstream,
+        "action": action,
+        "oid": git_text("rev-parse", "HEAD"),
+    })
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

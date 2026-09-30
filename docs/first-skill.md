@@ -6,8 +6,9 @@ This walkthrough installs the engine, publishes a complete review skill, and sho
 Use `acme` as the example namespace and run shell commands from the application repository after initialization.
 Check the [requirements](../README.md#requirements) before starting.
 
-To start from complete files, use the [Acme boilerplate](../examples/acme/README.md): three commands and two
-recipes, including a conditional security review. This walkthrough explains how to author the pieces yourself.
+To start from complete files, use the [Acme workflow catalog](../examples/acme/README.md): a production-style
+GitHub delivery workflow with commands, recipes and configurable helper scripts. This walkthrough explains how to
+author the pieces yourself.
 
 ## Install and initialize
 

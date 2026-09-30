@@ -1,42 +1,41 @@
 ---
 name: acme-recipe-02-analyze-github-issue-code
-description: Direct GitHub workflow phase 02-analyze-github-issue-code.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
+description: Legge una issue GitHub e il codice del progetto per produrre un’analisi tecnica persistente e da approvare.
+metadata: { ai-evo-kind: recipe, ai-evo-version: "1.0" }
 ---
 
-# GitHub workflow phase 02-analyze-github-issue-code
+# Analisi tecnica di una issue GitHub
 
 ## Purpose
 
-Execute this bounded workflow phase and preserve its reviewable output.
+Legge una issue GitHub e il codice del progetto per produrre un’analisi tecnica persistente e da approvare.
 
 ## Interface
 
-The formal interface is defined in `recipe.yaml`.
+Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attributi e il passaggio tra le fasi consultare la [guida alle recipe](../../../acme-recipes.md).
 
 ## Procedure
 
-1. Plan the recipe with its received inputs and the invoking adapter.
-2. Advance each step in order, preserving its complete output.
-3. Stop on failure; after success, let the developer explicitly choose the next phase.
+Usala dopo la creazione o l’indicazione di una issue. L’AI legge descrizione, commenti pertinenti, direttive e codice; chiarisce con lo sviluppatore le sole decisioni necessarie, una alla volta. Al termine salva l’analisi pronta in `.ai-evo-work/<sessione>/issue-<numero>-analysis.json`. Non crea work item, branch, commit o modifiche remote.
+
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-02-analyze-github-issue-code` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
+
+Se `worklog_session_name` o `worklog_session_input` non sono ricevuti, risolverli prima del piano secondo la convenzione nella [guida alle recipe](../../../acme-recipes.md); non richiederli allo sviluppatore quando sono deducibili dal contesto della fase.
 
 ## Expected output
 
-The saved result of this workflow phase.
+Il valore `outputs.result` definito in `recipe.yaml`, conservato integralmente nel worklog della sessione.
 
 ## Constraints
 
-- The invoking AI coordinates the recipe.
-- Do not automatically start a later phase.
+Rispettare input, ordine e policy degli step dichiarati. Non avviare automaticamente la fase successiva e non ripetere scritture remote fallite.
 
 ## Success criteria
 
-The phase creates one reviewable saved artifact.
+Gli step previsti terminano senza errori e il checkpoint finale conserva il risultato nella sessione richiesta.
 
 ## Examples
 
 ```text
-$acme-recipe-02-analyze-github-issue-code context="<approved context>"
+$acme-recipe-02-analyze-github-issue-code
 ```

@@ -1,0 +1,20 @@
+version: "1.0"
+
+current_release: "0.0"
+stack_tool: "<stack-tool>"
+stack_remote: origin
+ensure_upstream_after_publish: true
+
+branch_paths:
+  legacy: feature
+  current: feature
+
+stack_root_tpl: "<branch_path>/<current_release>_#<issue_number>_<issue_name_normalized>"
+stack_branch_tpl: "<stack_root>/<sequence>_<stack_item_normalized>"
+
+normalization:
+  case: lower
+  separator: "_"
+  transliterate_ascii: true
+  collapse_separators: true
+  trim_separators: true

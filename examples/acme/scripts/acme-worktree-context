@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Resolve the acme worktree context and its deterministic tool mapping."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from lib.acme_script_common import fail, git_text, load_simple_yaml, write_json
+
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONTEXT_CONFIG = ROOT / "skills/config/acme-worktrees.yaml"
+DEFAULT_BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONTEXT_CONFIG)
+    parser.add_argument("--branch-config", type=Path, default=DEFAULT_BRANCH_CONFIG)
+    parser.add_argument("--field", default="")
+    return parser.parse_args()
+
+
+def normalized_root(value: str) -> str:
+    marker = "/vms/"
+    absolute = str(Path(value).resolve())
+    if marker not in absolute:
+        fail(f"Git root does not contain a vms segment: {absolute}")
+    return "./vms/" + absolute.split(marker, 1)[1].rstrip("/")
+
+
+def main() -> int:
+    args = parse_args()
+    config = load_simple_yaml(args.config.resolve())
+    branch_config = load_simple_yaml(args.branch_config.resolve())
+    actual_root = args.root or git_text("rev-parse", "--show-toplevel")
+    normalized = normalized_root(actual_root)
+    context = ""
+    for candidate in ("legacy", "current"):
+        if config.get(f"{candidate}_root") == normalized:
+            context = candidate
+            break
+    if not context:
+        fail(f"unsupported normalized worktree root: {normalized}")
+    paths = branch_config.get("branch_paths")
+    if not isinstance(paths, dict) or not isinstance(paths.get(context), str):
+        fail(f"missing branch path for context: {context}")
+    lint = str(config.get(f"{context}_lint_bins", ""))
+    trunk = config.get(f"{context}_trunk")
+    if not isinstance(trunk, str) or not trunk:
+        fail(f"missing trunk branch for context: {context}")
+    data = {
+        "schema_version": 1,
+        "context": context,
+        "git_root": str(Path(actual_root).resolve()),
+        "normalized_root": normalized,
+        "runtime": config.get(f"{context}_runtime", ""),
+        "lint_bins": [item for item in lint.split(",") if item],
+        "lint_command": config.get(f"{context}_lint_bins", ""),
+        "branch_path": paths[context],
+        "trunk_branch": trunk,
+    }
+    if args.field:
+        if args.field not in data or isinstance(data[args.field], (list, dict)):
+            fail(f"unknown or non-scalar field: {args.field}")
+        print(data[args.field])
+    else:
+        write_json(data)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

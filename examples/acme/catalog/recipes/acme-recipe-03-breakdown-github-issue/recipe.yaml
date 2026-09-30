@@ -1,61 +1,35 @@
 version: "1.0"
 name: acme-recipe-03-breakdown-github-issue
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-03-breakdown-github-issue", new_workflow_attempt: "${{ inputs.new_workflow_attempt }}", reason: "${{ inputs.reason }}" }
 inputs:
-  context:
-    description: Complete approved context for this phase.
-    required: true
+  issue: { required: true, description: "Numero o URL della issue principale." }
+  issue_analysis: { required: true, description: "Analisi tecnica ready della issue principale." }
+  new_workflow_attempt: { default: "", description: "Usare \"true\" per aprire un nuovo attempt di scomposizione." }
+  reason: { default: "", description: "Motivo obbligatorio quando new_workflow_attempt è true." }
+  worklog_session_name: { required: true, description: "Percorso canonico; se omesso l'agente deriva issue-<numero>/attempt-<nn>/03-breakdown-attempt-<nn>." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
-  - id: perform
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
+  - id: breakdown_issue
+    uses: acme-cmd-breakdown-github-issue
+    executor: current
+    with: { issue_analysis: "${{ inputs.issue_analysis }}" }
+  - id: create_breakdown
+    uses: acme-cmd-create-github-issue-breakdown
+    executor: current
+    with: { breakdown: "${{ steps.breakdown_issue.output }}" }
+  - id: checkpoint_creation
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: create_breakdown, source_name: acme-cmd-create-github-issue-breakdown, outcome: succeeded, output: "${{ steps.create_breakdown.output }}", expected_output_sha256: "${{ steps.create_breakdown.output_sha256 }}", error: "null", complete: "false" }
+  - id: record_breakdown
+    uses: acme-cmd-record-github-issue-breakdown
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", breakdown: "${{ steps.checkpoint_creation.output }}" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.perform.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: record_breakdown, source_name: acme-cmd-record-github-issue-breakdown, outcome: succeeded, output: "${{ steps.record_breakdown.output }}", expected_output_sha256: "${{ steps.record_breakdown.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
-*** Add File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-04-implement-github-issue/SKILL.md
----
-name: acme-recipe-04-implement-github-issue
-description: Implement one approved GitHub issue work item.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
----
-
-# Implement one approved GitHub issue work item.
-
-## Purpose
-
-Implement one approved GitHub issue work item.
-
-## Interface
-
-The formal interface is defined in `recipe.yaml`.
-
-## Procedure
-
-1. Plan `acme-recipe-04-implement-github-issue` with the invoking adapter and supplied inputs.
-2. Advance the planned recipe in order, preserving every complete step output.
-3. Stop on failure and let the developer inspect the resulting artifact before a later phase.
-
-## Expected output
-
-The saved result of this workflow phase.
-
-## Constraints
-
-- The invoking AI coordinates this recipe; no executor is declared.
-- Do not invoke a later phase automatically.
-
-## Success criteria
-
-The phase produces one reviewable artifact and an immutable checkpoint.
-
-## Examples
-
-```text
-$acme-recipe-04-implement-github-issue context="<approved context>"
-```
+  result: { value: "${{ steps.save_result.output }}" }

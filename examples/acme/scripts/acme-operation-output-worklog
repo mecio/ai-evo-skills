@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Persist one recipe step output and return it unchanged."""
+
+from __future__ import annotations
+
+import argparse
+import atexit
+import fcntl
+import hashlib
+import json
+import os
+import re
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, NoReturn
+
+from acme_worklog_paths import ensure_session_directory, session_slug as normalize_session_slug
+
+
+SCHEMA_VERSION = 1
+SESSION_FIELDS = {
+    "schema_version", "session_name", "session_slug", "recipe_name", "session_input",
+    "created_at", "updated_at", "status", "entries",
+}
+RECORD_FIELDS = {
+    "schema_version", "sequence", "attempt", "recorded_at", "session_slug",
+    "recipe_name", "step_name", "source_name", "outcome", "output", "error", "complete",
+}
+ERROR_FIELDS = {"code", "message", "details"}
+RECIPE_RE = re.compile(r"^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$")
+STEP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+SOURCE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def read_json(path: Path, label: str) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read {label}: {exc}")
+
+
+def register_temporary_input_cleanup(directory: Path | None, paths: list[Path]) -> None:
+    if directory is None:
+        return
+    if directory.parent != Path("/tmp") or not directory.name.startswith("ai-evo-worklog-"):
+        fail("temporary-directory must be a direct /tmp/ai-evo-worklog-* directory")
+    if any(path.parent != directory for path in paths):
+        fail("temporary input files must be direct children of temporary-directory")
+
+    def cleanup() -> None:
+        for path in paths:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+    atexit.register(cleanup)
+
+
+def file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def find_workspace(start: Path) -> Path:
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        marker = candidate / ".ai-evo"
+        if marker.is_dir() or marker.is_symlink():
+            return candidate
+    fail("cannot find a .ai-evo directory or symlink in the current path or its parents")
+
+
+def atomic_write(path: Path, content: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def render_json(value: Any) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def validate_session_input(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        fail("session_input must be a JSON object or null")
+    if not value:
+        fail("session_input must be null instead of an empty object")
+    for key in value:
+        if not isinstance(key, str) or not STEP_RE.fullmatch(key):
+            fail("session_input keys must use lowercase snake_case")
+
+
+def validate_error(outcome: str, value: Any) -> None:
+    if outcome == "succeeded":
+        if value is not None:
+            fail("error must be null when outcome is succeeded")
+        return
+    if not isinstance(value, dict) or set(value) != ERROR_FIELDS:
+        fail("error must contain exactly code, message and details when outcome is failed")
+    if all(item is None for item in value.values()):
+        fail("a failed outcome must contain at least one error value")
+
+
+def validate_record(path: Path, value: dict[str, Any]) -> None:
+    for field in ("sequence", "attempt"):
+        if isinstance(value[field], bool) or not isinstance(value[field], int) or value[field] < 1:
+            fail(f"record has an invalid {field}: {path.name}")
+    if not isinstance(value["recorded_at"], str) or not value["recorded_at"].endswith("Z"):
+        fail(f"record has an invalid recorded_at: {path.name}")
+    if not isinstance(value["step_name"], str) or not STEP_RE.fullmatch(value["step_name"]):
+        fail(f"record has an invalid step_name: {path.name}")
+    if not isinstance(value["source_name"], str) or not SOURCE_RE.fullmatch(value["source_name"]):
+        fail(f"record has an invalid source_name: {path.name}")
+    if value["outcome"] not in {"succeeded", "failed"}:
+        fail(f"record has an invalid outcome: {path.name}")
+    if not isinstance(value["complete"], bool):
+        fail(f"record has an invalid complete value: {path.name}")
+    if value["output"] is not None and not isinstance(value["output"], str):
+        fail(f"record has an invalid output: {path.name}")
+    if value["outcome"] == "succeeded" and not isinstance(value["output"], str):
+        fail(f"successful record output must be a string: {path.name}")
+    validate_error(value["outcome"], value["error"])
+    if value["complete"] and value["outcome"] != "succeeded":
+        fail(f"failed record cannot complete a session: {path.name}")
+    expected_name = (
+        f"{value['sequence']:03d}-{value['step_name'].replace('_', '-')}-{value['source_name']}"
+        f"-attempt-{value['attempt']:02d}.json"
+    )
+    if path.name != expected_name:
+        fail(f"record filename does not match its metadata: {path.name}")
+
+
+def entry_from_record(path: Path, record: dict[str, Any]) -> dict[str, Any]:
+    output = record["output"]
+    output_bytes = output.encode("utf-8") if isinstance(output, str) else b""
+    return {
+        "sequence": record["sequence"],
+        "attempt": record["attempt"],
+        "recorded_at": record["recorded_at"],
+        "step_name": record["step_name"],
+        "source_name": record["source_name"],
+        "outcome": record["outcome"],
+        "complete": record["complete"],
+        "file": path.name,
+        "sha256": file_digest(path),
+        "output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+    }
+
+
+def scan_records(session_dir: Path, session: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[tuple[Path, dict[str, Any]]] = []
+    for path in session_dir.glob("*.json"):
+        if not re.fullmatch(r"[0-9]+-.+-attempt-[0-9]+\.json", path.name):
+            continue
+        value = read_json(path, f"record {path.name}")
+        if not isinstance(value, dict) or set(value) != RECORD_FIELDS:
+            fail(f"record fields do not match schema version 1: {path.name}")
+        if value["schema_version"] != SCHEMA_VERSION:
+            fail(f"unsupported record schema version: {path.name}")
+        if value["session_slug"] != session["session_slug"] or value["recipe_name"] != session["recipe_name"]:
+            fail(f"record belongs to a different session: {path.name}")
+        validate_record(path, value)
+        records.append((path, value))
+    records.sort(key=lambda item: item[1]["sequence"])
+    entries: list[dict[str, Any]] = []
+    attempts: dict[str, int] = {}
+    for expected, (path, record) in enumerate(records, 1):
+        if record["sequence"] != expected:
+            fail(f"record sequence is not contiguous at {path.name}")
+        attempts[record["step_name"]] = attempts.get(record["step_name"], 0) + 1
+        if record["attempt"] != attempts[record["step_name"]]:
+            fail(f"record attempt is not contiguous at {path.name}")
+        if record["complete"] and expected != len(records):
+            fail(f"completed record is not the last record: {path.name}")
+        entries.append(entry_from_record(path, record))
+    return entries
+
+
+def validate_index_prefix(stored: list[Any], scanned: list[dict[str, Any]]) -> None:
+    if len(stored) > len(scanned) or stored != scanned[:len(stored)]:
+        fail("session index does not match immutable record files")
+
+
+def context_markdown(session: dict[str, Any]) -> bytes:
+    lines = [
+        f"# Recipe worklog: {session['session_name']}",
+        "",
+        f"- Recipe: `{session['recipe_name']}`",
+        f"- Session: `{session['session_slug']}`",
+        f"- Status: `{session['status']}`",
+        f"- Created: `{session['created_at']}`",
+        f"- Updated: `{session['updated_at']}`",
+        "",
+        "| # | Step | Source | Attempt | Outcome | Time (UTC) | Output SHA-256 | Record |",
+        "|---:|---|---|---:|---|---|---|---|",
+    ]
+    for entry in session["entries"]:
+        lines.append(
+            f"| {entry['sequence']} | `{entry['step_name']}` | `{entry['source_name']}` | "
+            f"{entry['attempt']} | `{entry['outcome']}` | `{entry['recorded_at']}` | "
+            f"`{entry['output_sha256']}` | [{entry['file']}]({entry['file']}) |"
+        )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def load_or_create_session(
+    session_dir: Path,
+    session_name: str,
+    session_slug: str,
+    recipe_name: str,
+    session_input: Any,
+    timestamp: str,
+) -> dict[str, Any]:
+    session_path = session_dir / "session.json"
+    if not session_path.exists():
+        session = {
+            "schema_version": SCHEMA_VERSION,
+            "session_name": session_name,
+            "session_slug": session_slug,
+            "recipe_name": recipe_name,
+            "session_input": session_input,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "status": "active",
+            "entries": [],
+        }
+        atomic_write(session_path, render_json(session))
+        atomic_write(session_dir / "context.md", context_markdown(session))
+        return session
+    value = read_json(session_path, "session.json")
+    if not isinstance(value, dict) or set(value) != SESSION_FIELDS:
+        fail("session.json fields do not match schema version 1")
+    if value["schema_version"] != SCHEMA_VERSION:
+        fail("unsupported session.json schema version")
+    if value["status"] not in {"active", "completed"} or not isinstance(value["entries"], list):
+        fail("session.json contains an invalid status or entries value")
+    expected = {
+        "session_name": session_name,
+        "session_slug": session_slug,
+        "recipe_name": recipe_name,
+        "session_input": session_input,
+    }
+    for key, expected_value in expected.items():
+        if value[key] != expected_value:
+            fail(f"existing session has a different {key}")
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("record",))
+    parser.add_argument("--session-name", required=True)
+    parser.add_argument("--recipe-name", required=True)
+    parser.add_argument("--session-input", type=Path, required=True)
+    parser.add_argument("--work-context", type=Path)
+    parser.add_argument("--step-name", required=True)
+    parser.add_argument("--source-name", required=True)
+    parser.add_argument("--outcome", choices=("succeeded", "failed"), required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-output-sha256", required=True)
+    parser.add_argument("--error", type=Path, required=True)
+    parser.add_argument("--temporary-directory", type=Path)
+    parser.add_argument("--artifact-name", default="", help="Optional stable artifact filename in the session")
+    parser.add_argument("--complete", action="store_true")
+    args = parser.parse_args()
+
+    if not RECIPE_RE.fullmatch(args.recipe_name):
+        fail("recipe_name is invalid")
+    if not STEP_RE.fullmatch(args.step_name):
+        fail("step_name must use lowercase snake_case")
+    if not SOURCE_RE.fullmatch(args.source_name):
+        fail("source_name is invalid")
+    if args.complete and args.outcome != "succeeded":
+        fail("only a succeeded source can complete a session")
+    if args.artifact_name and not re.fullmatch(r"issue-[1-9][0-9]*-[a-z0-9-]+\.(?:md|json)", args.artifact_name):
+        fail("artifact-name must be a portable issue artifact filename")
+    register_temporary_input_cleanup(
+        args.temporary_directory,
+        [args.session_input, args.output, args.error]
+        + ([args.work_context] if args.work_context else []),
+    )
+
+    session_input = read_json(args.session_input, "session_input")
+    work_context = read_json(args.work_context, "work_context") if args.work_context else None
+    if work_context is not None:
+        if not isinstance(work_context, dict):
+            fail("work_context must be a JSON object or null")
+        sequence = work_context.get("sequence")
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            fail("work_context.sequence must be a non-negative integer")
+        args.step_name = f"work_item_{sequence}_{args.step_name}"
+        if not STEP_RE.fullmatch(args.step_name):
+            fail("derived step_name is invalid")
+    error = read_json(args.error, "error")
+    validate_session_input(session_input)
+    validate_error(args.outcome, error)
+    try:
+        output = args.output.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        fail(f"cannot read output: {exc}")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_output_sha256):
+        fail("expected-output-sha256 must be a lowercase SHA-256 digest")
+    if hashlib.sha256(output.encode("utf-8")).hexdigest() != args.expected_output_sha256:
+        fail("output does not match expected-output-sha256")
+
+    try:
+        normalized_session_slug = normalize_session_slug(args.session_name)
+    except ValueError as exc:
+        fail(str(exc))
+    workspace = find_workspace(Path.cwd())
+    work_root = workspace / ".ai-evo-work"
+    if work_root.is_symlink():
+        fail(".ai-evo-work must not be a symbolic link")
+    work_root.mkdir(mode=0o755, exist_ok=True)
+    lock_descriptor = os.open(work_root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        try:
+            session_dir, session_slug = ensure_session_directory(work_root, args.session_name)
+        except ValueError as exc:
+            fail(str(exc))
+        if session_slug != normalized_session_slug:
+            fail("session path normalization changed unexpectedly")
+        timestamp = utc_now()
+        session = load_or_create_session(
+            session_dir, args.session_name, session_slug, args.recipe_name, session_input, timestamp
+        )
+        entries = scan_records(session_dir, session)
+        validate_index_prefix(session["entries"], entries)
+        session["entries"] = entries
+        if entries:
+            session["updated_at"] = entries[-1]["recorded_at"]
+            session["status"] = "completed" if entries[-1]["complete"] else "active"
+        if session["status"] == "completed":
+            atomic_write(session_dir / "session.json", render_json(session))
+            atomic_write(session_dir / "context.md", context_markdown(session))
+            fail("session is already completed")
+
+        sequence = len(entries) + 1
+        attempt = 1 + sum(entry["step_name"] == args.step_name for entry in entries)
+        filename = (
+            f"{sequence:03d}-{args.step_name.replace('_', '-')}-{args.source_name}"
+            f"-attempt-{attempt:02d}.json"
+        )
+        record_path = session_dir / filename
+        if record_path.exists():
+            fail(f"record already exists: {record_path}")
+        record = {
+            "schema_version": SCHEMA_VERSION,
+            "sequence": sequence,
+            "attempt": attempt,
+            "recorded_at": timestamp,
+            "session_slug": session_slug,
+            "recipe_name": args.recipe_name,
+            "step_name": args.step_name,
+            "source_name": args.source_name,
+            "outcome": args.outcome,
+            "output": output if output or args.outcome == "succeeded" else None,
+            "error": error,
+            "complete": args.complete,
+        }
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        descriptor = os.open(record_path, flags, 0o644)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(render_json(record))
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        if args.artifact_name:
+            atomic_write(session_dir / args.artifact_name, output.encode("utf-8"))
+
+        session["entries"] = scan_records(session_dir, session)
+        session["updated_at"] = timestamp
+        session["status"] = "completed" if args.complete else "active"
+        atomic_write(session_dir / "session.json", render_json(session))
+        atomic_write(session_dir / "context.md", context_markdown(session))
+    finally:
+        os.close(lock_descriptor)
+
+    os.write(1, output.encode("utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

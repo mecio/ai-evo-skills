@@ -1,0 +1,11 @@
+version: "1.0"
+
+legacy_root: "./vms/<legacy-worktree>"
+legacy_trunk: "main"
+legacy_runtime: "<legacy-runtime>"
+legacy_lint_bins: "<legacy-lint-command>"
+
+current_root: "./vms/<current-worktree>"
+current_trunk: "main"
+current_runtime: "<current-runtime>"
+current_lint_bins: "<current-lint-command>"

@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Generate and validate acme stacked branch names from project configuration."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import unicodedata
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+PLACEHOLDER_RE = re.compile(r"<([a-z][a-z0-9_]*)>")
+
+
+def fail(message: str) -> "NoReturn":
+    raise SystemExit(f"error: {message}")
+
+
+def scalar(value: str) -> object:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return value
+
+
+def load_simple_yaml(path: Path) -> dict[str, object]:
+    """Read the deliberately simple two-level mapping used by this config."""
+    if not path.is_file():
+        fail(f"configuration file not found: {path}")
+
+    result: dict[str, object] = {}
+    section: str | None = None
+    for number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        line = raw_line.strip()
+        if ":" not in line:
+            fail(f"invalid configuration line {number}")
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+            fail(f"invalid key on configuration line {number}: {key}")
+        if indent == 0:
+            if not value.strip():
+                result[key] = {}
+                section = key
+            else:
+                result[key] = scalar(value)
+                section = None
+        elif indent == 2 and section:
+            nested = result[section]
+            if not isinstance(nested, dict) or not value.strip():
+                fail(f"invalid nested value on configuration line {number}")
+            nested[key] = scalar(value)
+        else:
+            fail(f"unsupported indentation on configuration line {number}")
+    return result
+
+
+def require_string(config: dict[str, object], key: str) -> str:
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        fail(f"missing string configuration: {key}")
+    return value
+
+
+def normalize(value: str, config: dict[str, object]) -> str:
+    rules = config.get("normalization")
+    if not isinstance(rules, dict):
+        fail("missing normalization configuration")
+    separator = rules.get("separator")
+    if not isinstance(separator, str) or len(separator) != 1:
+        fail("normalization.separator must be one character")
+
+    text = value.strip()
+    if rules.get("transliterate_ascii") is True:
+        text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", separator, text)
+    text = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", separator, text)
+    if rules.get("case") == "lower":
+        text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", separator, text)
+    if rules.get("collapse_separators") is True:
+        text = re.sub(re.escape(separator) + r"+", separator, text)
+    if rules.get("trim_separators") is True:
+        text = text.strip(separator)
+    if not text:
+        fail(f"value becomes empty after normalization: {value!r}")
+    return text
+
+
+def render(template: str, values: dict[str, str]) -> str:
+    unknown = sorted(set(PLACEHOLDER_RE.findall(template)) - values.keys())
+    if unknown:
+        fail(f"unresolved template placeholders: {', '.join(unknown)}")
+    output = template
+    for key, value in values.items():
+        output = output.replace(f"<{key}>", value)
+    remaining = PLACEHOLDER_RE.findall(output)
+    if remaining:
+        fail(f"unresolved template placeholders: {', '.join(sorted(set(remaining)))}")
+    return output
+
+
+def validate_branch(branch: str) -> None:
+    completed = subprocess.run(
+        ["git", "check-ref-format", "--branch", branch],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "invalid Git branch name"
+        fail(detail)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--context", choices=("legacy", "current"))
+    parser.add_argument("--release", default="")
+    parser.add_argument("--issue-number")
+    parser.add_argument("--issue-name")
+    parser.add_argument("--stack-root")
+    parser.add_argument("--sequence", type=int, required=True)
+    parser.add_argument("--item", required=True)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    config = load_simple_yaml(args.config.resolve())
+    if args.sequence < 0:
+        fail("sequence must be zero or greater")
+
+    if args.stack_root:
+        if any((args.context, args.release, args.issue_number, args.issue_name)):
+            fail("--stack-root cannot be combined with context, release or issue inputs")
+        stack_root = args.stack_root.strip().rstrip("/")
+        validate_branch(f"{stack_root}/probe")
+    else:
+        if not args.context or not args.issue_number or not args.issue_name:
+            fail("context, issue-number and issue-name are required without --stack-root")
+        if not re.fullmatch(r"[1-9][0-9]*", args.issue_number):
+            fail("issue-number must be a positive integer")
+        release = args.release or require_string(config, "current_release")
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", release):
+            fail("release must contain numeric components separated by dots")
+        paths = config.get("branch_paths")
+        if not isinstance(paths, dict) or not isinstance(paths.get(args.context), str):
+            fail(f"missing branch path for context: {args.context}")
+        root_template = require_string(config, "stack_root_tpl")
+        stack_root = render(
+            root_template,
+            {
+                "branch_path": str(paths[args.context]).strip("/"),
+                "current_release": release,
+                "issue_number": args.issue_number,
+                "issue_name_normalized": normalize(args.issue_name, config),
+            },
+        )
+
+    branch_template = require_string(config, "stack_branch_tpl")
+    branch = render(
+        branch_template,
+        {
+            "stack_root": stack_root,
+            "sequence": f"{args.sequence:02d}",
+            "stack_item_normalized": normalize(args.item, config),
+        },
+    )
+    validate_branch(branch)
+    print(branch)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,47 +1,48 @@
 ---
 name: acme-recipe-04-implement-github-issue-correction
-description: Apply explicit corrections to a locally committed GitHub implementation before publication.
+description: Corregge un'implementazione locale già committata prima della sua pubblicazione.
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
 ---
 
-# Correct a local GitHub issue implementation
+# Correzione locale dell'implementazione GitHub
 
 ## Purpose
 
-Apply developer-requested corrections in an independent phase-04 session when an implementation has been committed
-locally but has not yet been published.
+Correggere un'implementazione locale già committata prima della pubblicazione, senza riusare la sessione nativa di Claude.
 
 ## Interface
 
-The formal interface is defined in `recipe.yaml`.
+Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per sessioni e passaggi di fase consultare la
+[guida alle recipe](../../../acme-recipes.md).
 
 ## Procedure
 
-Use this optional sibling recipe only after a successful local implementation checkpoint and before a publication
-step. Keep the original session immutable. Its `context` must carry the recorded branch, parent and implementation
-report; `correction_instructions` must be explicit and non-empty. Verify the worktree and branch before changing
-code, preserve existing commits, apply only the requested corrections, run relevant checks and save the complete
-updated implementation report. A project that publishes branches must keep its remote write in a distinct later
-step or recipe.
+Il resolver la propone solo dopo un checkpoint `implement_issue` riuscito della recipe 04 originale, senza
+checkpoint `publish_branch`, e solo quando lo sviluppatore fornisce `correction_instructions` non vuote. La recipe
+apre una sessione autonoma, affida la correzione a Claude, registra un checkpoint non conclusivo, pubblica il
+branch e conserva il risultato conclusivo. Non modifica il piano o il journal della sessione 04 originaria.
+
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-implement-github-issue-correction`
+e gli input risolti. Seguire il protocollo in `.ai-evo/docs/recipe-runtime.md`: avanzare solo lo step risolto e
+fermare la recipe al primo errore. Il push è confinato allo step `publish_branch`.
 
 ## Expected output
 
-The saved, updated implementation result, including the corrections and their local verification evidence.
+Il valore `outputs.result` di `recipe.yaml`: il report di implementazione aggiornato, con tutti i commit del branch
+rispetto al parent e la distinzione delle correzioni applicate.
 
 ## Constraints
 
-- Do not resume or alter the original delegated session merely to apply the correction.
-- Do not rewrite existing commits or perform a remote write.
-- Do not automatically start review or publication.
+Non usare `gh stack init`, `gh stack add`, rebase o amend. Non eseguire scritture remote fuori da `publish_branch`.
 
 ## Success criteria
 
-The original checkpoint remains immutable and the correction produces one independently reviewable artifact.
+Il checkpoint finale conserva un report conforme al contratto di implementazione, con tutti i commit del branch e le correzioni distinguibili.
 
 ## Examples
 
 ```text
-$acme-recipe-04-implement-github-issue-correction context="<04 checkpoint>" correction_instructions="Use the real fixture-backed repository."
+$acme-recipe-04-implement-github-issue-correction correction_instructions="Correggi il test con JsonDb."
 ```

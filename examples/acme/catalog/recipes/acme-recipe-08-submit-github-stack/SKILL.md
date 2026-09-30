@@ -1,42 +1,51 @@
 ---
 name: acme-recipe-08-submit-github-stack
-description: Direct GitHub workflow phase 08-submit-github-stack.
-metadata:
-  ai-evo-kind: recipe
-  ai-evo-version: "1.0"
+description: Crea o aggiorna in draft le pull request collegate di uno stack pubblicato e ne sincronizza i metadati.
+metadata: { ai-evo-kind: recipe, ai-evo-version: "1.0" }
 ---
 
-# GitHub workflow phase 08-submit-github-stack
+# Submit delle pull request di uno stack GitHub
 
 ## Purpose
 
-Execute this bounded workflow phase and preserve its reviewable output.
+Creare o aggiornare le pull request collegate dopo la pubblicazione e l'agganciamento degli upstream, mantenendole
+in draft e aggiornandone titolo e descrizione in base al lavoro effettivamente svolto.
 
 ## Interface
 
-The formal interface is defined in `recipe.yaml`.
+Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attributi e il passaggio tra le fasi
+consultare la [guida alle recipe](../../../acme-recipes.md).
 
 ## Procedure
 
-1. Plan the recipe with its received inputs and the invoking adapter.
-2. Advance each step in order, preserving its complete output.
-3. Stop on failure; after success, let the developer explicitly choose the next phase.
+Usarla soltanto dopo la recipe 07 riuscita. L'invocazione esplicita della recipe e `submit_authorized: "true"`
+autorizzano la sola creazione o aggiornamento delle pull request dello stack attivo. Lo step esegue
+`gh stack submit --auto`: le nuove PR nascono draft senza editor interattivo; le PR già aperte sono convertite in
+draft se necessario. Prima di submit, conversione a draft o modifica di una PR, mostra una tabella di riepilogo e
+attende una conferma valida per quel solo comando remoto. Per ciascun layer, titolo e descrizione vengono aggiornati
+dal diff incrementale e dalle evidenze di verifica, senza cambiare altri metadati GitHub.
+
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-08-submit-github-stack` e gli input
+ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire
+soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento
+restituire l’output invariato.
 
 ## Expected output
 
-The saved result of this workflow phase.
+Il valore `outputs.result` definito in `recipe.yaml`, conservato integralmente nel worklog della sessione.
 
 ## Constraints
 
-- The invoking AI coordinates the recipe.
-- Do not automatically start a later phase.
+Non aprire PR ready for review, non aggiungere reviewer o commenti e non eseguire merge, rebase, sync o force
+push. Non creare o aggiornare pull request quando manca l'autorizzazione esplicita.
 
 ## Success criteria
 
-The phase creates one reviewable saved artifact.
+Ogni branch dello stack ha una pull request collegata in draft, con titolo e descrizione che rappresentano il
+relativo lavoro verificato.
 
 ## Examples
 
 ```text
-$acme-recipe-08-submit-github-stack context="<approved context>"
+$acme-recipe-08-submit-github-stack submit_authorized="true"
 ```

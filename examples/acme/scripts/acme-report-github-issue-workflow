@@ -1,0 +1,972 @@
+#!/usr/bin/env python3
+"""Report the resumable state and next recipe for a GitHub issue workflow."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+from pathlib import Path
+from typing import Any, NoReturn
+
+from acme_worklog_paths import layer_session_name
+
+
+SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
+LAYER_RE = re.compile(r"^[Ll][0-9]+$")
+
+NEW_WORKFLOW_RECIPES = {
+    "acme-recipe-01-refine-github-issue": ("01", "refine"),
+    "acme-recipe-02-analyze-github-issue-code": ("02", "analyze"),
+}
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def find_workspace(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        marker = candidate / ".ai-evo"
+        if marker.is_dir() or marker.is_symlink():
+            return candidate
+    fail("cannot find a .ai-evo directory or symlink in the current path or its parents")
+
+
+def parse_issue(value: str) -> int:
+    match = re.fullmatch(r"#?([1-9][0-9]*)", value.strip())
+    if not match:
+        fail("issue must be a positive number, with an optional # prefix")
+    return int(match.group(1))
+
+
+def pending_creation_sessions(workspace: Path, issue: int) -> list[dict[str, Any]]:
+    """Find completed recipe 00 sessions that recorded creation of ``issue``."""
+    root = workspace / ".ai-evo-work" / "issue-pending"
+    found: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return found
+    for path in root.glob("attempt-*/00-design-attempt-*/session.json"):
+        session = read_json(path)
+        if (session.get("recipe_name") != "acme-recipe-00-design-github-issue"
+                or session.get("status") != "completed"):
+            continue
+        entries = session.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in reversed(entries):
+            if not isinstance(entry, dict) or entry.get("step_name") != "create_issue":
+                continue
+            filename = entry.get("file")
+            if not isinstance(filename, str):
+                continue
+            record = read_json(path.parent / filename)
+            if record.get("outcome") != "succeeded" or not isinstance(record.get("output"), str):
+                continue
+            try:
+                output = json.loads(record["output"])
+            except json.JSONDecodeError:
+                continue
+            if output.get("number") == issue:
+                found.append({"path": path.parent, "session": session})
+            break
+    return found
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read {path}: {exc}")
+    if not isinstance(value, dict):
+        fail(f"{path} must contain a JSON object")
+    return value
+
+
+def sessions(issue_root: Path) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for path in issue_root.glob("attempt-*/**/session.json"):
+        relative = path.parent.relative_to(issue_root)
+        parts = relative.parts
+        if not parts or not re.fullmatch(r"attempt-[0-9]+", parts[0]):
+            continue
+        layer_id = None
+        session_part = parts[1] if len(parts) == 2 else None
+        if len(parts) == 4 and parts[1] == "layers" and LAYER_RE.fullmatch(parts[2]):
+            layer_id = parts[2].upper()
+            session_part = parts[3]
+        match = SESSION_RE.fullmatch(session_part or "")
+        if not match:
+            continue
+        session = read_json(path)
+        if session.get("session_slug") != str(path.parent.relative_to(issue_root.parent)):
+            # The worklog might be copied elsewhere. The canonical directory name remains authoritative.
+            session_name = session.get("session_name")
+            if not isinstance(session_name, str):
+                fail(f"session has no valid name: {path}")
+        found.append({
+            "path": path.parent,
+            "session": session,
+            "workflow_attempt": int(parts[0].removeprefix("attempt-")),
+            "phase": match.group("phase"),
+            "action": match.group("action"),
+            "phase_attempt": int(match.group("attempt")),
+            "layer_id": layer_id,
+        })
+    return found
+
+
+def latest_workflow(sessions_for_issue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not sessions_for_issue:
+        return []
+    attempt = max(item["workflow_attempt"] for item in sessions_for_issue)
+    return [item for item in sessions_for_issue if item["workflow_attempt"] == attempt]
+
+
+def latest_phase(workflow: list[dict[str, Any]]) -> dict[str, Any]:
+    # A completed correction supersedes the paused implementation checkpoint even
+    # when both are their first attempt under phase 04.
+    return max(workflow, key=lambda item: (item["phase"], item["phase_attempt"],
+                                           item.get("action") == "correction"))
+
+
+def workflow_attempts(sessions_for_issue: list[dict[str, Any]]) -> list[int]:
+    return sorted({item["workflow_attempt"] for item in sessions_for_issue})
+
+
+def artifact(session_dir: Path, pattern: str) -> str | None:
+    matches = sorted(session_dir.glob(pattern))
+    return str(matches[0]) if len(matches) == 1 else None
+
+
+def next_session(issue: int, workflow_attempt: int, phase: str, action: str) -> str:
+    return f"issue-{issue}/attempt-{workflow_attempt:02d}/{phase}-{action}-attempt-01"
+
+
+CORRECTION_RECIPE = "acme-recipe-04-implement-github-issue-correction"
+
+
+def successful_step_output(session: dict[str, Any], step_name: str) -> dict[str, Any] | None:
+    """Read the immutable JSON output of the last successful named checkpoint."""
+    entries = session["session"].get("entries")
+    if not isinstance(entries, list):
+        return None
+    for entry in reversed(entries):
+        if not isinstance(entry, dict) or entry.get("step_name") != step_name or entry.get("outcome") != "succeeded":
+            continue
+        filename = entry.get("file")
+        if not isinstance(filename, str):
+            return None
+        try:
+            record = read_json(session["path"] / filename)
+            output = record.get("output")
+            if isinstance(output, str):
+                output = json.loads(output)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        return output if isinstance(output, dict) else None
+    return None
+
+
+def has_unpublished_correction_checkpoint(session: dict[str, Any]) -> bool:
+    """A correction path is valid only immediately after its local implementation checkpoint."""
+    entries = session["session"].get("entries")
+    if not isinstance(entries, list) or not entries:
+        return False
+    expected = "correct_implementation" if session.get("action") == "correction" else "implement_issue"
+    last = entries[-1]
+    if not isinstance(last, dict) or last.get("step_name") != expected or last.get("outcome") != "succeeded":
+        return False
+    return not any(isinstance(entry, dict) and entry.get("step_name") == "publish_branch" for entry in entries)
+
+
+def correction_session_name(issue: int, current: dict[str, Any]) -> str:
+    """Create the next independent phase-04 correction session beside its source."""
+    parent = current["path"].parent
+    attempts = []
+    for candidate in parent.glob("04-correction-attempt-*/session.json"):
+        match = SESSION_RE.fullmatch(candidate.parent.name)
+        if match:
+            attempts.append(int(match.group("attempt")))
+    source_name = current["session"]["session_name"]
+    prefix = source_name.rsplit("/", 1)[0]
+    return f"{prefix}/04-correction-attempt-{max(attempts, default=0) + 1:02d}"
+
+
+def new_breakdown_attempt(issue: int, current_workflow: list[dict[str, Any]], all_sessions: list[dict[str, Any]],
+                          reason: str) -> dict[str, Any]:
+    """Open a new 03 attempt while retaining an immutable analysis from the current one."""
+    current = latest_phase(current_workflow)
+    unfinished = [item for item in current_workflow if item["session"].get("status") != "completed"]
+    if unfinished:
+        return blocked(issue, current, "L'attempt corrente contiene sessioni attive o fallite da recuperare prima di aprirne uno nuovo.")
+    breakdowns = [item for item in current_workflow if item["phase"] == "03" and item["layer_id"] is None]
+    for breakdown_session in breakdowns:
+        path = artifact(breakdown_session["path"], f"issue-{issue}-breakdown.json")
+        if not path:
+            continue
+        breakdown = read_json(Path(path))
+        if breakdown.get("mode") == "epic" and isinstance(breakdown.get("sub_issues"), list) and breakdown["sub_issues"]:
+            return blocked(issue, current, "L'attempt corrente ha creato sub-issue dell'epic: non è sicuro invalidarne gli effetti remoti.")
+    analyses = [item for item in current_workflow if item["phase"] == "02" and item["layer_id"] is None
+                and item["session"].get("status") == "completed"]
+    ready: list[tuple[dict[str, Any], str]] = []
+    for analysis_session in analyses:
+        path = artifact(analysis_session["path"], f"issue-{issue}-analysis.json")
+        if path:
+            ready.append((analysis_session, path))
+    if not ready:
+        return blocked(issue, current, "Manca una fase 02 conclusa con l'artefatto di analisi nell'attempt corrente.")
+    analysis_session, analysis_path = max(ready, key=lambda item: item[0]["phase_attempt"])
+    next_attempt = max(workflow_attempts(all_sessions)) + 1
+    name = next_session(issue, next_attempt, "03", "breakdown")
+    inputs = {"issue_analysis": analysis_path, "worklog_session_name": name,
+              "worklog_session_input": json.dumps({
+                  "issue": str(issue), "analysis_session": analysis_session["session"]["session_name"],
+                  "previous_workflow_attempt": current["workflow_attempt"], "reason": reason,
+              }, ensure_ascii=False, sort_keys=True)}
+    invocation = " ".join(["$acme-recipe-03-breakdown-github-issue"] +
+                          [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in inputs.items()])
+    return {"schema_version": 1, "status": "ready", "issue": issue,
+            "current_session": current["session"]["session_name"],
+            "recommended_recipe": "acme-recipe-03-breakdown-github-issue",
+            "worklog_session_name": name, "resolved_inputs": inputs, "missing_inputs": [],
+            "suggested_invocation": invocation,
+            "reason": "Si apre un nuovo attempt di scomposizione con l'analisi conclusa dell'attempt precedente."}
+
+
+def implementation_evidence(workspace: Path, issue: int, trunk: str) -> tuple[str | None, str | None]:
+    try:
+        repository = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        return None, f"Impossibile verificare il repository Git locale: {exc}."
+    if repository.returncode != 0 or repository.stdout.strip() != "true":
+        return None, "La worktree non è un repository Git: non è sicuro suggerire una nuova implementazione."
+    branches = subprocess.run(
+        ["git", "-C", str(workspace), "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        capture_output=True, text=True, check=False,
+    )
+    if branches.returncode != 0:
+        return None, "Impossibile leggere i branch locali: non è sicuro suggerire una nuova implementazione."
+    marker = f"#{issue}_"
+    for branch in (line for line in branches.stdout.splitlines() if marker in line):
+        commits = subprocess.run(
+            ["git", "-C", str(workspace), "log", "--format=%H%x00%s", trunk + ".." + branch],
+            capture_output=True, text=True, check=False,
+        )
+        if commits.returncode != 0:
+            return None, f"Impossibile confrontare i commit locali con {trunk}: non è sicuro suggerire una nuova implementazione."
+        for line in commits.stdout.splitlines():
+            sha, separator, subject = line.partition("\x00")
+            if separator and subject.startswith(f"#{issue} "):
+                return (branch, f"{sha} {subject}"), None
+    return None, None
+
+
+def issue_branches(workspace: Path, issue: int) -> list[str]:
+    """Return all local issue branches; stacked callers filter already-recorded layers."""
+    branches = subprocess.run(["git", "-C", str(workspace), "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+                              capture_output=True, text=True, check=False)
+    if branches.returncode:
+        return []
+    found: list[str] = []
+    for branch in branches.stdout.splitlines():
+        if f"#{issue}_" not in branch:
+            continue
+        commits = subprocess.run(["git", "-C", str(workspace), "log", "--format=%s", branch],
+                                 capture_output=True, text=True, check=False)
+        if any(subject.startswith(f"#{issue} ") for subject in commits.stdout.splitlines()):
+            found.append(branch)
+    return found
+
+
+def implementation_stack_layer(workspace: Path, issue: int, expected_branch: str | None = None) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Find the gh-stack layer that contains the implementation commits for an issue."""
+    try:
+        metadata = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--git-path", "gh-stack"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        return None, f"Impossibile leggere i metadati dello stack locale: {exc}.", []
+    if metadata.returncode:
+        return None, "Impossibile localizzare i metadati dello stack locale.", []
+    metadata_path = Path(metadata.stdout.strip())
+    if not metadata_path.is_absolute():
+        metadata_path = workspace / metadata_path
+    try:
+        document = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"Impossibile leggere lo stack locale: {exc}.", []
+    stacks = document.get("stacks")
+    if not isinstance(stacks, list):
+        return None, "I metadati dello stack locale non contengono una lista di stack.", []
+    matches: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    configured_trunk, _, _ = trunk_branch(workspace)
+
+    def local_branch_exists(branch: str) -> bool:
+        verification = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+            capture_output=True, text=True, check=False,
+        )
+        return verification.returncode == 0
+
+    for stack in stacks:
+        if not isinstance(stack, dict):
+            continue
+        trunk = stack.get("trunk", {}).get("branch") if isinstance(stack.get("trunk"), dict) else None
+        branches = stack.get("branches")
+        if not isinstance(trunk, str) or not trunk or not isinstance(branches, list):
+            continue
+        if configured_trunk and trunk != configured_trunk:
+            warnings.append(f"Stack dichiara il trunk {trunk}, diverso dal trunk configurato {configured_trunk}.")
+        if not local_branch_exists(trunk):
+            warnings.append(f"Stack ignorato: il trunk locale {trunk} non esiste.")
+            continue
+        parent = trunk
+        for sequence, entry in enumerate(branches):
+            branch = entry.get("branch") if isinstance(entry, dict) else None
+            if not isinstance(branch, str) or not branch:
+                warnings.append("Stack ignorato: contiene un layer senza un branch valido.")
+                break
+            missing = [name for name in (parent, branch) if not local_branch_exists(name)]
+            if missing:
+                warnings.append(
+                    f"Stack ignorato dal layer {branch}: manca il branch locale {missing[0]}."
+                )
+                break
+            commits = subprocess.run(
+                ["git", "-C", str(workspace), "log", "--format=%s", f"{parent}..{branch}"],
+                capture_output=True, text=True, check=False,
+            )
+            if commits.returncode:
+                warnings.append(f"Stack ignorato dal layer {branch}: impossibile leggere i commit.")
+                break
+            if expected_branch == branch or (expected_branch is None and any(subject.startswith(f"#{issue} ") for subject in commits.stdout.splitlines())):
+                matches.append({
+                    "base_branch": trunk,
+                    "parent_branch": parent,
+                    "branch": branch,
+                    "sequence": sequence,
+                })
+            parent = branch
+    if len(matches) == 1:
+        return matches[0], None, warnings
+    if not matches:
+        if expected_branch:
+            return None, f"Il branch atteso {expected_branch} non è un layer leggibile dello stack locale.", warnings
+        return None, "Nessun layer dello stack locale contiene commit dell'issue.", warnings
+    return None, "Più layer dello stack locale contengono commit dell'issue; selezionare il layer manualmente.", warnings
+
+
+def legacy_child_stack_layer(workspace: Path, issue: int, parent_branch: str) -> tuple[dict[str, Any] | None, str | None, list[str]]:
+    """Find the single direct stacked child of a recorded parent for a legacy 04 checkpoint."""
+    try:
+        metadata = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--git-path", "gh-stack"],
+                                  capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return None, f"Impossibile leggere i metadati dello stack locale: {exc}.", []
+    if metadata.returncode:
+        return None, "Impossibile localizzare i metadati dello stack locale.", []
+    metadata_path = Path(metadata.stdout.strip())
+    if not metadata_path.is_absolute():
+        metadata_path = workspace / metadata_path
+    try:
+        document = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"Impossibile leggere lo stack locale: {exc}.", []
+    candidates: list[dict[str, Any]] = []
+    for stack in document.get("stacks", []):
+        if not isinstance(stack, dict):
+            continue
+        trunk = stack.get("trunk", {}).get("branch") if isinstance(stack.get("trunk"), dict) else None
+        branches = stack.get("branches")
+        if not isinstance(trunk, str) or not isinstance(branches, list):
+            continue
+        parent = trunk
+        for sequence, entry in enumerate(branches):
+            branch = entry.get("branch") if isinstance(entry, dict) else None
+            if not isinstance(branch, str):
+                break
+            if parent == parent_branch and branch_has_issue_commit(workspace, issue, branch, parent):
+                candidates.append({"base_branch": trunk, "parent_branch": parent, "branch": branch, "sequence": sequence})
+            parent = branch
+    if len(candidates) == 1:
+        return candidates[0], None, [
+            f"Checkpoint 04 legacy senza output JSON: individuato il figlio diretto {candidates[0]['branch']} del parent {parent_branch}."
+        ]
+    if not candidates:
+        return None, f"Il checkpoint 04 legacy non ha un figlio diretto univoco con commit dell'issue dal parent {parent_branch}.", []
+    return None, f"Il checkpoint 04 legacy ha più figli diretti con commit dell'issue dal parent {parent_branch}; selezionare il layer manualmente.", []
+
+
+def recorded_branch(session: dict[str, Any] | None) -> str | None:
+    """Get the immutable branch coordinate from a layer checkpoint."""
+    if session is None:
+        return None
+    input_value = session["session"].get("session_input")
+    if isinstance(input_value, dict) and isinstance(input_value.get("branch"), str):
+        return input_value["branch"]
+    for record in sorted(session["path"].glob("[0-9]*.json"), reverse=True):
+        try:
+            value = read_json(record)
+            output = value.get("output")
+            if isinstance(output, str):
+                output = json.loads(output)
+            if isinstance(output, dict) and isinstance(output.get("branch"), str):
+                return output["branch"]
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            continue
+    return None
+
+
+def branch_has_issue_commit(workspace: Path, issue: int, branch: str, parent: str | None = None) -> bool:
+    revision = f"{parent}..{branch}" if parent else branch
+    result = subprocess.run(["git", "-C", str(workspace), "log", "--format=%s", revision],
+                            capture_output=True, text=True, check=False)
+    return result.returncode == 0 and any(subject.startswith(f"#{issue} ") for subject in result.stdout.splitlines())
+
+
+def current_branch(workspace: Path) -> str | None:
+    result = subprocess.run(["git", "-C", str(workspace), "branch", "--show-current"],
+                            capture_output=True, text=True, check=False)
+    branch = result.stdout.strip()
+    return branch if result.returncode == 0 and branch else None
+
+
+def correction_recommendation(issue: int, source: dict[str, Any], workspace: Path,
+                              correction_instructions: str, layer: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve an independent correction only from a successful 04 checkpoint."""
+    step_name = "correct_implementation" if source.get("action") == "correction" else "implement_issue"
+    implementation = successful_step_output(source, step_name)
+    if implementation is None:
+        return blocked(issue, source, f"Il checkpoint {step_name} della recipe 04 non contiene un output JSON riutilizzabile.")
+    branch = implementation.get("branch")
+    parent = implementation.get("parent_branch")
+    if not isinstance(branch, str) or not branch or not isinstance(parent, str) or not parent:
+        return blocked(issue, source, "L'output registrato della recipe 04 non contiene branch e parent_branch validi.")
+    if current_branch(workspace) != branch:
+        return blocked(issue, source, f"Il branch corrente non corrisponde al branch registrato dalla recipe 04 ({branch}).")
+    if not branch_has_issue_commit(workspace, issue, branch, parent):
+        return blocked(issue, source, "Il branch registrato dalla recipe 04 non contiene i commit dell'issue rispetto al parent registrato.")
+    session_name = correction_session_name(issue, source)
+    combined = source["session"].get("session_input")
+    original = combined.get("developer_instructions", "") if isinstance(combined, dict) else ""
+    if not isinstance(original, str):
+        original = ""
+    instructions = "\n\n".join(item for item in (original, correction_instructions) if item)
+    inputs = {
+        "issue": str(issue), "branch": branch, "parent_branch": parent,
+        "implementation_report": json.dumps(implementation, ensure_ascii=False, sort_keys=True),
+        "developer_instructions": original,
+    }
+    if layer:
+        inputs["layer"] = json.dumps(layer, ensure_ascii=False, sort_keys=True)
+    if correction_instructions:
+        inputs["correction_instructions"] = correction_instructions
+    missing = [] if correction_instructions.strip() else ["correction_instructions"]
+    return recommendation(
+        issue, source, CORRECTION_RECIPE, session_name, inputs, missing,
+        "Il checkpoint di implementazione è riuscito ma il branch non è ancora pubblicato: si apre una sessione di correzione separata.",
+        {"implementation_session": source["session"]["session_name"], "branch": branch,
+         "parent_branch": parent, "implementation_instructions": instructions,
+         "correction_instructions": correction_instructions,
+         **({"layer_id": layer["id"], "layer_sequence": layer["sequence"]} if layer else {})},
+    )
+
+
+def trunk_branch(workspace: Path) -> tuple[str | None, list[str], str | None]:
+    """Resolve the configured worktree trunk, with a visible legacy fallback."""
+    context_script = Path(__file__).with_name("acme-worktree-context")
+    try:
+        context = subprocess.run([str(context_script), "--root", str(workspace)],
+                                 capture_output=True, text=True, check=False)
+        data = json.loads(context.stdout) if context.returncode == 0 else None
+    except (OSError, json.JSONDecodeError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("trunk_branch"), str) and data["trunk_branch"]:
+        trunk = data["trunk_branch"]
+        result = subprocess.run(["git", "-C", str(workspace), "show-ref", "--verify", "--quiet",
+                                 f"refs/heads/{trunk}"], check=False)
+        if result.returncode != 0:
+            return None, [], f"Il trunk configurato per il contesto {data.get('context', '')} ({trunk}) non esiste come branch locale."
+        return trunk, [], None
+    for candidate in ("master", "main"):
+        result = subprocess.run(["git", "-C", str(workspace), "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"], check=False)
+        if result.returncode == 0:
+            return candidate, [f"Contesto worktree non risolvibile: usato il fallback legacy {candidate}."], None
+    return "master", ["Contesto worktree non risolvibile: usato il fallback legacy master, che non esiste localmente."], None
+
+
+def stacked_sessions(workflow: list[dict[str, Any]], layer_id: str, phase: str) -> list[dict[str, Any]]:
+    return [item for item in workflow if item["layer_id"] == layer_id and item["phase"] == phase]
+
+
+def latest_layer_session(workflow: list[dict[str, Any]], layer_id: str, phase: str) -> dict[str, Any] | None:
+    matches = stacked_sessions(workflow, layer_id, phase)
+    return max(matches, key=lambda item: (item["phase_attempt"], item.get("action") == "correction")) if matches else None
+
+
+def layer_branch(workspace: Path, issue: int, workflow: list[dict[str, Any]], ordered: list[dict[str, Any]],
+                 sequence: int) -> tuple[str | None, str | None, list[str]]:
+    """Resolve a layer branch from its checkpoint, including a unique legacy child."""
+    layer = ordered[sequence]
+    implementation = latest_layer_session(workflow, str(layer["id"]).upper(), "04")
+    if implementation is None:
+        return None, f"Manca il checkpoint 04 del layer {layer['id']}.", []
+    branch = recorded_branch(implementation)
+    if branch:
+        return branch, None, []
+    if sequence == 0:
+        return None, f"Il checkpoint 04 del layer {layer['id']} non registra il branch implementato.", []
+    parent, problem, inherited_warnings = layer_branch(workspace, issue, workflow, ordered, sequence - 1)
+    if problem or not parent:
+        return None, problem, inherited_warnings
+    recovered, problem, warnings = legacy_child_stack_layer(workspace, issue, parent)
+    if problem:
+        return None, problem, inherited_warnings + warnings
+    assert recovered is not None
+    return recovered["branch"], None, inherited_warnings + warnings
+
+
+def stacked_recommendation(issue: int, current: dict[str, Any], recipe: str, session_name: str,
+                           inputs: dict[str, str], layer: dict[str, Any], reason: str,
+                           analysis_session: str | None = None, developer_instructions: str = "") -> dict[str, Any]:
+    lineage = {"issue": str(issue), "layer_id": layer["id"], "layer_sequence": layer["sequence"],
+               "breakdown_session": current["session"]["session_name"]}
+    analysis = current["session"].get("session_input")
+    if isinstance(analysis, dict) and isinstance(analysis.get("analysis_session"), str):
+        lineage["analysis_session"] = analysis["analysis_session"]
+    elif analysis_session:
+        lineage["analysis_session"] = analysis_session
+    if developer_instructions:
+        lineage["developer_instructions"] = developer_instructions
+        inputs["developer_instructions"] = developer_instructions
+    return recommendation(issue, current, recipe, session_name, inputs, [], reason, lineage)
+
+
+def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list[dict[str, Any]],
+                   workspace: Path, breakdown: dict[str, Any], developer_instructions: str = "",
+                   requested_recipe: str | None = None, correction_instructions: str = "") -> dict[str, Any]:
+    layers = breakdown.get("layers", breakdown.get("items"))
+    if not isinstance(layers, list) or len(layers) < 2:
+        return blocked(issue, breakdown_session, "La scomposizione stacked non contiene almeno due layer validi.")
+    ordered = sorted((item for item in layers if isinstance(item, dict)), key=lambda item: item.get("sequence", -1))
+    analysis = next((item["session"].get("session_name") for item in workflow
+                     if item["phase"] == "02" and item["layer_id"] is None and item["session"].get("status") == "completed"), None)
+    for layer in ordered:
+        layer_id = layer.get("id")
+        sequence = layer.get("sequence")
+        if not isinstance(layer_id, str) or not LAYER_RE.fullmatch(layer_id) or not isinstance(sequence, int):
+            return blocked(issue, breakdown_session, "La scomposizione stacked contiene un layer non valido.")
+        layer_id = layer_id.upper()
+        review = latest_layer_session(workflow, layer_id, "05")
+        if review:
+            if review["session"].get("status") == "completed":
+                continue
+            return blocked(issue, review, "La review del layer è attiva: recuperare prima la stessa sessione.")
+        implementation = latest_layer_session(workflow, layer_id, "04")
+        if implementation:
+            if implementation["session"].get("status") != "completed":
+                if (requested_recipe == CORRECTION_RECIPE and implementation.get("action") in {"implement", "correction"}
+                        and has_unpublished_correction_checkpoint(implementation)):
+                    return correction_recommendation(issue, implementation, workspace, correction_instructions,
+                                                     {**layer, "id": layer_id})
+                return blocked(issue, implementation, "L'implementazione del layer è attiva: recuperare prima la stessa sessione.")
+            branch, problem, recovery_warnings = layer_branch(workspace, issue, workflow, ordered, sequence)
+            if problem or not branch:
+                return blocked(issue, implementation, with_stack_warnings(problem or "Il branch del layer non è risolvibile.", recovery_warnings))
+            stack, problem, warnings = implementation_stack_layer(workspace, issue, branch)
+            if problem:
+                return blocked(issue, implementation, with_stack_warnings(problem, recovery_warnings + warnings))
+            assert stack is not None
+            implementation_input = implementation["session"].get("session_input")
+            instructions = implementation_input.get("implementation_instructions", "") if isinstance(implementation_input, dict) else ""
+            if not instructions and isinstance(implementation_input, dict):
+                instructions = implementation_input.get("developer_instructions", "")
+            if not isinstance(instructions, str):
+                instructions = ""
+            return stacked_recommendation(issue, breakdown_session, "acme-recipe-05-review-github-issue",
+                layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "05", "review"),
+                {"issue": str(issue), "branch": stack["branch"], "base": stack["parent_branch"],
+                 "stack_layer": json.dumps(stack, ensure_ascii=False, sort_keys=True),
+                 "work_specification": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
+                 "review_artifact_name": f"issue-{issue}-review.md", "implementation_instructions": instructions},
+                {**layer, "id": layer_id}, with_stack_warnings("Il checkpoint 04 del layer è concluso.", recovery_warnings + warnings), analysis)
+        expected = layer.get("existing_branch")
+        if not isinstance(expected, str) or not expected:
+            completed_branches: set[str] = set()
+            for previous_sequence in range(sequence):
+                previous_branch, problem, _ = layer_branch(workspace, issue, workflow, ordered, previous_sequence)
+                if problem or not previous_branch:
+                    return blocked(issue, breakdown_session, problem or "Il branch di un layer precedente non è risolvibile.")
+                completed_branches.add(previous_branch)
+            parent = None
+            if sequence > 0:
+                parent, problem, _ = layer_branch(workspace, issue, workflow, ordered, sequence - 1)
+                if problem or not parent:
+                    return blocked(issue, breakdown_session, problem or "Il branch del layer precedente non è risolvibile.")
+            for candidate in issue_branches(workspace, issue):
+                if candidate in completed_branches:
+                    continue
+                stack, _, _ = implementation_stack_layer(workspace, issue, candidate)
+                if stack and (parent is None or stack["parent_branch"] == parent):
+                    expected = candidate
+                    break
+        if isinstance(expected, str) and expected:
+            stack, problem, warnings = implementation_stack_layer(workspace, issue, expected)
+            if stack and branch_has_issue_commit(workspace, issue, expected, stack["parent_branch"]):
+                return stacked_recommendation(issue, breakdown_session, "acme-recipe-04-adopt-github-issue-layer",
+                    layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "04", "implement"),
+                    {"issue": str(issue), "layer": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
+                     "branch": expected}, {**layer, "id": layer_id},
+                    "Esiste un layer implementato senza checkpoint 04: adottarlo esplicitamente.", analysis)
+        base = None
+        if sequence > 0:
+            base, problem, _ = layer_branch(workspace, issue, workflow, ordered, sequence - 1)
+            if problem or not base:
+                return blocked(issue, breakdown_session, problem or "Manca il branch del layer precedente.")
+        inputs = {"issue": str(issue), "layer": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
+                  "base_branch": base or trunk_branch(workspace)[0]}
+        if sequence > 0:
+            previous_review = latest_layer_session(workflow, str(ordered[sequence - 1].get("id", "")).upper(), "05")
+            if previous_review and previous_review["session"].get("status") == "completed":
+                review_path = artifact(previous_review["path"], f"issue-{issue}-review.md")
+                if review_path:
+                    inputs["previous_review"] = review_path
+        return stacked_recommendation(issue, breakdown_session, "acme-recipe-04-implement-github-issue",
+            layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "04", "implement"), inputs,
+            {**layer, "id": layer_id}, "È il primo layer stacked non implementato.", analysis, developer_instructions)
+    return {"schema_version": 1, "status": "workflow-completed", "issue": issue,
+            "current_session": breakdown_session["session"]["session_name"], "recommended_recipe": None,
+            "worklog_session_name": None, "resolved_inputs": {}, "missing_inputs": [], "suggested_invocation": None,
+            "reason": "La review dell'ultimo layer stacked è conclusa."}
+
+
+def report_completed(issue: int, current: dict[str, Any], workspace: Path, trunk: str,
+                     developer_instructions: str = "") -> dict[str, Any]:
+    phase = current["phase"]
+    workflow_attempt = current["workflow_attempt"]
+    session_dir = current["path"]
+    if phase in {"00", "01"}:
+        name = next_session(issue, workflow_attempt, "02", "analyze")
+        return recommendation(issue, current, "acme-recipe-02-analyze-github-issue-code", name,
+                              {"issue": str(issue), "issue_number": str(issue)}, [])
+    if phase == "02":
+        analysis = artifact(session_dir, f"issue-{issue}-analysis.json")
+        if not analysis:
+            return blocked(issue, current, "Manca l'artefatto di analisi pronto della fase 02.")
+        name = next_session(issue, workflow_attempt, "03", "breakdown")
+        return recommendation(
+            issue, current, "acme-recipe-03-breakdown-github-issue", name,
+            {"issue_analysis": analysis}, [],
+        )
+    if phase == "03":
+        breakdown_path = artifact(session_dir, f"issue-{issue}-breakdown.json")
+        if not breakdown_path:
+            return blocked(issue, current, "Manca l'artefatto di scomposizione della fase 03.")
+        breakdown = read_json(Path(breakdown_path))
+        mode = breakdown.get("mode")
+        if mode == "single":
+            evidence, problem = implementation_evidence(workspace, issue, trunk)
+            if problem:
+                return blocked(issue, current, problem)
+            if evidence:
+                branch, commit = evidence
+                return blocked(
+                    issue, current,
+                    f"Implementazione già presente senza checkpoint 04: branch {branch}, commit {commit}. "
+                    "Recuperare il journal runtime della recipe 04 o registrare il checkpoint prima di proseguire.",
+                )
+            name = next_session(issue, workflow_attempt, "04", "implement")
+            return recommendation(
+                issue, current, "acme-recipe-04-implement-github-issue", name,
+                {"issue": str(issue), "base_branch": trunk,
+                 **({"developer_instructions": developer_instructions} if developer_instructions else {})}, [],
+                session_input_extra={"developer_instructions": developer_instructions} if developer_instructions else None,
+            )
+        if mode == "epic":
+            return blocked(issue, current, "L'epic richiede la selezione della prima sub-issue non completata.")
+        return blocked(issue, current, "La scomposizione non dichiara una modalità single o epic.")
+    if phase == "04":
+        layer, problem, warnings = implementation_stack_layer(workspace, issue)
+        if problem:
+            return blocked(issue, current, with_stack_warnings(problem, warnings))
+        assert layer is not None
+        name = next_session(issue, workflow_attempt, "05", "review")
+        implementation_input = current["session"].get("session_input")
+        instructions = implementation_input.get("implementation_instructions", "") if isinstance(implementation_input, dict) else ""
+        if not instructions and isinstance(implementation_input, dict):
+            instructions = implementation_input.get("developer_instructions", "")
+        if not isinstance(instructions, str):
+            instructions = ""
+        return recommendation(
+            issue, current, "acme-recipe-05-review-github-issue", name,
+            {
+                "issue": str(issue),
+                "branch": layer["branch"],
+                "base": layer["parent_branch"],
+                "stack_layer": json.dumps(layer, ensure_ascii=False, sort_keys=True),
+                "review_artifact_name": f"issue-{issue}-review.md",
+                "implementation_instructions": instructions,
+            }, [], with_stack_warnings("La precedente recipe è conclusa e il suo artefatto è disponibile.", warnings),
+        )
+    if phase == "05":
+        return {
+            "schema_version": 1,
+            "status": "workflow-completed",
+            "issue": issue,
+            "current_session": current["session"]["session_name"],
+            "recommended_recipe": None,
+            "worklog_session_name": None,
+            "resolved_inputs": {},
+            "missing_inputs": [],
+            "suggested_invocation": None,
+            "reason": "La review della issue principale è conclusa.",
+        }
+    if phase in {"07", "08"}:
+        return {
+            "schema_version": 1,
+            "status": "workflow-completed",
+            "issue": issue,
+            "current_session": current["session"]["session_name"],
+            "recommended_recipe": None,
+            "worklog_session_name": None,
+            "resolved_inputs": {},
+            "missing_inputs": [],
+            "suggested_invocation": None,
+            "reason": "La pubblicazione o il submit dello stack è concluso.",
+        }
+    return blocked(issue, current, "La fase conclusa non ha una recipe successiva definita.")
+
+
+def with_stack_warnings(reason: str, warnings: list[str]) -> str:
+    return reason if not warnings else f"{reason} Avvisi sugli stack locali: {' '.join(warnings)}"
+
+
+def recommendation(issue: int, current: dict[str, Any], recipe: str, session_name: str,
+                   resolved_inputs: dict[str, str], missing_inputs: list[str],
+                   reason: str = "La precedente recipe è conclusa e il suo artefatto è disponibile.",
+                   session_input_extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    inputs = dict(resolved_inputs)
+    inputs["worklog_session_name"] = session_name
+    session_input = {"issue": str(issue), "previous_session": current["session"]["session_name"]}
+    if session_input_extra:
+        session_input.update(session_input_extra)
+    inputs["worklog_session_input"] = json.dumps(
+        session_input,
+        ensure_ascii=False, sort_keys=True,
+    )
+    invocation_inputs = dict(inputs)
+    for name in missing_inputs:
+        invocation_inputs[name] = f"<{name}>"
+    suggested_invocation = " ".join(
+        [f"${recipe}"] + [f"{name}={json.dumps(value, ensure_ascii=False)}"
+                             for name, value in invocation_inputs.items()]
+    )
+    return {
+        "schema_version": 1,
+        "status": "ready" if not missing_inputs else "input-required",
+        "issue": issue,
+        "current_session": current["session"]["session_name"],
+        "recommended_recipe": recipe,
+        "worklog_session_name": session_name,
+        "resolved_inputs": inputs,
+        "missing_inputs": missing_inputs,
+        "suggested_invocation": suggested_invocation,
+        "reason": reason,
+    }
+
+
+def blocked(issue: int, current: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "status": "manual-assessment-required",
+        "issue": issue,
+        "current_session": current["session"]["session_name"],
+        "recommended_recipe": None,
+        "worklog_session_name": None,
+        "resolved_inputs": {},
+        "missing_inputs": [],
+        "suggested_invocation": None,
+        "reason": reason,
+    }
+
+
+def add_warnings(report: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
+    if warnings:
+        report["warnings"] = warnings
+    return report
+
+
+def stack_trunk_warnings(workspace: Path, configured_trunk: str) -> list[str]:
+    """Expose conflicting gh-stack trunks as report warnings without trusting them."""
+    metadata = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--git-path", "gh-stack"],
+                              capture_output=True, text=True, check=False)
+    if metadata.returncode:
+        return []
+    path = Path(metadata.stdout.strip())
+    if not path.is_absolute():
+        path = workspace / path
+    try:
+        stacks = json.loads(path.read_text(encoding="utf-8")).get("stacks", [])
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(stacks, list):
+        return []
+    return [f"Stack dichiara il trunk {trunk}, diverso dal trunk configurato {configured_trunk}."
+            for stack in stacks if isinstance(stack, dict)
+            for trunk in [stack.get("trunk", {}).get("branch") if isinstance(stack.get("trunk"), dict) else None]
+            if isinstance(trunk, str) and trunk and trunk != configured_trunk]
+
+
+def new_workflow_report(issue: int, requested_recipe: str | None,
+                        developer_instructions: str, creation_session: str | None = None) -> dict[str, Any]:
+    """Return the only recipes that may start a workflow without local worklog."""
+    if requested_recipe in NEW_WORKFLOW_RECIPES:
+        phase, action = NEW_WORKFLOW_RECIPES[requested_recipe]
+        session_name = next_session(issue, 1, phase, action)
+        session_input = {"issue": str(issue)}
+        if creation_session:
+            session_input["creation_session"] = creation_session
+        if developer_instructions:
+            session_input["developer_instructions"] = developer_instructions
+        resolved_inputs = {
+            "issue": str(issue),
+            "issue_number": str(issue),
+            "worklog_session_name": session_name,
+            "worklog_session_input": json.dumps(session_input, ensure_ascii=False, sort_keys=True),
+        }
+        suggested_invocation = " ".join(
+            [f"${requested_recipe}"] + [f"{name}={json.dumps(value, ensure_ascii=False)}"
+                                      for name, value in resolved_inputs.items()]
+        )
+        return {
+            "schema_version": 1,
+            "status": "ready",
+            "issue": issue,
+            "current_session": None,
+            "recommended_recipe": requested_recipe,
+            "worklog_session_name": session_name,
+            "resolved_inputs": resolved_inputs,
+            "missing_inputs": [],
+            "suggested_invocation": suggested_invocation,
+            "reason": ("La recipe 00 pending che ha creato la issue è collegata al primo tentativo del workflow."
+                       if creation_session else "Non esistono sessioni locali: viene aperto il primo tentativo del workflow."),
+        }
+    return {
+        "schema_version": 1,
+        "status": "manual-assessment-required",
+        "issue": issue,
+        "current_session": None,
+        "recommended_recipe": None,
+        "worklog_session_name": None,
+        "resolved_inputs": {},
+        "missing_inputs": [],
+        "suggested_invocation": None,
+        "reason": (
+            "Non esistono sessioni locali per questa issue. Le recipe 03-06 richiedono gli "
+            "artefatti delle fasi precedenti; avviare prima la recipe 01 o 02."
+        ),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("report",))
+    parser.add_argument("--issue", required=True, help="Numero della issue, con # opzionale, oppure pending")
+    parser.add_argument("--issue-number", default="", help="Numero reale quando --issue è pending")
+    parser.add_argument("--requested-recipe", help="Recipe che il runtime sta pianificando")
+    parser.add_argument("--developer-instructions", default="", help="Vincoli iniziali dello sviluppatore")
+    parser.add_argument("--correction-instructions", default="", help="Correzioni esplicite da applicare al branch non pubblicato")
+    parser.add_argument("--new-workflow-attempt", default="", help='"true" per aprire un nuovo attempt della fase richiesta')
+    parser.add_argument("--reason", default="", help="Motivo obbligatorio per un nuovo workflow attempt")
+    args = parser.parse_args()
+    pending = args.issue.strip() == "pending"
+    if pending:
+        if not args.issue_number:
+            fail('issue-number is required when issue is "pending"')
+        issue = parse_issue(args.issue_number)
+    else:
+        issue = parse_issue(args.issue)
+        if args.issue_number:
+            fail('issue-number can be used only when issue is "pending"')
+    if args.new_workflow_attempt not in {"", "true"}:
+        fail('new-workflow-attempt must be "true" or empty')
+    workspace = find_workspace(Path.cwd())
+    trunk, context_warnings, trunk_problem = trunk_branch(workspace)
+    if trunk_problem:
+        current = {"session": {"session_name": None}}
+        print(json.dumps(blocked(issue, current, trunk_problem), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    assert trunk is not None
+    context_warnings += stack_trunk_warnings(workspace, trunk)
+    issue_root = workspace / ".ai-evo-work" / f"issue-{issue}"
+    candidates = sessions(issue_root) if issue_root.is_dir() else []
+    workflow = latest_workflow(candidates)
+    if not workflow:
+        if pending:
+            creations = pending_creation_sessions(workspace, issue)
+            if len(creations) != 1:
+                current = {"session": {"session_name": None}}
+                reason = ("Nessuna recipe 00 conclusa in issue-pending registra la creazione della issue "
+                          f"#{issue}." if not creations else
+                          f"Più recipe 00 pending registrano la creazione della issue #{issue}; indicare una sessione specifica.")
+                result = blocked(issue, current, reason)
+            else:
+                result = new_workflow_report(
+                    issue, args.requested_recipe, args.developer_instructions,
+                    creations[0]["session"].get("session_name"),
+                )
+        else:
+            result = new_workflow_report(issue, args.requested_recipe, args.developer_instructions)
+        print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.new_workflow_attempt == "true" and args.requested_recipe == "acme-recipe-03-breakdown-github-issue":
+        current = latest_phase(workflow)
+        result = (new_breakdown_attempt(issue, workflow, candidates, args.reason.strip()) if args.reason.strip()
+                  else blocked(issue, current, "Il motivo è obbligatorio per aprire un nuovo workflow attempt."))
+        print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    # A stacked breakdown owns several independent 04/05 session pairs.  Resolve it
+    # from its ordered layer map instead of treating the numerically latest phase as
+    # the next global phase.
+    stacked_breakdowns = [item for item in workflow if item["phase"] == "03" and item["layer_id"] is None
+                          and item["session"].get("status") == "completed"]
+    if stacked_breakdowns:
+        breakdown_current = max(stacked_breakdowns, key=lambda item: item["phase_attempt"])
+        breakdown_path = artifact(breakdown_current["path"], f"issue-{issue}-breakdown.json")
+        if breakdown_path:
+            breakdown = read_json(Path(breakdown_path))
+            if breakdown.get("mode") == "stacked":
+                result = report_stacked(issue, breakdown_current, workflow, workspace, breakdown, args.developer_instructions,
+                                        args.requested_recipe, args.correction_instructions)
+                print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+                return 0
+    current = latest_phase(workflow)
+    status = current["session"].get("status")
+    if status == "completed":
+        result = report_completed(issue, current, workspace, trunk, args.developer_instructions)
+    elif status == "active":
+        entries = current["session"].get("entries")
+        failed = isinstance(entries, list) and bool(entries) and entries[-1].get("outcome") == "failed"
+        if (args.requested_recipe == CORRECTION_RECIPE and current["phase"] == "04"
+                and current.get("action") in {"implement", "correction"} and not failed
+                and has_unpublished_correction_checkpoint(current)):
+            result = correction_recommendation(issue, current, workspace, args.correction_instructions)
+        else:
+            reason = "L'ultimo checkpoint della sessione è fallito: recuperare prima piano e journal runtime della stessa recipe." if failed else "La sessione è attiva: recuperare prima piano e journal runtime della stessa recipe."
+            result = blocked(issue, current, reason)
+    else:
+        result = blocked(issue, current, "Lo stato della sessione non è riconosciuto.")
+    print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acme.local/ai-evo/acme-github-issue-approach.schema.json",
+  "title": "acme GitHub issue initial approach manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "issue",
+    "objective",
+    "requirements",
+    "acceptance_criteria",
+    "proposed_approach",
+    "analysis_scope",
+    "constraints",
+    "risks",
+    "assumptions",
+    "questions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["ready", "user-decision-required"] },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "title", "url", "state"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://github\\.com/[^/]+/[^/]+/issues/[1-9][0-9]*/?$"
+        },
+        "state": { "type": "string", "minLength": 1 }
+      }
+    },
+    "objective": { "type": "string", "minLength": 1 },
+    "requirements": { "$ref": "#/$defs/nonEmptyStrings" },
+    "acceptance_criteria": { "$ref": "#/$defs/nonEmptyStrings" },
+    "proposed_approach": { "$ref": "#/$defs/nonEmptyStrings" },
+    "analysis_scope": { "$ref": "#/$defs/nonEmptyStrings" },
+    "constraints": { "$ref": "#/$defs/strings" },
+    "risks": { "$ref": "#/$defs/strings" },
+    "assumptions": { "$ref": "#/$defs/strings" },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "options", "recommendation"],
+        "properties": {
+          "question": { "type": "string", "minLength": 1 },
+          "options": { "$ref": "#/$defs/nonEmptyStrings" },
+          "recommendation": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "strings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ready" } } },
+      "then": { "properties": { "questions": { "maxItems": 0 } } },
+      "else": { "properties": { "questions": { "minItems": 1 } } }
+    }
+  ]
+}

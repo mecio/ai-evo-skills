@@ -1,19 +1,20 @@
 version: "1.0"
 name: acme-recipe-08-submit-github-stack
 inputs:
-  context:
-    description: Complete approved context for this phase.
-    required: true
+  issue: { required: true, description: "Numero o URL della issue principale o dell'epic proprietario dello stack." }
+  publication_report: { required: true, description: "Rapporto conclusivo della recipe 07." }
+  verification_report: { required: true, description: "Report `verified` della recipe 05 oppure `accepted` della recipe 06." }
+  submit_authorized: { required: true, description: "Deve essere letteralmente true; conferma la scrittura remota delle PR." }
+  worklog_session_name: { required: true, description: "Percorso canonico della sessione di submit." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali del submit." }
 steps:
-  - id: perform
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ inputs.context }}"
+  - id: submit_stack
+    uses: acme-cmd-submit-github-stack-prs
+    executor: current
+    with: { publication_report: "${{ inputs.publication_report }}", verification_report: "${{ inputs.verification_report }}", submit_authorized: "${{ inputs.submit_authorized }}" }
   - id: save_result
-    uses: acme-cmd-github-workflow-phase
-    with:
-      context: "${{ steps.perform.output }}"
+    uses: acme-cmd-save-worklog-output
+    executor: current
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-08-submit-github-stack, session_input: "${{ inputs.worklog_session_input }}", step_name: submit_stack, source_name: acme-cmd-submit-github-stack-prs, outcome: succeeded, output: "${{ steps.submit_stack.output }}", expected_output_sha256: "${{ steps.submit_stack.output_sha256 }}", error: "null", complete: "true" }
 outputs:
-  result:
-    value: "${{ steps.save_result.output }}"
-*** Delete File: /home/devel/Documenti/phpstormproject/torostudio/ai-evo-skills/examples/acme/catalog/recipes/acme-recipe-reviewed-change/SKILL.md
+  result: { value: "${{ steps.save_result.output }}" }
