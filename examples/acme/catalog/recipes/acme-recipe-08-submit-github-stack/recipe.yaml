@@ -6,11 +6,11 @@ inputs:
     required: true
 steps:
   - id: perform
-    uses: acme-cmd-submit-github-stack
+    uses: acme-cmd-github-workflow-phase
     with:
       context: "${{ inputs.context }}"
   - id: save_result
-    uses: acme-cmd-save-worklog-output
+    uses: acme-cmd-github-workflow-phase
     with:
       context: "${{ steps.perform.output }}"
 outputs:
