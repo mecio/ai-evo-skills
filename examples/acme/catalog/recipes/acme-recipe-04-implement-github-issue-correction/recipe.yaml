@@ -1,0 +1,22 @@
+version: "1.0"
+name: acme-recipe-04-implement-github-issue-correction
+inputs:
+  context:
+    description: Immutable implementation report and branch coordinates from the prior phase-04 checkpoint.
+    required: true
+  correction_instructions:
+    description: Explicit, non-empty developer corrections to apply before publication.
+    required: true
+steps:
+  - id: correct_implementation
+    uses: acme-cmd-github-workflow-phase
+    with:
+      context: "${{ inputs.context }}"
+      correction_instructions: "${{ inputs.correction_instructions }}"
+  - id: save_result
+    uses: acme-cmd-github-workflow-phase
+    with:
+      context: "${{ steps.correct_implementation.output }}"
+outputs:
+  result:
+    value: "${{ steps.save_result.output }}"

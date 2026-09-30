@@ -24,7 +24,7 @@ every catalog edit and run `sync` again to publish the new skills to the configu
 
 ## What the catalog contains
 
-The workflow has nine direct recipes. Each ends with a saved result that the developer reviews before starting
+The workflow has nine primary direct recipes plus an optional phase-04 correction recipe. Each ends with a saved result that the developer reviews before starting
 the next phase.
 
 | Phase | Recipe | Outcome |
@@ -34,6 +34,7 @@ the next phase.
 | 02 | `acme-recipe-02-analyze-github-issue-code` | Evidence-backed implementation analysis. |
 | 03 | `acme-recipe-03-breakdown-github-issue` | Single-item, stacked, or epic work map. |
 | 04 | `acme-recipe-04-implement-github-issue` | Implemented work item and local evidence. |
+| 04 | `acme-recipe-04-implement-github-issue-correction` | Explicit correction of a committed, unpublished implementation. |
 | 05 | `acme-recipe-05-review-github-issue` | Review findings and verification result. |
 | 06 | `acme-recipe-06-verify-github-epic-stack` | Epic-level dependency and completion evidence. |
 | 07 | `acme-recipe-07-push-github-stack` | Authorized publication report. |
@@ -54,6 +55,10 @@ $acme-recipe-02-analyze-github-issue-code context="<approved issue reference and
 $acme-recipe-03-breakdown-github-issue context="<approved analysis>"
 $acme-recipe-04-implement-github-issue context="<approved work item and base branch>"
 ```
+
+If the project records a local implementation checkpoint before publication, it can add the optional correction
+recipe with the immutable checkpoint context and explicit correction instructions. Keep the correction in its own
+worklog session; it does not alter the completed steps of the original phase-04 plan.
 
 Use phases 07 and 08 only after explicit authorization to publish remote branches or pull requests. For the
 recipe format, worklog pattern and full command/phase map, read [github-issue-workflow.md](github-issue-workflow.md).

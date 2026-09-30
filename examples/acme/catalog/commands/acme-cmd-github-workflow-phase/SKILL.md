@@ -23,12 +23,15 @@ inputs:
   context:
     description: Complete approved phase context.
     required: true
+  correction_instructions:
+    description: Optional explicit corrections to apply within this phase.
+    default: ""
 ```
 
 ## Procedure
 
 1. Use the resolved handoff or plan this command with the invoking adapter.
-2. Apply the approved context and project rules.
+2. Apply the approved context, project rules and any explicit correction instructions.
 3. Obtain explicit authorization before a remote write.
 4. Return a complete, evidence-backed phase result.
 

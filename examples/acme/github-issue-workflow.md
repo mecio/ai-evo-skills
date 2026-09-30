@@ -34,6 +34,7 @@ Each command is directly invocable. Its `SKILL.md` declares `ai-evo-kind: comman
 | 02 | `acme-recipe-02-analyze-github-issue-code` | Analyze, save checkpoint. |
 | 03 | `acme-recipe-03-breakdown-github-issue` | Break down, prepare stack data, save checkpoint. |
 | 04 | `acme-recipe-04-implement-github-issue` | Implement one item, save implementation checkpoint. |
+| 04 | `acme-recipe-04-implement-github-issue-correction` | Optional: correct a committed, unpublished implementation in a separate session. |
 | 05 | `acme-recipe-05-review-github-issue` | Review, verify the report, save checkpoint. |
 | 06 | `acme-recipe-06-verify-github-epic-stack` | Verify all approved epic items and dependencies. |
 | 07 | `acme-recipe-07-push-github-stack` | Push the verified stack after authorization. |
@@ -42,6 +43,12 @@ Each command is directly invocable. Its `SKILL.md` declares `ai-evo-kind: comman
 Recipes are direct, bounded entrypoints. They do not invoke each other, repeat a completed phase, or carry a
 model-specific suffix. Persist the final output of each phase, let the developer inspect it, then invoke the
 next recipe explicitly.
+
+When a project places publication after the implementation checkpoint, it may offer the optional correction recipe
+beside phase 04. The resolver must propose it only for an active implementation session whose latest successful
+checkpoint is the local implementation and which has no publication checkpoint. It opens a new session with the
+recorded branch, parent and implementation report. Do not edit the original recipe plan or journal; repeatable
+corrections are separate sessions, not a loop inside phase 04. Do not offer this path after publication or review.
 
 ## Recipe pattern
 
@@ -93,5 +100,6 @@ needs to delegate that particular operation; it is never part of the artifact na
 $acme-recipe-00-design-github-issue problem_description="<initial problem>"
 $acme-recipe-02-analyze-github-issue-code issue="1234"
 $acme-recipe-04-implement-github-issue issue="1234" base_branch="main"
+$acme-recipe-04-implement-github-issue-correction context="<04 checkpoint>" correction_instructions="<explicit correction>"
 $acme-recipe-05-review-github-issue issue="1234"
 ```
