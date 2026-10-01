@@ -21,8 +21,9 @@ from acme_worklog_paths import ensure_session_directory, session_slug as normali
 SCHEMA_VERSION = 1
 SESSION_FIELDS = {
     "schema_version", "session_name", "session_slug", "recipe_name", "session_input",
-    "created_at", "updated_at", "status", "entries",
+    "created_at", "updated_at", "status", "entries", "previous_session_name",
 }
+REQUIRED_SESSION_FIELDS = SESSION_FIELDS - {"previous_session_name"}
 RECORD_FIELDS = {
     "schema_version", "sequence", "attempt", "recorded_at", "session_slug",
     "recipe_name", "step_name", "source_name", "outcome", "output", "error", "complete",
@@ -253,12 +254,15 @@ def load_or_create_session(
         atomic_write(session_dir / "context.md", context_markdown(session))
         return session
     value = read_json(session_path, "session.json")
-    if not isinstance(value, dict) or set(value) != SESSION_FIELDS:
+    if (not isinstance(value, dict) or not REQUIRED_SESSION_FIELDS.issubset(value)
+            or not set(value).issubset(SESSION_FIELDS)):
         fail("session.json fields do not match schema version 1")
     if value["schema_version"] != SCHEMA_VERSION:
         fail("unsupported session.json schema version")
     if value["status"] not in {"active", "completed"} or not isinstance(value["entries"], list):
         fail("session.json contains an invalid status or entries value")
+    if "previous_session_name" in value and not isinstance(value["previous_session_name"], str):
+        fail("session.json contains an invalid previous_session_name")
     expected = {
         "session_name": session_name,
         "session_slug": session_slug,
@@ -334,8 +338,6 @@ def main() -> int:
         fail(str(exc))
     workspace = find_workspace(Path.cwd())
     work_root = workspace / ".ai-evo-work"
-    if work_root.is_symlink():
-        fail(".ai-evo-work must not be a symbolic link")
     work_root.mkdir(mode=0o755, exist_ok=True)
     lock_descriptor = os.open(work_root, os.O_RDONLY | os.O_DIRECTORY)
     try:

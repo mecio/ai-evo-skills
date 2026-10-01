@@ -50,8 +50,6 @@ def main() -> int:
         raise SystemExit("error: breakdown must contain a positive parent issue number")
     encoded = (json.dumps(breakdown, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     work_root = workspace(Path.cwd()) / ".ai-evo-work"
-    if work_root.is_symlink():
-        raise SystemExit("error: .ai-evo-work must not be a symbolic link")
     work_root.mkdir(mode=0o755, exist_ok=True)
     try:
         directory, _ = ensure_session_directory(work_root, args.session_name)

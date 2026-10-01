@@ -5,7 +5,7 @@
   "required": ["schema_version", "status", "issue", "current_session", "recommended_recipe", "worklog_session_name", "resolved_inputs", "missing_inputs", "suggested_invocation", "reason"],
   "properties": {
     "schema_version": {"const": 1},
-    "status": {"enum": ["ready", "input-required", "branch-recovery-required", "manual-assessment-required", "workflow-completed"]},
+    "status": {"enum": ["ready", "input-required", "branch-recovery-required", "stack-rebase-required", "stack-republish-required", "manual-assessment-required", "workflow-completed"]},
     "issue": {"type": "integer", "minimum": 1},
     "current_session": {"type": ["string", "null"], "minLength": 1},
     "recommended_recipe": {"type": ["string", "null"]},
@@ -19,6 +19,8 @@
     {"if": {"properties": {"status": {"const": "ready"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"const": "input-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"minItems": 1}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"const": "branch-recovery-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
+    {"if": {"properties": {"status": {"const": "stack-rebase-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "stack-republish-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"enum": ["manual-assessment-required", "workflow-completed"]}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "suggested_invocation": {"type": "null"}}}}
   ]
 }

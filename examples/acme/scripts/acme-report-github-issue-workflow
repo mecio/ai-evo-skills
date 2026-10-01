@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, NoReturn
 
 from acme_worklog_paths import layer_session_name
-from lib.acme_worklog_recovery import registered_branch
+from lib.acme_worklog_recovery import order_layers, published_layers, registered_branch
 
 
 SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
@@ -74,6 +77,162 @@ def pending_creation_sessions(workspace: Path, issue: int) -> list[dict[str, Any
                 found.append({"path": path.parent, "session": session})
             break
     return found
+
+
+def creation_checkpoint(session_dir: Path, session: dict[str, Any], issue: int) -> dict[str, Any] | None:
+    """Return the successful create_issue record when it created ``issue``."""
+    if (session.get("recipe_name") != "acme-recipe-00-design-github-issue"
+            or session.get("status") != "completed"):
+        return None
+    entries = session.get("entries")
+    if not isinstance(entries, list):
+        return None
+    for entry in reversed(entries):
+        if not isinstance(entry, dict) or entry.get("step_name") != "create_issue":
+            continue
+        filename = entry.get("file")
+        if not isinstance(filename, str):
+            return None
+        record = read_json(session_dir / filename)
+        if record.get("outcome") != "succeeded" or not isinstance(record.get("output"), str):
+            return None
+        try:
+            output = json.loads(record["output"])
+        except json.JSONDecodeError:
+            return None
+        return record if isinstance(output, dict) and output.get("number") == issue else None
+    return None
+
+
+def atomic_write(path: Path, content: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def render_json(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def replace_session_references(value: Any, old_name: str, new_name: str) -> Any:
+    """Update metadata coordinates, deliberately leaving checkpoint outputs immutable."""
+    if isinstance(value, dict):
+        return {
+            key: value[key] if key in {"output", "output_sha256"}
+            else replace_session_references(value[key], old_name, new_name)
+            for key in value
+        }
+    if isinstance(value, list):
+        return [replace_session_references(item, old_name, new_name) for item in value]
+    return new_name if value == old_name else value
+
+
+def refresh_entry_digests(session_dir: Path, session: dict[str, Any]) -> None:
+    entries = session.get("entries")
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("file")
+        if isinstance(filename, str):
+            record = session_dir / filename
+            if record.is_file():
+                entry["sha256"] = hashlib.sha256(record.read_bytes()).hexdigest()
+
+
+def normalize_moved_creation(session_dir: Path, issue: int) -> dict[str, Any]:
+    """Normalize a moved recipe 00 in place without changing any checkpoint output."""
+    session_path = session_dir / "session.json"
+    session = read_json(session_path)
+    old_name = session.get("session_name")
+    new_name = f"issue-{issue}/attempt-01/{session_dir.name}"
+    if not isinstance(old_name, str):
+        fail(f"session has no valid name: {session_path}")
+    if old_name == new_name and session.get("session_slug") == new_name:
+        return session
+    if session.get("recipe_name") != "acme-recipe-00-design-github-issue":
+        fail(f"not a recipe 00 session: {session_path}")
+    normalized = replace_session_references(session, old_name, new_name)
+    assert isinstance(normalized, dict)
+    normalized["session_name"] = new_name
+    normalized["session_slug"] = new_name
+    normalized["previous_session_name"] = old_name
+    record_updates: list[tuple[Path, dict[str, Any]]] = []
+    for record_path in sorted(session_dir.glob("*.json")):
+        if record_path.name == "session.json":
+            continue
+        record = read_json(record_path)
+        updated = replace_session_references(record, old_name, new_name)
+        if isinstance(updated, dict) and updated != record:
+            record_updates.append((record_path, updated))
+    # All validation is complete before a file is changed.  Checkpoint outputs and
+    # their digest are explicitly excluded from replacement above.
+    for record_path, record in record_updates:
+        atomic_write(record_path, render_json(record))
+    refresh_entry_digests(session_dir, normalized)
+    atomic_write(session_path, render_json(normalized))
+    context = session_dir / "context.md"
+    if context.is_file():
+        atomic_write(context, context.read_text(encoding="utf-8").replace(old_name, new_name).encode("utf-8"))
+    return normalized
+
+
+def moved_creation_sessions(workspace: Path, issue: int) -> list[dict[str, Any]]:
+    """Find recipe 00 creation sessions already under the issue root, including legacy metadata."""
+    root = workspace / ".ai-evo-work" / f"issue-{issue}" / "attempt-01"
+    found: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return found
+    for path in root.glob("00-design-attempt-*/session.json"):
+        session = read_json(path)
+        if creation_checkpoint(path.parent, session, issue) is not None:
+            found.append({"path": path.parent, "session": session})
+    return found
+
+
+def promote_pending_creation(workspace: Path, issue: int, creation: dict[str, Any]) -> dict[str, Any]:
+    """Atomically move one verified pending recipe 00 to its canonical issue path."""
+    source = creation["path"]
+    session = creation["session"]
+    if not isinstance(source, Path) or creation_checkpoint(source, session, issue) is None:
+        fail("la sessione 00 pending non è completa o non contiene il checkpoint create_issue richiesto")
+    destination = workspace / ".ai-evo-work" / f"issue-{issue}" / "attempt-01" / source.name
+    if destination.exists():
+        existing = read_json(destination / "session.json") if (destination / "session.json").is_file() else {}
+        source_checkpoint = creation_checkpoint(source, session, issue)
+        destination_checkpoint = creation_checkpoint(destination, existing, issue)
+        if (destination_checkpoint is None or source_checkpoint is None
+                or destination_checkpoint.get("output") != source_checkpoint.get("output")):
+            fail(f"la destinazione esiste con una sessione 00 diversa: {destination}")
+        return {"path": destination, "session": existing}
+    if source.is_symlink() or any(parent.is_symlink() for parent in source.parents if parent != workspace.parent):
+        fail("la sessione pending o uno dei suoi genitori non può essere un collegamento simbolico")
+    destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if source.stat().st_dev != destination.parent.stat().st_dev:
+        fail("la promozione richiede source e destinazione sullo stesso filesystem")
+    # Normalize before the single directory rename.  No checkpoint output changes;
+    # should the rename fail, the original directory is still present and valid.
+    normalize_moved_creation(source, issue)
+    try:
+        os.rename(source, destination)
+    except OSError as exc:
+        fail(f"impossibile spostare atomicamente la sessione pending: {exc}")
+    pending_attempt = source.parent
+    pending_root = pending_attempt.parent
+    if pending_attempt.is_dir() and not any(pending_attempt.iterdir()):
+        pending_attempt.rmdir()
+    if pending_root.is_dir() and not any(pending_root.iterdir()):
+        pending_root.rmdir()
+    return {"path": destination, "session": read_json(destination / "session.json")}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -1012,6 +1171,170 @@ def branch_recovery_required(issue: int, current: dict[str, Any], workspace: Pat
     }
 
 
+def stack_rebase_required(issue: int, current: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
+    """Recognize an intact published first layer whose local trunk moved on.
+
+    This is deliberately offline: it examines only the worklog and refs already
+    present in the worktree.  Missing refs remain a recovery problem for the
+    normal report path; unrelated histories remain a blocking diagnostic.
+    """
+    layers = published_layers(workspace, issue)
+    if not layers:
+        return None
+    try:
+        trunk, ordered = order_layers(layers)
+    except SystemExit:
+        return None
+    first = ordered[0]
+    branch = first["branch"]
+    if not local_branch_exists(workspace, trunk) or not local_branch_exists(workspace, branch):
+        return None
+    remote = first["remote"]
+
+    def available_ref(ref: str) -> bool:
+        return subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+
+    remote_trunk = f"refs/remotes/{remote}/{trunk}"
+    remote_branch = f"refs/remotes/{remote}/{branch}"
+    trunk_ref = remote_trunk if available_ref(remote_trunk) else trunk
+    branch_ref = remote_branch if available_ref(remote_branch) else branch
+    is_ancestor = subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", trunk_ref, branch_ref],
+        capture_output=True, text=True, check=False,
+    )
+    if is_ancestor.returncode == 0:
+        return None
+    base_result = subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", trunk_ref, branch_ref], capture_output=True, text=True, check=False,
+    )
+    base = base_result.stdout.strip() if base_result.returncode == 0 else ""
+    if not base:
+        return None
+    base_in_trunk = subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", base, trunk_ref],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0
+    total = subprocess.run(
+        ["git", "-C", str(workspace), "rev-list", "--count", f"{base}..{branch_ref}"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    exclusive = subprocess.run(
+        ["git", "-C", str(workspace), "rev-list", "--count", f"{base}..{branch_ref}", "--not", trunk_ref],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    checkpoints = [first[key] for key in ("base_oid", "parent_oid") if first.get(key)]
+    checkpoints_match = all(subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", checkpoint, base],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0 for checkpoint in checkpoints)
+    if not base_in_trunk or total != exclusive or not checkpoints_match:
+        return None
+    trunk_oid = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", trunk_ref], capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    return {
+        "schema_version": 1,
+        "status": "stack-rebase-required",
+        "issue": issue,
+        "current_session": current["session"]["session_name"],
+        "recommended_recipe": None,
+        "worklog_session_name": None,
+        "resolved_inputs": {"issue": str(issue), "branch": branch, "trunk": trunk,
+                            "trunk_oid": trunk_oid, "layer_base_oid": base},
+        "missing_inputs": [],
+        "suggested_invocation": None,
+        "reason": (
+            f"Il trunk {trunk} è avanzato a {trunk_oid} dopo la pubblicazione del layer {branch} "
+            f"(base {base}). Rieseguire il rebase e la ripubblicazione dello stack con la procedura manuale "
+            "documentata; il report e il recupero non eseguono rebase o push."
+        ),
+    }
+
+
+def stack_republish_required(issue: int, current: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
+    """Detect a locally available, patch-equivalent stack rewritten after rebase."""
+    layers = published_layers(workspace, issue)
+    if not layers:
+        return None
+    try:
+        trunk, ordered = order_layers(layers)
+    except SystemExit:
+        return None
+    remote = ordered[0]["remote"]
+    remote_trunk = f"refs/remotes/{remote}/{trunk}"
+    if not local_branch_exists(workspace, trunk) or not local_branch_exists(workspace, ordered[-1]["branch"]):
+        return None
+    if subprocess.run(["git", "-C", str(workspace), "rev-parse", "--verify", "--quiet", f"{remote_trunk}^{{commit}}"], capture_output=True, text=True).returncode:
+        return None
+    old_by_branch = {layer["branch"]: layer for layer in ordered}
+    rewritten = False
+    for index, layer in enumerate(ordered):
+        branch, parent, old_tip = layer["branch"], layer["parent_branch"], layer["remote_oid"]
+        remote_ref = f"refs/remotes/{remote}/{branch}"
+        if not local_branch_exists(workspace, branch) or subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"], capture_output=True, text=True).returncode:
+            return None
+        local_oid = subprocess.run(["git", "-C", str(workspace), "rev-parse", branch], capture_output=True, text=True).stdout.strip()
+        remote_oid = subprocess.run(["git", "-C", str(workspace), "rev-parse", remote_ref], capture_output=True, text=True).stdout.strip()
+        if local_oid != remote_oid:
+            return None
+        new_parent = trunk if index == 0 else ordered[index - 1]["branch"]
+        if parent != new_parent or subprocess.run(["git", "-C", str(workspace), "merge-base", "--is-ancestor", new_parent, branch], capture_output=True, text=True).returncode:
+            return None
+        if subprocess.run(["git", "-C", str(workspace), "merge-base", "--is-ancestor", old_tip, remote_ref], capture_output=True, text=True).returncode == 0:
+            continue
+        if subprocess.run(["git", "-C", str(workspace), "cat-file", "-e", f"{old_tip}^{{commit}}"], capture_output=True, text=True).returncode:
+            return None
+        old_base = layer.get("base_oid") if index == 0 else old_by_branch[parent]["remote_oid"]
+        if not old_base:
+            merge = subprocess.run(["git", "-C", str(workspace), "merge-base", trunk, old_tip], capture_output=True, text=True)
+            old_base = merge.stdout.strip() if merge.returncode == 0 else ""
+        if not old_base:
+            return None
+        def ids(base: str, tip: str) -> list[str]:
+            commits = subprocess.run(["git", "-C", str(workspace), "rev-list", "--reverse", f"{base}..{tip}"], capture_output=True, text=True).stdout.splitlines()
+            values: list[str] = []
+            for commit in commits:
+                shown = subprocess.run(["git", "-C", str(workspace), "show", "--format=", "--no-ext-diff", commit], capture_output=True, text=True)
+                patch = subprocess.run(["git", "-C", str(workspace), "patch-id", "--stable"], input=shown.stdout, capture_output=True, text=True).stdout.split()
+                if not patch:
+                    return []
+                values.append(patch[0])
+            return values
+        if ids(old_base, old_tip) != ids(new_parent, branch):
+            return None
+        rewritten = True
+    if not rewritten:
+        return None
+    return {
+        "schema_version": 1, "status": "stack-republish-required", "issue": issue,
+        "current_session": current["session"]["session_name"],
+        "recommended_recipe": "acme-recipe-republish-rebased-github-stack",
+        "worklog_session_name": current["session"]["session_name"],
+        "resolved_inputs": {"issue": str(issue), "publication_authorized": "true"}, "missing_inputs": [],
+        "suggested_invocation": f'$acme-recipe-republish-rebased-github-stack issue="{issue}" publication_authorized="true"',
+        "reason": "Lo stack remoto è stato riscritto dopo il rebase ma i patch-id coincidono; registrare la ripubblicazione prima di proseguire.",
+    }
+
+
+def unreconciled_published_rewrite(issue: int, workspace: Path) -> str | None:
+    """Keep an unverified remote rewrite from being mistaken for a ready stack."""
+    for layer in published_layers(workspace, issue):
+        remote_ref = f"refs/remotes/{layer['remote']}/{layer['branch']}"
+        remote_exists = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "--verify", "--quiet", f"{remote_ref}^{{commit}}"],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+        if remote_exists and subprocess.run(
+                ["git", "-C", str(workspace), "merge-base", "--is-ancestor", layer["remote_oid"], remote_ref],
+                capture_output=True, text=True, check=False).returncode:
+            return f"Il remote del layer {layer['branch']} è stato riscritto e non è riconciliabile con i checkpoint pubblicati."
+    return None
+
+
 def add_warnings(report: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     if warnings:
         report["warnings"] = warnings
@@ -1094,7 +1417,7 @@ def new_workflow_report(issue: int, requested_recipe: str | None,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("report",))
+    parser.add_argument("operation", choices=("report", "migrate"))
     parser.add_argument("--issue", required=True, help="Numero della issue, con # opzionale, oppure pending")
     parser.add_argument("--issue-number", default="", help="Numero reale quando --issue è pending")
     parser.add_argument("--requested-recipe", help="Recipe che il runtime sta pianificando")
@@ -1115,6 +1438,16 @@ def main() -> int:
     if args.new_workflow_attempt not in {"", "true"}:
         fail('new-workflow-attempt must be "true" or empty')
     workspace = find_workspace(Path.cwd())
+    if args.operation == "migrate":
+        if pending:
+            fail('migrate requires a numeric issue, not "pending"')
+        moved = moved_creation_sessions(workspace, issue)
+        if len(moved) != 1:
+            fail(f"la migrazione richiede una sola sessione 00 sotto issue-{issue}/attempt-01")
+        normalized = normalize_moved_creation(moved[0]["path"], issue)
+        print(json.dumps({"schema_version": 1, "status": "migrated", "issue": issue,
+                          "session_name": normalized["session_name"]}, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     trunk, context_warnings, trunk_problem = trunk_branch(workspace)
     if trunk_problem:
         current = {"session": {"session_name": None}}
@@ -1125,19 +1458,44 @@ def main() -> int:
     issue_root = workspace / ".ai-evo-work" / f"issue-{issue}"
     candidates = sessions(issue_root) if issue_root.is_dir() else []
     workflow = latest_workflow(candidates)
+    if pending:
+        creations = pending_creation_sessions(workspace, issue)
+        moved = moved_creation_sessions(workspace, issue)
+        if len(creations) > 1:
+            current = {"session": {"session_name": None}}
+            result = blocked(issue, current, f"Più recipe 00 pending registrano la creazione della issue #{issue}; indicare una sessione specifica.")
+            print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if len(moved) > 1:
+            current = {"session": {"session_name": None}}
+            result = blocked(issue, current, f"Più sessioni 00 già spostate registrano la creazione della issue #{issue}.")
+            print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if creations:
+            promoted = promote_pending_creation(workspace, issue, creations[0])
+            candidates = sessions(issue_root)
+            workflow = latest_workflow(candidates)
+            # The requested 01 or 02 is the first session after a design creation;
+            # returning it here ensures its input names the canonical location.
+            result = new_workflow_report(issue, args.requested_recipe, args.developer_instructions,
+                                         promoted["session"].get("session_name"))
+            print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if moved and len(workflow) == 1 and workflow[0]["phase"] == "00":
+            creation_name = str(moved[0]["path"].relative_to(workspace / ".ai-evo-work"))
+            result = new_workflow_report(issue, args.requested_recipe, args.developer_instructions, creation_name)
+            print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
     if not workflow:
         if pending:
-            creations = pending_creation_sessions(workspace, issue)
-            if len(creations) != 1:
+            if not moved:
                 current = {"session": {"session_name": None}}
-                reason = ("Nessuna recipe 00 conclusa in issue-pending registra la creazione della issue "
-                          f"#{issue}." if not creations else
-                          f"Più recipe 00 pending registrano la creazione della issue #{issue}; indicare una sessione specifica.")
+                reason = f"Nessuna recipe 00 conclusa in issue-pending registra la creazione della issue #{issue}."
                 result = blocked(issue, current, reason)
             else:
                 result = new_workflow_report(
                     issue, args.requested_recipe, args.developer_instructions,
-                    creations[0]["session"].get("session_name"),
+                    str(moved[0]["path"].relative_to(workspace / ".ai-evo-work")),
                 )
         else:
             result = new_workflow_report(issue, args.requested_recipe, args.developer_instructions)
@@ -1148,6 +1506,20 @@ def main() -> int:
         result = (new_breakdown_attempt(issue, workflow, candidates, args.reason.strip()) if args.reason.strip()
                   else blocked(issue, current, "Il motivo è obbligatorio per aprire un nuovo workflow attempt."))
         print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    current = latest_phase(workflow)
+    republish = stack_republish_required(issue, current, workspace)
+    if republish:
+        print(json.dumps(add_warnings(republish, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    rewrite_problem = unreconciled_published_rewrite(issue, workspace)
+    if rewrite_problem:
+        result = blocked(issue, current, rewrite_problem)
+        print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    rebase = stack_rebase_required(issue, current, workspace)
+    if rebase:
+        print(json.dumps(add_warnings(rebase, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     # A stacked breakdown owns several independent 04/05 session pairs.  Resolve it
     # from its ordered layer map instead of treating the numerically latest phase as

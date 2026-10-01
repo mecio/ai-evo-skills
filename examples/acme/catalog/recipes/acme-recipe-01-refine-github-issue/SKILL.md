@@ -16,7 +16,7 @@ Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attrib
 
 ## Procedure
 
-Usala opzionalmente dopo la 00 o su una issue esistente. Rivede titolo e descrizione con lo sviluppatore; un aggiornamento remoto richiede autorizzazione esplicita.
+Usala opzionalmente dopo la 00 o su una issue esistente. Rivede titolo e descrizione con lo sviluppatore; un aggiornamento remoto richiede autorizzazione esplicita. Con `issue="pending"` e `issue_number` il resolver promuove prima la sessione 00 verificata dal percorso pending a quello dell'issue reale, quindi crea questa sessione nello stesso attempt.
 
 Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-01-refine-github-issue` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
 

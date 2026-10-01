@@ -76,10 +76,34 @@ def ancestor(older: str, newer: str) -> bool:
     return git("merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
-def verify_published_chain(remote: str, trunk: str, layers: list[dict[str, str]]) -> None:
+def merge_base(left: str, right: str) -> str:
+    result = git("merge-base", left, right, check=False)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def advanced_trunk_base(trunk_ref: str, layer_ref: str, layer: dict[str, str]) -> str:
+    """Return the former base when only the trunk advanced, otherwise fail."""
+    base = merge_base(trunk_ref, layer_ref)
+    if not base or not ancestor(base, trunk_ref):
+        fail(f"published stack is not linear: {layer['parent_branch']} is not an ancestor of {layer['branch']}")
+    total = git_text("rev-list", "--count", f"{base}..{layer_ref}")
+    exclusive = git_text("rev-list", "--count", f"{base}..{layer_ref}", "--not", trunk_ref)
+    if total != exclusive:
+        fail(f"published stack is not linear: {layer['parent_branch']} is not an ancestor of {layer['branch']}")
+    for checkpoint in (layer.get("base_oid", ""), layer.get("parent_oid", "")):
+        if checkpoint and not ancestor(checkpoint, base):
+            fail(f"published stack is not linear: {layer['parent_branch']} is not an ancestor of {layer['branch']}")
+    return base
+
+
+def verify_published_chain(remote: str, trunk: str, layers: list[dict[str, str]]) -> tuple[bool, str, str]:
     if not local_branch_exists(trunk):
         fail(f"local trunk branch does not exist: {trunk}")
-    for layer in layers:
+    trunk_ref = f"refs/remotes/{remote}/{trunk}" if remote_branch_exists(remote, trunk) else f"refs/heads/{trunk}"
+    trunk_oid = git_text("rev-parse", trunk_ref)
+    rebase_required = False
+    layer_base_oid = ""
+    for index, layer in enumerate(layers):
         branch = checked_branch(layer["branch"])
         parent = checked_branch(layer["parent_branch"], "parent_branch")
         if layer["remote"] != remote:
@@ -91,7 +115,10 @@ def verify_published_chain(remote: str, trunk: str, layers: list[dict[str, str]]
             fail(f"remote branch was rewritten or no longer contains the published OID: {branch}")
         parent_ref = f"refs/remotes/{remote}/{parent}" if remote_branch_exists(remote, parent) else f"refs/heads/{parent}"
         if not ancestor(parent_ref, remote_ref):
-            fail(f"published stack is not linear: {parent} is not an ancestor of {branch}")
+            if index != 0 or parent != trunk:
+                fail(f"published stack is not linear: {parent} is not an ancestor of {branch}")
+            layer_base_oid = advanced_trunk_base(trunk_ref, remote_ref, layer)
+            rebase_required = True
         if local_branch_exists(branch):
             local_ref = f"refs/heads/{branch}"
             if not ancestor(local_ref, remote_ref):
@@ -100,6 +127,7 @@ def verify_published_chain(remote: str, trunk: str, layers: list[dict[str, str]]
             expected = f"{remote}/{branch}"
             if upstream and upstream != expected:
                 fail(f"branch upstream is {upstream}, expected {expected}")
+    return rebase_required, trunk_oid, layer_base_oid
 
 
 def materialize_branch(remote: str, branch: str) -> None:
@@ -140,14 +168,19 @@ def main() -> int:
     if layers:
         trunk, ordered = order_layers(layers, expected_branch)
         target = ordered[-1]["branch"]
-        verify_published_chain(remote, trunk, ordered)
+        rebase_required, trunk_oid, layer_base_oid = verify_published_chain(remote, trunk, ordered)
         if tracked_checkout(target):
             action = "stack-checked-out"
         else:
             run("git", "switch", trunk)
             for layer in ordered:
                 materialize_branch(remote, layer["branch"])
-            run("gh", "stack", "init", "--base", trunk, *(layer["branch"] for layer in ordered))
+            initialized = run("gh", "stack", "init", "--base", trunk, *(layer["branch"] for layer in ordered), check=False)
+            if initialized.returncode:
+                if not rebase_required:
+                    fail(initialized.stderr.strip() or initialized.stdout.strip() or "gh stack init failed")
+                # gh stack may reject a stack whose trunk advanced.  Tracking
+                # refs are still sufficient to recover it for a later rebase.
             run("git", "switch", target)
             action = "stack-reconstructed"
     else:
@@ -156,13 +189,19 @@ def main() -> int:
         run("gh", "stack", "checkout", fallback_branch)
         target = fallback_branch
         action = "stack-checked-out"
+        rebase_required = False
+        trunk = ""
+        trunk_oid = ""
+        layer_base_oid = ""
     current = git_text("symbolic-ref", "--quiet", "--short", "HEAD")
     if current != target:
         fail(f"current branch is {current or 'detached'}, expected {target}")
     upstream = require_upstream(target, remote)
     run("git", "pull", "--ff-only")
     write_json({"status": "prepared", "branch": target, "remote": remote, "upstream": upstream,
-                "action": action, "oid": git_text("rev-parse", "HEAD")})
+                "action": action, "oid": git_text("rev-parse", "HEAD"),
+                "rebase_required": rebase_required, "trunk": trunk, "trunk_oid": trunk_oid,
+                "layer_base_oid": layer_base_oid})
     return 0
 
 

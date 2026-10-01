@@ -16,6 +16,8 @@ Ogni recipe svolge una fase circoscritta e salva il risultato nel percorso relat
 | 06 | `acme-recipe-06-verify-github-epic-stack` | Solo epic: verificare l’insieme delle sub-issue completate. |
 | 07 | `acme-recipe-07-push-github-stack` | Su richiesta esplicita: ripubblicare e verificare lo stack completo dopo la review. |
 | 08 | `acme-recipe-08-submit-github-stack` | Su richiesta esplicita: creare o aggiornare in draft le pull request dello stack. |
+| raccordo | `acme-recipe-resume-github-issue-workflow` | Quando il report richiede il recupero del branch pubblicato; non è una fase del flusso. |
+| raccordo | `acme-recipe-republish-rebased-github-stack` | Dopo rebase e push manuali: verifica le patch e registra sessioni `04r-republish-attempt-01`. |
 
 Un’issue non scomposta segue `00 → 02 → 03 → 04 → 05`; dopo il checkpoint `implement_issue` e prima del push può inserire una o più sessioni `04-correction`, poi prosegue con `05`. Una epic segue `00 → 02 → 03`, quindi `04 → 05` per ogni sub-issue nell’ordine delle dipendenze, e infine `06`; con autorizzazione esplicita può concludersi con `07 → 08`. Una issue `stacked` segue `00 → 02 → 03`, poi per ogni layer ordinato `adopt | (04 → 05, review persistita)` e può inserire `04-correction` nello stesso layer prima della pubblicazione.
 
@@ -42,10 +44,21 @@ rispettivamente `issue-<numero>/attempt-01/01-refine-attempt-01` o
 delle fasi precedenti. L'esistenza e lo stato aperto della issue sono verificati dallo step
 `acme-cmd-analyze-github-issue`, che legge GitHub.
 
-Dopo una recipe 00, la recipe 02 può ricevere `issue="pending"` e `issue_number="<numero creato>"`. Il resolver
-verifica offline il checkpoint `create_issue` della sola sessione `issue-pending` che contiene quel numero, avvia
-`issue-<numero>/attempt-01/02-analyze-attempt-01` e salva `creation_session` nel nuovo input immutabile. In questo
-modo la cartella pending resta immutabile e la lineage verso l'issue reale è esplicita.
+Dopo una recipe 00, la recipe 01 o 02 può ricevere `issue="pending"` e `issue_number="<numero creato>"`. Prima di
+proporre la nuova sessione il resolver verifica offline il checkpoint `create_issue` della sola sessione completata
+in `issue-pending` che contiene quel numero e la sposta atomicamente in
+`issue-<numero>/attempt-01/00-design-attempt-<nn>`. Aggiorna `session_name` e `session_slug` della sessione e dei
+checkpoint, conserva invariati `output` e `output_sha256` di `create_issue`, ricalcola gli SHA-256 dei file di
+checkpoint nell'indice e salva il vecchio nome in `previous_session_name`. Rimuove le directory pending rimaste
+vuote, poi propone `01-refine` o `02-analyze`; `creation_session` nel nuovo input immutabile indica sempre il nuovo
+percorso. Se manca una sola creazione corrispondente, la sessione non è completa o la destinazione contiene un
+checkpoint diverso, il resolver si ferma senza spostare nulla. Un report successivo con `issue="pending"` riconosce
+anche la sessione già spostata e non crea duplicati.
+
+Le sessioni già spostate manualmente con riferimenti legacy a `issue-pending` restano leggibili. Per normalizzarle
+in modo esplicito e idempotente eseguire
+`acme-report-github-issue-workflow migrate --issue <numero>` dalla root della worktree; la migrazione non modifica
+l'output né `output_sha256` dei checkpoint.
 In ogni altro passaggio alla recipe 02, incluso dopo una 00 o 01 già registrata sotto l'issue reale, il resolver
 fornisce comunque `issue_number` con il numero risolto: lo step di analisi non riceve mai un valore vuoto.
 

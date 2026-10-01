@@ -40,6 +40,8 @@ def main() -> int:
     status = worktree_status()
     branches = []
     parent = trunk
+    rebase_required = False
+    layer_base_oid = ""
     for entry in entries:
         name = entry.get("branch", "")
         item: dict[str, object] = {
@@ -55,7 +57,16 @@ def main() -> int:
             item["parent_is_ancestor"] = ancestor
             item["commits_since_parent"] = int(git_text("rev-list", "--count", f"{parent}..{name}"))
             if not ancestor:
-                errors.append(f"{parent} is not an ancestor of {name}")
+                base = git("merge-base", parent, name, check=False).stdout.strip()
+                total = git_text("rev-list", "--count", f"{base}..{name}") if base else ""
+                exclusive = git_text("rev-list", "--count", f"{base}..{name}", "--not", parent) if base else ""
+                if not branches and base and git("merge-base", "--is-ancestor", base, parent, check=False).returncode == 0 and total == exclusive:
+                    item["trunk_advanced"] = True
+                    item["layer_base_oid"] = base
+                    rebase_required = True
+                    layer_base_oid = base
+                else:
+                    errors.append(f"{parent} is not an ancestor of {name}")
             upstream = git_text("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{name}")
             item["upstream"] = upstream
         except SystemExit as exc:
@@ -107,6 +118,8 @@ def main() -> int:
         "current_branch": current,
         "trunk": trunk,
         "top": top,
+        "rebase_required": rebase_required,
+        "layer_base_oid": layer_base_oid,
         "branches": branches,
         "valid": not errors,
         "errors": errors,

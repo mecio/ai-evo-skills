@@ -37,7 +37,10 @@ inputs:
 2. Dalla root applicativa eseguire `.ai-evo-prj/scripts/acme-git-recipe-branch prepare '<JSON>'`, passando un unico JSON
    con `issue`, `worklog_session` e `branch` come dato quotato. L'helper richiede una worktree pulita, legge
    `stack_remote` dalla configurazione, aggiorna i ref remoti e verifica ogni OID pubblicato.
-3. Se lo stack è già tracciato, esegue `gh stack checkout <branch>`. Altrimenti verifica che ogni ref remoto
+3. Se il trunk è avanzato dopo la pubblicazione del primo layer, il comando accetta esplicitamente la catena,
+   restituisce `rebase_required: true` con trunk, OID e base comune, ed esegue comunque il checkout. Non effettua
+   alcun rebase automatico. Una catena non lineare resta bloccante solo tra layer oppure con un parent non correlato.
+   Se lo stack è già tracciato, esegue `gh stack checkout <branch>`. Altrimenti verifica che ogni ref remoto
    contenga il rispettivo `remote_oid`, ricostruisce la catena trunk→layer dal campo `parent_branch`, crea i soli
    tracking branch mancanti e usa `gh stack init --base <trunk> <layer...>` per adottarli. Se non esiste alcun
    checkpoint pubblicato, usa `gh stack checkout` per il caso di stack già pubblicato tramite PR.
@@ -48,7 +51,7 @@ inputs:
 ## Expected output
 
 Un JSON conforme a [references/output.schema.json](references/output.schema.json), con branch, remote, upstream,
-azione eseguita e OID aggiornato.
+azione eseguita e OID aggiornato, oltre a `rebase_required`, `trunk`, `trunk_oid` e `layer_base_oid`.
 
 ## Constraints
 

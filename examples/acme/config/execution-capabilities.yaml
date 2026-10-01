@@ -30,6 +30,11 @@ capabilities:
     operation: prepare
     arguments: true
     workspaces: [read-write]
+  acme.git-record-republication:
+    script: acme-republish-rebased-git-stack
+    operation: republish
+    arguments: true
+    workspaces: [read-write]
   acme.worklog-record:
     script: acme-operation-output-worklog
     operation: record
@@ -49,7 +54,7 @@ capabilities:
     script: acme-report-github-issue-workflow
     operation: report
     arguments: true
-    workspaces: [read-only, read-write]
+    workspaces: [read-write]
   acme.git-stack-plan:
     script: acme-git-stack-plan
     operation: plan

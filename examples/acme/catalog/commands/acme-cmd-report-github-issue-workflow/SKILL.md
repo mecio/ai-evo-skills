@@ -19,7 +19,7 @@ richiedere allo sviluppatore di ricordare nomi di recipe, sessioni o artefatti i
 ```yaml ai-evo-interface
 output-schema: references/output.schema.json
 execution-policy:
-  workspace: read-only
+  workspace: read-write
   network: disabled
   capabilities: [acme.workflow-report]
 inputs:
@@ -45,8 +45,14 @@ la recipe richiesta e gli input canonici di `issue-<numero>/attempt-01`; per le 
 
 Per proseguire dopo la recipe 00 usare `issue: "pending"` e `issue_number: "<numero creato>"`. Il comando cerca
 una sola recipe 00 completata sotto `issue-pending` il cui checkpoint `create_issue` contenga quel numero; se la
-trova, apre il workflow canonico `issue-<numero>/attempt-01` e registra `creation_session` nel worklog. Se manca
-o è ambigua, si ferma senza assumere un collegamento.
+trova, prima di proporre la 01 o la 02 sposta atomicamente la sessione nel workflow canonico
+`issue-<numero>/attempt-01/00-design-attempt-<nn>`. Normalizza i riferimenti interni, conserva `output` e
+`output_sha256` del checkpoint e registra il nome precedente in `previous_session_name`; poi `creation_session`
+nel nuovo input indica il percorso canonico. Se la sessione è già lì con lo stesso checkpoint il comando prosegue
+senza duplicarla; se è ambigua, incompleta o la destinazione differisce, si ferma senza spostare nulla.
+
+Per le sessioni spostate manualmente in passato, `migrate --issue '<numero>'` normalizza in modo esplicito e
+idempotente `session_name`, `session_slug`, checkpoint e indice senza modificare gli output dei checkpoint.
 
 Con `new_workflow_attempt: "true"` e recipe richiesta 03, richiede `reason`, riusa l'ultima analisi 02 conclusa
 dell'attempt corrente e propone `attempt-<max+1>/03-breakdown-attempt-01`. Blocca l'operazione se esistono
@@ -57,10 +63,12 @@ Quando è richiesta la recipe di correzione 04, riconosce solo un checkpoint loc
 `correction_instructions` esplicite restano l'unico input non deducibile.
 
 Se `status` è `input-required`, chiedi soltanto i campi elencati in `missing_inputs`. Se è
-`branch-recovery-required`, esegui la `suggested_invocation` di `acme-cmd-prepare-git-recipe-branch` e rilancia il
-report: il comando resta offline e non modifica da solo la checkout. Se è `manual-assessment-required`, non
-inventare il passo successivo. Non avviare la recipe suggerita: il comando orienta, mentre l'avvio resta una
-decisione esplicita dello sviluppatore.
+`branch-recovery-required`, avvia `acme-recipe-resume-github-issue-workflow`: la recipe esegue il recupero e
+rilancia il report. Se è `stack-rebase-required`, il branch è stato recuperato ma il trunk è avanzato: eseguire
+manualmente rebase e push, poi rilanciare il report. Il nuovo stato `stack-republish-required` indica la recipe
+che verifica i patch-id e registra i nuovi OID nel worklog prima di proseguire. Se è
+`manual-assessment-required`, non inventare il passo successivo. Non avviare la recipe suggerita: il comando
+orienta, mentre l'avvio resta una decisione esplicita dello sviluppatore.
 
 ## Expected output
 
@@ -68,7 +76,8 @@ Un JSON conforme a [references/output.schema.json](references/output.schema.json
 
 ## Constraints
 
-Non modifica worktree, Git, GitHub o worklog e non esegue recipe.
+Non modifica Git o GitHub e non esegue recipe. `report` scrive solo nel worklog locale quando promuove una recipe
+00 pending verificata; `migrate` scrive solo la metadata di una recipe 00 già spostata.
 
 ## Success criteria
 

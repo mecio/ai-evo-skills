@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Record an already-pushed, patch-equivalent rebase of a published stack."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from lib.acme_script_common import fail, git, git_text, load_simple_yaml, write_json
+from lib.acme_worklog_recovery import order_layers, published_layers
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+LOGGER = Path(__file__).with_name("acme-operation-output-worklog")
+ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+
+
+def run(*arguments: str, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(arguments, env=ENV, input=input, capture_output=True, text=True, check=False)
+    if check and result.returncode:
+        fail(result.stderr.strip() or result.stdout.strip() or f"command failed: {arguments[0]}")
+    return result
+
+
+def exists(ref: str) -> bool:
+    return git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False).returncode == 0
+
+
+def ancestor(older: str, newer: str) -> bool:
+    return git("merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
+
+
+def patch_ids(base: str, tip: str) -> list[str]:
+    commits = git_text("rev-list", "--reverse", f"{base}..{tip}").splitlines()
+    result: list[str] = []
+    for commit in commits:
+        patch = run("git", "show", "--format=", "--no-ext-diff", commit)
+        stable = run("git", "patch-id", "--stable", input=patch.stdout).stdout.strip().split()
+        if not stable:
+            fail(f"cannot calculate patch-id for {commit}")
+        result.append(stable[0])
+    return result
+
+
+def parse_request(raw: str) -> int:
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(request, dict) or set(request) != {"issue", "publication_authorized"}:
+        fail("request fields do not match the operation contract")
+    issue = request["issue"]
+    if isinstance(issue, str) and issue.isdigit():
+        issue = int(issue)
+    if type(issue) is not int or issue < 1:
+        fail("issue must be a positive integer")
+    if request["publication_authorized"] is not True:
+        fail("publication_authorized must be true")
+    return issue
+
+
+def session_name(issue: int, layer: dict[str, str]) -> str:
+    source = layer.get("session_name", "")
+    if "/layers/" in source:
+        prefix = source.rsplit("/", 1)[0]
+    else:
+        prefix = f"issue-{issue}/attempt-01"
+    return f"{prefix}/04r-republish-attempt-01"
+
+
+def record(session: str, output: dict[str, object]) -> None:
+    payload = json.dumps(output, ensure_ascii=False, sort_keys=True)
+    with tempfile.TemporaryDirectory(prefix="ai-evo-worklog-") as temporary:
+        directory = Path(temporary)
+        input_path, output_path, error_path = directory / "input.json", directory / "output.txt", directory / "error.json"
+        input_path.write_text(json.dumps({"issue": str(output["issue"]), "republished_after_rebase": True}), encoding="utf-8")
+        output_path.write_text(payload, encoding="utf-8")
+        error_path.write_text("null", encoding="utf-8")
+        run(str(LOGGER), "record", "--session-name", session,
+            "--recipe-name", "acme-recipe-republish-rebased-github-stack",
+            "--session-input", str(input_path), "--step-name", "publish_branch",
+            "--source-name", "acme-cmd-republish-rebased-git-stack", "--outcome", "succeeded",
+            "--output", str(output_path), "--expected-output-sha256", hashlib.sha256(payload.encode()).hexdigest(),
+            "--error", str(error_path), "--temporary-directory", temporary, "--complete")
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "republish":
+        fail("expected the republish operation and one JSON request")
+    root = Path(git_text("rev-parse", "--show-toplevel")).resolve()
+    if Path.cwd().resolve() != root:
+        fail("run from the application Git root")
+    if git("status", "--porcelain=v1", "-z").stdout:
+        fail("worktree must be clean")
+    issue = parse_request(sys.argv[2])
+    remote = load_simple_yaml(BRANCH_CONFIG).get("stack_remote")
+    if not isinstance(remote, str) or not remote:
+        fail("stack_remote is missing from branch configuration")
+    run("git", "fetch", "--prune", remote)
+    layers = published_layers(root, issue)
+    if not layers:
+        fail("worklog has no published stack")
+    trunk, ordered = order_layers(layers)
+    trunk_remote = f"refs/remotes/{remote}/{trunk}"
+    if not exists(f"refs/heads/{trunk}") or not exists(trunk_remote):
+        fail("trunk is not available locally and on the configured remote")
+    if git_text("rev-parse", trunk) != git_text("rev-parse", trunk_remote):
+        fail("local trunk is not aligned with the configured remote")
+    old_by_branch = {layer["branch"]: layer for layer in ordered}
+    prepared: list[tuple[str, dict[str, object]]] = []
+    for index, layer in enumerate(ordered):
+        branch, parent, old_tip = layer["branch"], layer["parent_branch"], layer["remote_oid"]
+        local, remote_ref = f"refs/heads/{branch}", f"refs/remotes/{remote}/{branch}"
+        if not exists(local) or not exists(remote_ref):
+            fail(f"branch is not available locally and on the configured remote: {branch}")
+        if git_text("rev-parse", local) != git_text("rev-parse", remote_ref):
+            fail(f"local branch is not aligned with the configured remote: {branch}")
+        upstream = git_text("for-each-ref", "--format=%(upstream:short)", local)
+        if upstream != f"{remote}/{branch}":
+            fail(f"branch upstream is {upstream or 'unset'}, expected {remote}/{branch}")
+        new_parent = trunk if index == 0 else ordered[index - 1]["branch"]
+        if parent != new_parent or not ancestor(new_parent, branch):
+            fail(f"rebased stack is not linear: {new_parent} is not an ancestor of {branch}")
+        if not exists(old_tip):
+            fail(f"previous published OID is not reachable locally: {old_tip}")
+        old_base = layer.get("base_oid") if index == 0 else old_by_branch[parent]["remote_oid"]
+        if not old_base:
+            old_base_result = git("merge-base", trunk, old_tip, check=False)
+            old_base = old_base_result.stdout.strip() if old_base_result.returncode == 0 else ""
+        if not old_base or not exists(old_base):
+            fail(f"previous base is not reachable locally for {branch}")
+        new_tip = git_text("rev-parse", branch)
+        if patch_ids(old_base, old_tip) != patch_ids(new_parent, new_tip):
+            fail(f"rebased commits are not patch-equivalent for {branch}")
+        prepared.append((session_name(issue, layer), {
+            "status": "published", "issue": issue, "branch": branch, "parent_branch": parent,
+            "remote": remote, "remote_oid": new_tip, "local_oid": new_tip,
+            "base_oid": git_text("merge-base", trunk, branch) if index == 0 else git_text("rev-parse", new_parent),
+            "parent_oid": git_text("rev-parse", new_parent), "republished_after_rebase": True,
+            "previous_remote_oid": old_tip, "previous_base_oid": old_base, "patch_ids_equivalent": True,
+        }))
+    for name, output in prepared:
+        record(name, output)
+    write_json({"status": "republished", "issue": issue, "layers": [output for _, output in prepared]})
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

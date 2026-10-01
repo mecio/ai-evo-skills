@@ -1,0 +1,15 @@
+version: "1.0"
+name: acme-recipe-republish-rebased-github-stack
+input-resolver:
+  uses: acme-cmd-report-github-issue-workflow
+  with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-republish-rebased-github-stack" }
+inputs:
+  issue: { required: true, description: "Issue proprietaria dello stack ribasato." }
+  publication_authorized: { required: true, description: "Deve essere letteralmente true; attesta la pubblicazione manuale già autorizzata." }
+steps:
+  - id: record_republication
+    uses: acme-cmd-republish-rebased-git-stack
+    executor: current
+    with: { issue: "${{ inputs.issue }}", publication_authorized: "${{ inputs.publication_authorized }}" }
+outputs:
+  result: { value: "${{ steps.record_republication.output }}" }

@@ -1,0 +1,15 @@
+version: "1.0"
+name: acme-recipe-resume-github-issue-workflow
+inputs:
+  issue: { required: true, description: "Numero o URL della issue il cui workflow deve essere ripreso." }
+steps:
+  - id: prepare_branch
+    uses: acme-cmd-prepare-git-recipe-branch
+    executor: current
+    with: { issue: "${{ inputs.issue }}", worklog_session: "", branch: "" }
+  - id: report_next
+    uses: acme-cmd-report-github-issue-workflow
+    executor: current
+    with: { issue: "${{ inputs.issue }}", issue_number: "", requested_recipe: "", developer_instructions: "", correction_instructions: "", new_workflow_attempt: "", reason: "" }
+outputs:
+  result: { value: "${{ steps.report_next.output }}" }

@@ -35,10 +35,11 @@ inputs:
    Verificare che il remote esista e che il parent dichiarato dal report sia disponibile localmente.
 3. Eseguire una sola pubblicazione non forzata del branch corrente sul ref remoto omonimo e impostare il suo
    upstream. Non usare `gh stack push`, `gh stack submit`, `gh pr`, `sync`, `rebase`, `merge` o force push.
-4. Leggere il ref remoto e verificarne l'OID rispetto a `HEAD`; se non coincidono, segnalare l'errore senza
-   ritentare. Restituire branch, `parent_branch`, `base_branch`, `sequence`, remote, OID locale/remoto e upstream
-   configurato. `base_branch` e `sequence` descrivono la posizione del layer già contenuta nel report di
-   implementazione; per un solo layer `sequence` è `0`.
+4. Prima del push registrare l'OID del parent come `parent_oid`; per il primo layer registrarlo anche come
+   `base_oid`. Leggere il ref remoto e verificarne l'OID rispetto a `HEAD`; se non coincidono, segnalare l'errore
+   senza ritentare. Restituire branch, `parent_branch`, `base_branch`, `sequence`, remote, OID locale/remoto,
+   `parent_oid`, `base_oid` quando applicabile e upstream configurato. `base_branch` e `sequence` descrivono la
+   posizione del layer già contenuta nel report di implementazione; per un solo layer `sequence` è `0`.
 
 ## Expected output
 

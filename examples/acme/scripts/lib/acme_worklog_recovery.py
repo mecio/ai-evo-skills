@@ -76,7 +76,15 @@ def published_layers(workspace: Path, issue: int, worklog_session: str = "") -> 
             required = ("branch", "parent_branch", "remote", "remote_oid")
             if not all(isinstance(output.get(key), str) and output[key] for key in required):
                 continue
-            layers[output["branch"]] = {key: output[key] for key in required}
+            # New publication checkpoints preserve the base observed when the
+            # branch was published.  Older worklogs intentionally remain
+            # recoverable without it.
+            optional = ("base_oid", "parent_oid")
+            layers[output["branch"]] = {
+                key: output[key] for key in (*required, *optional)
+                if isinstance(output.get(key), str) and output[key]
+            }
+            layers[output["branch"]]["session_name"] = session["session_name"]
     return list(layers.values())
 
 

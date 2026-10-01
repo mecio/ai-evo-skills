@@ -16,7 +16,7 @@ Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attrib
 
 ## Procedure
 
-Usala dopo la creazione o l’indicazione di una issue. L’AI legge descrizione, commenti pertinenti, direttive e codice; chiarisce con lo sviluppatore le sole decisioni necessarie, una alla volta. Al termine salva l’analisi pronta in `.ai-evo-work/<sessione>/issue-<numero>-analysis.json`. Non crea work item, branch, commit o modifiche remote.
+Usala dopo la creazione o l’indicazione di una issue. L’AI legge descrizione, commenti pertinenti, direttive e codice; chiarisce con lo sviluppatore le sole decisioni necessarie, una alla volta. Al termine salva l’analisi pronta in `.ai-evo-work/<sessione>/issue-<numero>-analysis.json`. Non crea work item, branch, commit o modifiche remote. Con `issue="pending"` e `issue_number` il resolver promuove prima la sessione 00 verificata dal percorso pending a quello dell'issue reale, quindi crea questa sessione nello stesso attempt.
 
 Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-02-analyze-github-issue-code` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
 
