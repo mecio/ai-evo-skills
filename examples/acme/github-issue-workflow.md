@@ -40,7 +40,6 @@ Each command is directly invocable. Its `SKILL.md` declares `ai-evo-kind: comman
 | 07 | `acme-recipe-07-push-github-stack` | Push the verified stack after authorization. |
 | 08 | `acme-recipe-08-submit-github-stack` | Submit draft pull requests after authorization. |
 | bridge | `acme-recipe-resume-github-issue-workflow` | Recover a published branch, then resolve the next action. |
-| bridge | `acme-recipe-republish-rebased-github-stack` | Verify and record a rebased stack after its authorized manual push. |
 
 Recipes are direct, bounded entrypoints. They do not invoke each other, repeat a completed phase, or carry a
 model-specific suffix. Persist the final output of each phase, let the developer inspect it, then invoke the
@@ -49,8 +48,9 @@ next recipe explicitly.
 The bridge recipe sits outside the numbered phases. Use it when the workflow report returns
 `branch-recovery-required`; it checks out or reconstructs the recorded published stack and runs the report again.
 When the trunk advanced since publication, it returns `stack-rebase-required` without rebasing or pushing. After
-the authorized manual rebase and push, the resolver returns `stack-republish-required`; the republication bridge
-compares stable patch IDs and records the new remote OIDs before the normal workflow resumes.
+the authorized manual rebase and push, the resolver returns `stack-republish-required`; invoke the same bridge
+with explicit publication authorization so it compares stable patch IDs, records the new remote OIDs and resumes
+the normal workflow.
 
 When a project places publication after the implementation checkpoint, it may offer the optional correction recipe
 beside phase 04. The resolver must propose it only for an active implementation session whose latest successful

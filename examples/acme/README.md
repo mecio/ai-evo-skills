@@ -25,7 +25,7 @@ implementation; validate their behavior against the repository before allowing c
 
 ## Workflow
 
-The catalog contains 33 direct commands and 13 recipes. Recipe steps call specific operations and record immutable
+The catalog contains 34 direct commands and 12 recipes. Recipe steps call specific operations and record immutable
 worklog checkpoints; there is no generic workflow-phase command.
 
 | Phase | Recipe | Outcome |
@@ -42,15 +42,14 @@ worklog checkpoints; there is no generic workflow-phase command.
 | 07 | `acme-recipe-07-push-github-stack` | Authorized publication report. |
 | 08 | `acme-recipe-08-submit-github-stack` | Authorized pull-request submission. |
 | bridge | `acme-recipe-resume-github-issue-workflow` | Recover a published branch and resolve the next workflow action. |
-| bridge | `acme-recipe-republish-rebased-github-stack` | Verify and record an already-pushed, rebased stack. |
 
 Start with phase 00. Each later recipe receives its issue, worklog session and immutable input from the previous
 checkpoint through `acme-cmd-report-github-issue-workflow`. Review the resolved input and invoke only the next
 appropriate phase. Phases 07 and 08 require explicit publication authorization.
 When the resolver reports `branch-recovery-required`, run the bridge recipe. If the trunk advanced after the
 recorded publication, it returns `stack-rebase-required` and leaves rebase and push to the project's documented
-manual procedure. After that push, the report returns `stack-republish-required`; run the republication bridge to
-verify patch equivalence and record the new remote OIDs before resuming the workflow.
+manual procedure. After that push, the report returns `stack-republish-required`; invoke the same bridge with
+explicit publication authorization to verify patch equivalence, record the new remote OIDs and resume the workflow.
 
 `acme-recipes.md` describes the worklog layout and recovery rules. The [authoring guide](../../docs/authoring.md)
 describes command and recipe contracts, while [command scripts](../../docs/command-scripts.md) covers helper

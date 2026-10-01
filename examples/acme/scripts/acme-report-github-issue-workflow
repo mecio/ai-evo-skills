@@ -1312,10 +1312,10 @@ def stack_republish_required(issue: int, current: dict[str, Any], workspace: Pat
     return {
         "schema_version": 1, "status": "stack-republish-required", "issue": issue,
         "current_session": current["session"]["session_name"],
-        "recommended_recipe": "acme-recipe-republish-rebased-github-stack",
+        "recommended_recipe": "acme-recipe-resume-github-issue-workflow",
         "worklog_session_name": current["session"]["session_name"],
-        "resolved_inputs": {"issue": str(issue), "publication_authorized": "true"}, "missing_inputs": [],
-        "suggested_invocation": f'$acme-recipe-republish-rebased-github-stack issue="{issue}" publication_authorized="true"',
+        "resolved_inputs": {"issue": str(issue)}, "missing_inputs": ["publication_authorized"],
+        "suggested_invocation": f'$acme-recipe-resume-github-issue-workflow issue="{issue}" publication_authorized="<publication_authorized>"',
         "reason": "Lo stack remoto è stato riscritto dopo il rebase ma i patch-id coincidono; registrare la ripubblicazione prima di proseguire.",
     }
 

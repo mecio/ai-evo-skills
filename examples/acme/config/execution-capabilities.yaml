@@ -55,6 +55,11 @@ capabilities:
     operation: report
     arguments: true
     workspaces: [read-write]
+  acme.workflow-resume:
+    script: acme-resume-github-issue-workflow
+    operation: resume
+    arguments: true
+    workspaces: [read-write]
   acme.git-stack-plan:
     script: acme-git-stack-plan
     operation: plan
