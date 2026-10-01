@@ -361,6 +361,26 @@ def successful_step_output(session: dict[str, Any], step_name: str) -> dict[str,
     return None
 
 
+def has_successful_step(session: dict[str, Any], step_name: str) -> bool:
+    """Validate an immutable successful checkpoint whose output may be non-JSON."""
+    entries = session["session"].get("entries")
+    if not isinstance(entries, list):
+        return False
+    for entry in reversed(entries):
+        if not isinstance(entry, dict) or entry.get("step_name") != step_name or entry.get("outcome") != "succeeded":
+            continue
+        filename, expected = entry.get("file"), entry.get("output_sha256")
+        if not isinstance(filename, str) or not isinstance(expected, str):
+            return False
+        try:
+            record = read_json(session["path"] / filename)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return False
+        output = record.get("output")
+        return isinstance(output, str) and hashlib.sha256(output.encode("utf-8")).hexdigest() == expected
+    return False
+
+
 def report_input(session: dict[str, Any], name: str) -> str | None:
     value = session["session"].get("session_input")
     return value.get(name) if isinstance(value, dict) and isinstance(value.get(name), str) else None
@@ -865,6 +885,42 @@ def stacked_recommendation(issue: int, current: dict[str, Any], recipe: str, ses
     return recommendation(issue, current, recipe, session_name, inputs, [], reason, lineage)
 
 
+def retry_interrupted_stacked_review(issue: int, breakdown_session: dict[str, Any], review: dict[str, Any],
+                                     workspace: Path, workflow: list[dict[str, Any]], layer: dict[str, Any],
+                                     analysis: str | None) -> dict[str, Any] | None:
+    """Open a fresh review after its saved review evidence could not be finalized."""
+    if not has_successful_step(review, "verify_review"):
+        return None
+    previous_review = artifact(review["path"], f"issue-{issue}-review.md")
+    if not previous_review:
+        return None
+    sequence = layer["sequence"]
+    branch, problem, warnings = layer_branch(workspace, issue, workflow, [layer], 0) if sequence == 0 else (None, "", [])
+    if sequence:
+        # Use the complete ordered map through the caller for non-first layers.
+        branch = recorded_branch(latest_layer_session(workflow, str(layer["id"]).upper(), "04"))
+    if problem or not branch:
+        return None
+    stack, stack_problem, stack_warnings = implementation_stack_layer(workspace, issue, branch)
+    if stack_problem or not stack:
+        return None
+    instructions = inherited_implementation_instructions(review, workflow)
+    layer_id = str(layer["id"]).upper()
+    lineage = {"layer_id": layer_id, "layer_sequence": layer["sequence"],
+               "breakdown_session": breakdown_session["session"]["session_name"]}
+    if analysis:
+        lineage["analysis_session"] = analysis
+    return recommendation(
+        issue, review, "acme-recipe-05-review-github-issue",
+        layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "05", "review", review["phase_attempt"] + 1),
+        {"issue": str(issue), "branch": stack["branch"], "base": stack["parent_branch"],
+         "stack_layer": json.dumps(stack, ensure_ascii=False, sort_keys=True),
+         "work_specification": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
+         "review_artifact_name": f"issue-{issue}-review.md", "previous_review": previous_review,
+         "implementation_instructions": instructions}, [],
+        "La review precedente è stata salvata ma non finalizzata; ripeterla in una nuova sessione.", lineage)
+
+
 def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list[dict[str, Any]],
                    workspace: Path, breakdown: dict[str, Any], developer_instructions: str = "",
                    requested_recipe: str | None = None, correction_instructions: str = "") -> dict[str, Any]:
@@ -901,6 +957,10 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
         if review:
             if review["session"].get("status") == "completed":
                 continue
+            retry = retry_interrupted_stacked_review(issue, breakdown_session, review, workspace, workflow,
+                                                      {**layer, "id": layer_id}, analysis)
+            if retry:
+                return retry
             return blocked(issue, review, "La review del layer è attiva: recuperare prima la stessa sessione.")
         implementation = latest_layer_session(workflow, layer_id, "04")
         if implementation:

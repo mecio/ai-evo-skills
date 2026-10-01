@@ -23,6 +23,8 @@
         "current_branch",
         "trunk",
         "top",
+        "rebase_required",
+        "layer_base_oid",
         "branches",
         "valid",
         "errors"
@@ -53,6 +55,13 @@
         "top": {
           "type": "string",
           "minLength": 1
+        },
+        "rebase_required": {
+          "type": "boolean"
+        },
+        "layer_base_oid": {
+          "type": "string",
+          "pattern": "^(?:|[0-9a-f]{40}|[0-9a-f]{64})$"
         },
         "branches": {
           "type": "array",
@@ -101,6 +110,13 @@
               },
               "upstream": {
                 "type": "string"
+              },
+              "trunk_advanced": {
+                "const": true
+              },
+              "layer_base_oid": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
               }
             }
           },

@@ -41,6 +41,8 @@ inputs:
 4. Restituire il JSON invariato dell'helper: `status: verified`, `stack_state` integrale e la sequenza `commits`
    dal parent alla punta. Ogni commit contiene `oid`, `subject` e `files`. Non sovrascrivere
    `stack_state.status`, che descrive la worktree.
+   Se `stack_state.rebase_required` è vero, l'helper fallisce con una diagnostica esplicita: un layer da ribasare
+   sul trunk corrente non può essere verificato né usato per creare un layer figlio.
    Se l'output dell'helper non è conforme allo schema, fallire senza modificarlo. Propagare il primo errore senza correggere Git né rieseguire controlli alternativi.
 
 ## Expected output

@@ -119,6 +119,8 @@ def prepare_branch(request):
                                 '--require-current-top', '--require-clean').decode())
         if not state['valid']:
             raise ValueError('parent stack is invalid')
+        if state.get('rebase_required'):
+            raise ValueError(f"parent stack requires rebase onto {state.get('trunk', base)}")
         run('gh', 'stack', 'add', name)
     if text('symbolic-ref', '--quiet', '--short', 'HEAD') != name or text('rev-parse', 'HEAD') != before:
         raise ValueError('created branch does not match the plan; inspect local state before retry')
@@ -173,6 +175,10 @@ def verify_branch(request):
                             '--expected-top', request['branch'], '--expected-parent', request['parent_branch'],
                             '--expected-sequence', str(request['sequence']), '--require-current-top',
                             '--require-clean').decode())
+    if not state.get('valid'):
+        raise ValueError('stack is invalid')
+    if state.get('rebase_required'):
+        raise ValueError(f"layer requires rebase onto {state.get('trunk', request['base_branch'])}")
     oid = text('rev-parse', 'HEAD')
     commits = []
     for commit_oid in text('rev-list', '--reverse', f"{request['parent_branch']}..HEAD").splitlines():
