@@ -24,7 +24,7 @@ checkpoint `publish_branch`, e solo quando lo sviluppatore fornisce `correction_
 apre una sessione autonoma, affida la correzione a Claude, registra un checkpoint non conclusivo, pubblica il
 branch e conserva il risultato conclusivo. Non modifica il piano o il journal della sessione 04 originaria.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-implement-github-issue-correction`
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-implement-github-issue-correction --adapter <adapter-corrente>`
 e gli input risolti. Seguire il protocollo in `.ai-evo/docs/recipe-runtime.md`: avanzare solo lo step risolto e
 fermare la recipe al primo errore. Il push è confinato allo step `publish_branch`.
 

@@ -25,7 +25,7 @@ Un checkpoint `verify_review` non conclusivo resta immutabile; al rilancio il re
 `05-review-attempt-02` e collega la review precedente come evidenza, senza sovrascrivere l'artefatto della prima
 sessione.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-05-review-github-issue` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-05-review-github-issue --adapter <adapter-corrente>` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
 
 Se `worklog_session_name` o `worklog_session_input` non sono ricevuti, risolverli prima del piano secondo la convenzione nella [guida alle recipe](../../../acme-recipes.md); non richiederli allo sviluppatore quando sono deducibili dal contesto della fase.
 

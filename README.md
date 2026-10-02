@@ -174,7 +174,7 @@ See the [execution reference](docs/execution.md) for delegation, native restrict
 ## Documentation
 
 - [Examples index](examples/README.md): commands, internal steps, recipes and recovery.
-- [Acme workflow catalog](examples/acme/README.md): 32 commands, project helper scripts and 11 GitHub delivery recipes.
+- [Acme workflow catalog](examples/acme/README.md): 34 commands, project helper scripts and 12 GitHub delivery recipes.
 - [Recovery example](examples/recovery/README.md): verified-prefix recovery with an isolated demo and real-run instructions.
 - [Runtime-tests example](examples/runtime-tests/README.md): scripted PHP context detection, conditional suites
   and reporting; supply your application's test wrappers and worktree mapping.

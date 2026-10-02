@@ -36,18 +36,31 @@ inputs:
    PR che possono essere create o aggiornate, effetto e ripristino possibile; attendere la conferma esplicita per
    quel solo submit. Usare `--auto` perché evita l'editor interattivo e crea le nuove pull request come draft; non
    usare `--open`. Il comando crea le PR mancanti, aggiorna quelle esistenti e collega le loro basi nello stack.
-3. Per ogni branch dello stack, individuare una sola PR aperta con `gh pr list --head <branch> --state open`.
+3. Risolvere una sola volta `<owner>/<repo>` con `.ai-evo/bin/ai-evo-github-read repo-view`; non derivarlo dal
+   remote Git. Per ogni branch dello stack, individuare una sola PR aperta con `gh pr list --head <branch> --state open`.
    Fermarsi se manca o è ambigua. Prima di ogni eventuale `gh pr ready <url> --undo`, mostrare una nuova tabella e
-   attendere la conferma esplicita per quella sola conversione a draft.
+   attendere la conferma esplicita per quella sola conversione a draft. Se il comando fallisce con l'errore GraphQL
+   relativo a Projects (classic), documentare nel rapporto l'alternativa `gh api graphql` con la mutation
+   `convertPullRequestToDraft`, senza eseguirla automaticamente.
 4. Generare titolo e descrizione dai fatti locali del solo layer, confrontando `parent..branch`: il titolo è una
    sintesi concisa dei commit del layer e conserva il numero della issue quando presente; la descrizione Markdown
    contiene `## Cosa cambia` con le modifiche osservate, `## Verifiche` con le evidenze del report e `## Stack` con
    branch e base. Non dichiarare test, issue o comportamenti non dimostrati. Non includere token, credenziali,
    istruzioni della conversazione o diff completi.
-5. Scrivere ogni body in un file temporaneo privato. Prima di ogni `gh pr edit <url> --title <titolo> --body-file
-   <file>`, mostrare una nuova tabella con URL, titolo e sintesi della descrizione che sarà applicata, quindi
-   attendere la conferma esplicita per quella sola modifica. Rileggere le PR e riportare URL, stato draft, titolo e
-   base risultanti. Se un submit o un aggiornamento fallisce, conservare la diagnostica e non ritentare automaticamente.
+5. Scrivere ogni titolo e body in file temporanei privati (per esempio con `umask 077` e `mktemp`); non passarli mai
+   inline. Scrivere il titolo senza newline finale, per esempio con `printf '%s' "<titolo>" > <file-titolo>`.
+   Prima di ogni PATCH, mostrare una nuova tabella con target, comando, effetto remoto, dati o metadati coinvolti e
+   ripristino possibile; includere URL, titolo e sintesi della descrizione. Attendere la conferma esplicita per quel
+   solo comando, poi eseguire esclusivamente:
+
+   ```bash
+   gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -F title=@<file-titolo> -F body=@<file-body>
+   ```
+
+   Il PATCH contiene soltanto `title` e `body`. Dopo ogni PATCH riuscito, rileggere con
+   `gh api repos/<owner>/<repo>/pulls/<n>` e verificare che `title`, `body`, `draft` e `base.ref` corrispondano ai
+   valori attesi; riportare URL, stato draft, titolo e base risultanti. Se un submit, PATCH o rilettura fallisce,
+   conservare la diagnostica e non ritentare automaticamente.
 
 ## Expected output
 

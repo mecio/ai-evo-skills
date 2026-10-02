@@ -22,6 +22,9 @@ cp .ai-evo/examples/acme/acme-recipes.md .ai-evo-prj/skills/acme-recipes.md
 Before running a recipe, replace every placeholder in `acme-worktrees.yaml` and `acme-git-branches.yaml` with the
 project's worktree roots, runtime and lint commands, branch strategy and stack tool. The helpers are copied as a starting
 implementation; validate their behavior against the repository before allowing commits, pushes or pull requests.
+For machine-specific worktree roots, copy `acme-worktrees.local.tpl.yaml` to
+`.ai-evo-prj/acme-worktrees.local.yaml`, add the destination to the application `.gitignore`, and set only the
+values that differ locally. `acme-worktree-context` merges this ignored file over the shared configuration.
 
 ## Workflow
 

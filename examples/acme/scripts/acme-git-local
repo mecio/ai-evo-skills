@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 ENV = {**os.environ, 'GIT_NO_LAZY_FETCH': '1', 'GIT_TERMINAL_PROMPT': '0', 'GIT_PAGER': 'cat'}
 
 
@@ -47,6 +48,12 @@ def keys(value, required):
         raise ValueError('request fields do not match the operation contract')
 
 
+def optional_keys(value, required, optional=()):
+    allowed = set(required.split()) | set(optional)
+    if not isinstance(value, dict) or not set(required.split()) <= set(value) or set(value) - allowed:
+        raise ValueError('request fields do not match the operation contract')
+
+
 def branch(value):
     if not isinstance(value, str) or not value or value.startswith('-'):
         raise ValueError('invalid branch')
@@ -59,14 +66,17 @@ def clean():
         raise ValueError('worktree must be clean')
 
 
-def snapshot():
+def snapshot(paths=None):
     current = text('symbolic-ref', '--quiet', '--short', 'HEAD')
     status = git('-c', 'status.renames=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all')
     files = []
+    selected = set(paths) if paths is not None else None
     for row in status.split(b'\0'):
         if not row:
             continue
         flags, name = row[:2].decode(), os.fsdecode(row[3:])
+        if selected is not None and name not in selected:
+            continue
         path = Path(name)
         # All paths originate in git status; reject submodules rather than hashing their internals.
         index = git('ls-files', '--stage', '--', name)
@@ -133,13 +143,19 @@ def commit(request):
         if not isinstance(request['reason'], str) or not request['reason'].strip():
             raise ValueError('skipped plan requires a reason')
         return request
-    keys(request, 'status issue branch initial_oid git_identity files summary risks missing_verifications message')
+    optional_keys(request, 'status issue branch initial_oid git_identity files summary risks missing_verifications message', ('paths',))
     if request['status'] != 'ready':
         raise ValueError('commit plan must be ready')
     checked = message_check(request['message'], request['issue'])
     if not checked['valid']:
         raise ValueError('; '.join(checked['errors']))
-    actual = snapshot()
+    selected = request.get('paths')
+    if selected is not None:
+        if (not isinstance(selected, list) or not selected or any(not isinstance(item, str) or not item
+                or item.startswith('-') or Path(item).is_absolute() or '..' in Path(item).parts for item in selected)
+                or len(selected) != len(set(selected))):
+            raise ValueError('paths must be a non-empty unique list of repository-relative paths')
+    actual = snapshot(selected)
     for key in ('branch', 'initial_oid', 'git_identity'):
         if request[key] != actual[key]:
             raise ValueError(f'commit plan no longer matches {key}')
@@ -197,11 +213,53 @@ def verify_branch(request):
             'commits': commits}
 
 
+def push_branch(request):
+    """Publish one implemented layer with a deterministic, recoverable receipt."""
+    keys(request, 'implementation_report')
+    report = strict_json(request['implementation_report']) if isinstance(request['implementation_report'], str) else request['implementation_report']
+    if not isinstance(report, dict):
+        raise ValueError('implementation_report must be a JSON object')
+    required = ('branch', 'parent_branch', 'base_branch', 'commits')
+    if any(not isinstance(report.get(key), str) or not report[key] for key in required[:3]) or not isinstance(report.get('commits'), list) or not report['commits']:
+        raise ValueError('implementation_report does not identify a committed branch')
+    name, parent, base = (branch(report[key]) for key in required[:3])
+    clean()
+    if text('symbolic-ref', '--quiet', '--short', 'HEAD') != name:
+        raise ValueError('current branch does not match implementation_report')
+    commits = report['commits']
+    last = commits[-1] if commits else {}
+    if not isinstance(last, dict) or not isinstance(last.get('sha'), str) or not text('rev-parse', 'HEAD').startswith(last['sha']):
+        raise ValueError('HEAD does not match the last implementation commit')
+    config = (ROOT / 'skills/config/acme-git-branches.yaml').read_text(encoding='utf-8')
+    remote = next((line.split(':', 1)[1].strip() for line in config.splitlines() if line.startswith('stack_remote:')), '')
+    if not remote or remote.startswith('-'):
+        raise ValueError('stack_remote is missing from branch configuration')
+    git('remote', 'get-url', remote)
+    parent_oid = text('rev-parse', '--verify', f'refs/heads/{parent}^{{commit}}')
+    base_oid = text('rev-parse', '--verify', f'refs/heads/{base}^{{commit}}')
+    local_oid = text('rev-parse', 'HEAD')
+    result = subprocess.run(['git', 'push', '--set-upstream', remote, f'{name}:{name}'], env=ENV, capture_output=True)
+    if result.returncode:
+        raise ValueError(result.stderr.decode(errors='replace').strip() or 'non-fast-forward push failed')
+    remote_oid = text('rev-parse', '--verify', f'refs/remotes/{remote}/{name}^{{commit}}')
+    if remote_oid != local_oid:
+        raise ValueError('remote OID does not match the published local OID')
+    upstream = text('for-each-ref', '--format=%(upstream:short)', f'refs/heads/{name}')
+    if upstream != f'{remote}/{name}':
+        raise ValueError('published branch has an unexpected upstream')
+    sequence = report.get('sequence', 0)
+    if type(sequence) is not int or sequence < 0:
+        raise ValueError('implementation_report has an invalid sequence')
+    return {'status': 'published', 'branch': name, 'parent_branch': parent, 'base_branch': base,
+            'sequence': sequence, 'remote': remote, 'local_oid': local_oid, 'remote_oid': remote_oid,
+            'parent_oid': parent_oid, 'base_oid': base_oid, 'upstream': upstream}
+
+
 def main():
     if len(sys.argv) not in (2, 3):
         raise ValueError('expected an operation and, when required, one JSON argument')
     operation = sys.argv[1]
-    if operation not in ('inspect', 'validate-message', 'prepare-branch', 'commit', 'verify-branch'):
+    if operation not in ('inspect', 'validate-message', 'prepare-branch', 'commit', 'verify-branch', 'push-branch'):
         raise ValueError('unsupported local operation')
     root = text('rev-parse', '--show-toplevel')
     if Path.cwd().resolve() != Path(root).resolve():
@@ -222,7 +280,8 @@ def main():
             if not result['valid']:
                 raise ValueError('; '.join(result['errors']))
         else:
-            result = {'prepare-branch': prepare_branch, 'commit': commit, 'verify-branch': verify_branch}[operation](request)
+            result = {'prepare-branch': prepare_branch, 'commit': commit, 'verify-branch': verify_branch,
+                      'push-branch': push_branch}[operation](request)
     print(result if isinstance(result, str) else json.dumps(result, ensure_ascii=False))
 
 

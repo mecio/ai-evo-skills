@@ -54,7 +54,7 @@ capabilities:
     script: acme-report-github-issue-workflow
     operation: report
     arguments: true
-    workspaces: [read-write]
+    workspaces: [read-only, read-write]
   acme.workflow-resume:
     script: acme-resume-github-issue-workflow
     operation: resume

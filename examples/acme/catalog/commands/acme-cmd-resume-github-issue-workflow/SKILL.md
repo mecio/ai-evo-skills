@@ -18,13 +18,14 @@ execution-policy:
   network: enabled
   capabilities: [acme.workflow-resume]
 inputs:
-  issue: { required: true, description: "Issue del workflow da riprendere." }
-  publication_authorized: { default: "false", description: "true autorizza soltanto la registrazione della ripubblicazione già eseguita manualmente." }
+  issue: { required: true, description: "Numero della issue; il runtime lo passa come stringa numerica oppure intero." }
+  publication_authorized: { default: "false", description: "Accetta il booleano o le stringhe letterali true/false; true autorizza soltanto la registrazione della ripubblicazione già eseguita manualmente." }
 ```
 
 ## Procedure
 
-Esegue prima il report. Per `branch-recovery-required` recupera il branch con `prepare` e rilancia il report. Per
+Lo script riceve un solo JSON `{ "issue": <numero|stringa numerica>, "publication_authorized": <booleano|"true"|"false"> }`
+e converte le due forme scalarie prima dell'esecuzione. Esegue prima il report. Per `branch-recovery-required` recupera il branch con `prepare` e rilancia il report. Per
 `stack-republish-required` esegue `acme-cmd-republish-rebased-git-stack` solo con
 `publication_authorized: true`, poi rilancia il report. Restituisce invariato il report risultante.
 

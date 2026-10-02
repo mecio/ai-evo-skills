@@ -1,0 +1,5 @@
+# Copy to .ai-evo-prj/acme-worktrees.local.yaml and add that file to the application's .gitignore.
+# Local values override only the fields declared here.
+
+legacy_root: "./vms/<local-legacy-worktree>"
+current_root: "./vms/<local-current-worktree>"

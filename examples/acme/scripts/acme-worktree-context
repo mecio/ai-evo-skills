@@ -12,6 +12,7 @@ from lib.acme_script_common import fail, git_text, load_simple_yaml, write_json
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONTEXT_CONFIG = ROOT / "skills/config/acme-worktrees.yaml"
 DEFAULT_BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+LOCAL_CONTEXT_CONFIG = ROOT / "acme-worktrees.local.yaml"
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +35,8 @@ def normalized_root(value: str) -> str:
 def main() -> int:
     args = parse_args()
     config = load_simple_yaml(args.config.resolve())
+    if args.config.resolve() == DEFAULT_CONTEXT_CONFIG.resolve() and LOCAL_CONTEXT_CONFIG.is_file():
+        config.update(load_simple_yaml(LOCAL_CONTEXT_CONFIG))
     branch_config = load_simple_yaml(args.branch_config.resolve())
     actual_root = args.root or git_text("rev-parse", "--show-toplevel")
     normalized = normalized_root(actual_root)

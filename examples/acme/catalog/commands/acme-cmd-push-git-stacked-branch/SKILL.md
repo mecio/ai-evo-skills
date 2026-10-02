@@ -17,6 +17,7 @@ worktree senza dipendere dai soli metadati locali o dal worklog.
 ## Interface
 
 ```yaml ai-evo-interface
+output-schema: references/output.schema.json
 execution-policy:
   workspace: read-write
   network: enabled
@@ -31,10 +32,12 @@ inputs:
 1. Verificare che `implementation_report` sia riuscito, identifichi un solo `branch` locale e contenga almeno un
    commit. Da worktree pulita, verificare che `HEAD` sia quel branch e che il suo OID coincida con l'ultimo commit
    riportato.
-2. Leggere `stack_remote` da `skills/config/acme-git-branches.yaml`; non dedurre il remote dal branch corrente.
+2. Dalla root Git eseguire `.ai-evo-prj/scripts/acme-git-local push-branch '<JSON>'`, con il solo campo
+   `implementation_report`. L'helper risolve `stack_remote` dal percorso canonico
+   `.ai-evo-prj/skills/config/acme-git-branches.yaml`; non dedurre il remote dal branch corrente.
    Verificare che il remote esista e che il parent dichiarato dal report sia disponibile localmente.
-3. Eseguire una sola pubblicazione non forzata del branch corrente sul ref remoto omonimo e impostare il suo
-   upstream. Non usare `gh stack push`, `gh stack submit`, `gh pr`, `sync`, `rebase`, `merge` o force push.
+3. L'helper esegue una sola pubblicazione non forzata del branch corrente sul ref remoto omonimo e imposta il suo
+   upstream. Non usare comandi Git o gh aggiuntivi.
 4. Prima del push registrare l'OID del parent come `parent_oid`; per il primo layer registrarlo anche come
    `base_oid`. Leggere il ref remoto e verificarne l'OID rispetto a `HEAD`; se non coincidono, segnalare l'errore
    senza ritentare. Restituire branch, `parent_branch`, `base_branch`, `sequence`, remote, OID locale/remoto,

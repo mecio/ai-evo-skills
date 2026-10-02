@@ -29,7 +29,9 @@ Tutte le recipe ricevono questi attributi:
 | `worklog_session_name` | Percorso relativo, umano e stabile della sessione sotto `.ai-evo-work/`. |
 | `worklog_session_input` | Oggetto JSON immutabile con gli input della fase; rende riproducibile il recupero. |
 
-Per le recipe dalla 01 alla 06, `recipe plan` esegue il resolver del workflow prima di validare gli input. La
+Ogni invocazione usa `.ai-evo/bin/ai-evo-skills recipe plan <nome-recipe> --adapter <adapter-corrente>`; l'adapter
+è obbligatorio anche quando la recipe è avviata dal raccordo di ripresa. Per le recipe dalla 01 alla 06, `recipe plan`
+esegue il resolver del workflow prima di validare gli input. La
 recipe 04 pubblica obbligatoriamente il branch appena commitato e ne salva l'evidenza nel worklog, salvo la sessione
 di correzione esplicitamente aperta da un checkpoint di implementazione non pubblicato. Dopo una review 05 o una
 verifica epic 06 conclusa, il report propone la recipe 07 con il report di verifica risolto e richiede sempre

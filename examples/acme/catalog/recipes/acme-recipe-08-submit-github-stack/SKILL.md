@@ -25,7 +25,7 @@ draft se necessario. Prima di submit, conversione a draft o modifica di una PR, 
 attende una conferma valida per quel solo comando remoto. Per ciascun layer, titolo e descrizione vengono aggiornati
 dal diff incrementale e dalle evidenze di verifica, senza cambiare altri metadati GitHub.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-08-submit-github-stack` e gli input
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-08-submit-github-stack --adapter <adapter-corrente>` e gli input
 ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire
 soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento
 restituire l’output invariato.

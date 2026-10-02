@@ -25,7 +25,7 @@ verificato. Prima del push la recipe mostra la tabella di riepilogo richiesta da
 per quel comando. Poi verifica ref e OID remoti e riconferma gli upstream locali omonimi. Se il push o la verifica
 falliscono, conserva l'evidenza e non ritenta né crea pull request.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-07-push-github-stack` e gli input
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-07-push-github-stack --adapter <adapter-corrente>` e gli input
 ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire
 soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento
 restituire l’output invariato.

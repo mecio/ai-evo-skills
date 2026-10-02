@@ -1023,13 +1023,16 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
                     {"issue": str(issue), "layer": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
                      "branch": expected}, {**layer, "id": layer_id},
                     "Esiste un layer implementato senza checkpoint 04: adottarlo esplicitamente.", analysis)
-        base = None
+        parent = None
         if sequence > 0:
-            base, problem, _ = layer_branch(workspace, issue, workflow, ordered, sequence - 1)
-            if problem or not base:
+            parent, problem, _ = layer_branch(workspace, issue, workflow, ordered, sequence - 1)
+            if problem or not parent:
                 return blocked(issue, breakdown_session, problem or "Manca il branch del layer precedente.")
+        trunk, _, trunk_problem = trunk_branch(workspace)
+        if trunk_problem or not trunk:
+            return blocked(issue, breakdown_session, trunk_problem or "Manca il trunk configurato.")
         inputs = {"issue": str(issue), "layer": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
-                  "base_branch": base or trunk_branch(workspace)[0]}
+                  "base_branch": trunk}
         if sequence > 0:
             previous_review = latest_layer_session(workflow, str(ordered[sequence - 1].get("id", "")).upper(), "05")
             if previous_review and previous_review["session"].get("status") == "completed":
@@ -1229,6 +1232,33 @@ def branch_recovery_required(issue: int, current: dict[str, Any], workspace: Pat
             f"Eseguire il comando di recupero e poi rilanciare il report. Dettaglio: {reason}"
         ),
     }
+
+
+def published_branch_recovery(issue: int, current: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
+    """Do not recommend work on a publication that this worktree cannot use.
+
+    A publication checkpoint is the hand-off contract between worktrees. The
+    local branch may be ahead (for example after a local review fix), but it
+    must still contain the OID that was published. Looking only for a branch
+    name allowed a stale pre-rebase branch to be treated as ready.
+    """
+    for layer in published_layers(workspace, issue):
+        branch, published_oid = layer["branch"], layer["remote_oid"]
+        if not local_branch_exists(workspace, branch):
+            return branch_recovery_required(
+                issue, current, workspace, branch,
+                f"Il branch pubblicato {branch} non esiste localmente (OID pubblicato {published_oid}).",
+            )
+        contains = subprocess.run(
+            ["git", "-C", str(workspace), "merge-base", "--is-ancestor", published_oid, branch],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+        if not contains:
+            return branch_recovery_required(
+                issue, current, workspace, branch,
+                f"Il branch locale {branch} non contiene l'OID pubblicato {published_oid}; è richiesto il recupero dal remote.",
+            )
+    return None
 
 
 def stack_rebase_required(issue: int, current: dict[str, Any], workspace: Path) -> dict[str, Any] | None:
@@ -1568,6 +1598,10 @@ def main() -> int:
         print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     current = latest_phase(workflow)
+    recovery = published_branch_recovery(issue, current, workspace)
+    if recovery:
+        print(json.dumps(add_warnings(recovery, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     republish = stack_republish_required(issue, current, workspace)
     if republish:
         print(json.dumps(add_warnings(republish, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))

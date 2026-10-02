@@ -18,7 +18,7 @@ Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per gli attrib
 
 Usala soltanto quando la recipe 03 ha creato un’epic con sub-issue. Confronta analisi della principale, mappa delle sub-issue ed evidenze dei layer; un’issue non scomposta termina invece con la recipe 05.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-06-verify-github-epic-stack` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-06-verify-github-epic-stack --adapter <adapter-corrente>` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
 
 Se `worklog_session_name` o `worklog_session_input` non sono ricevuti, risolverli prima del piano secondo la convenzione nella [guida alle recipe](../../../acme-recipes.md); non richiederli allo sviluppatore quando sono deducibili dal contesto della fase.
 

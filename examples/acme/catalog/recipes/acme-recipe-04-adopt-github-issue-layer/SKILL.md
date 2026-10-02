@@ -18,7 +18,7 @@ Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per percorsi w
 
 Usa questa recipe solo quando il resolver rileva un branch di un layer già implementato senza checkpoint 04 e lo sviluppatore ha approvato esplicitamente l'adozione. Verifica branch, parent, il trunk risolto per il contesto della worktree da `acme-worktree-context`, commit della issue e worktree pulita senza effettuare scritture remote; il risultato con `origin: pre-existing` viene registrato come checkpoint 04 completo nel worklog del layer.
 
-Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-adopt-github-issue-layer` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`, eseguire solo lo step risolto e fermarsi al primo errore.
+Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-adopt-github-issue-layer --adapter <adapter-corrente>` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`, eseguire solo lo step risolto e fermarsi al primo errore.
 
 ## Expected output
 

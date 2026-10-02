@@ -36,7 +36,12 @@ inputs:
 
 ## Procedure
 
-Il logger accetta **percorsi di file**, non valori inline, per `--session-input`, `--output`, `--error` e, quando ricevuto, `--work-context`. Crea una directory temporanea privata direttamente sotto `/tmp`, con nome `ai-evo-worklog-<identificatore>`, e al suo interno:
+Quando il runtime ha già una transizione `ready` di `recipe advance`, preferire
+`.ai-evo-prj/scripts/acme-operation-output-worklog record-from-transition` e passargli la transizione completa
+su standard input. L'helper accetta solo `step.uses: acme-cmd-save-worklog-output`, crea i file temporanei e
+restituisce l'output byte per byte. Altrimenti il logger accetta **percorsi di file**, non valori inline, per
+`--session-input`, `--output`, `--error` e, quando ricevuto, `--work-context`. Crea una directory temporanea
+privata direttamente sotto `/tmp`, con nome `ai-evo-worklog-<identificatore>`, e al suo interno:
 
 1. serializza `session_input` in `session-input.json` e `error` in `error.json` come JSON validi;
 2. scrivi `output` invariato, compresi newline e spazi finali, in `output.txt`;

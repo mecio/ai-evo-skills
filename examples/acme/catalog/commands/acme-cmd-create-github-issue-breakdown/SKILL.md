@@ -27,11 +27,39 @@ inputs:
 
 ## Procedure
 
-Con `mode: single` restituisci una mappa senza modificare GitHub. Con `mode: stacked` non eseguire alcuna operazione GitHub e restituisci una mappa con `parent_issue` e `layers`: ogni layer mantiene `id`, `title`, `body`, `dependencies`, l'ordine numerico in `sequence` ed eventuale `existing_branch`. Con `mode: epic` richiedi
-`remote_authorized: true`, verifica che la label `epic` esista, applicala alla issue padre con `gh issue edit`,
-poi crea una sola sub-issue per item mediante `gh issue create --parent <numero-padre>` usando titolo e corpo
-approvati. Crea nell’ordine delle dipendenze, include nel corpo riferimenti alle dipendenze già create e non
-ripete automaticamente operazioni remote fallite. Restituisci numero e URL dell’epic e di ogni sub-issue.
+Con `mode: single` restituisci una mappa senza modificare GitHub. Con `mode: stacked` non eseguire alcuna operazione GitHub e restituisci una mappa con `parent_issue` e `layers`: ogni layer mantiene `id`, `title`, `body`, `dependencies`, l'ordine numerico in `sequence` ed eventuale `existing_branch`.
+
+Con `mode: epic` richiedi `remote_authorized: true` e risolvi `<owner>/<repo>` esclusivamente con
+`.ai-evo/bin/ai-evo-github-read repo-view`, mai dal remote Git. Verifica in lettura che la label esista con
+`gh api repos/<owner>/<repo>/labels/epic`. Prima di ogni scrittura remota mostra la tabella prescritta dalle
+direttive, con target, comando, effetto remoto, dati o metadati coinvolti e ripristino possibile, e attendi la
+conferma esplicita riferita a quel solo comando.
+
+Applica quindi la label senza rimuovere quelle esistenti con:
+
+```bash
+gh api -X POST repos/<owner>/<repo>/issues/<n>/labels -f "labels[]=epic"
+```
+
+Per ciascun item, nell'ordine delle dipendenze, scrivi titolo e corpo approvati in file temporanei privati (per
+esempio con `umask 077` e `mktemp`) e non passarli inline. Scrivi il titolo senza newline finale, per esempio con
+`printf '%s' "<titolo>" > <file-titolo>`. Mostra una tabella e ottieni una conferma prima di creare la issue:
+
+```bash
+gh api -X POST repos/<owner>/<repo>/issues -F title=@<file-titolo> -F body=@<file-body>
+```
+
+Dalla risposta conserva sia `number` sia `id`: `id` è l'identificatore interno e non coincide con il numero.
+Mostra poi una nuova tabella e ottieni una nuova conferma prima di collegare quella issue al padre:
+
+```bash
+gh api -X POST repos/<owner>/<repo>/issues/<padre>/sub_issues -F sub_issue_id=<id>
+```
+
+Include nel corpo riferimenti alle dipendenze già create. Se il collegamento fallisce, riporta la issue creata ma non
+collegata e non ritentare automaticamente. Alla fine rileggi con
+`gh api repos/<owner>/<repo>/issues/<padre>/sub_issues` e verifica l'elenco. Non ripetere automaticamente nessuna
+scrittura remota fallita.
 
 ## Expected output
 

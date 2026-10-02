@@ -37,22 +37,27 @@ def request(raw: str) -> tuple[int, bool]:
     issue = value["issue"]
     if isinstance(issue, str) and issue.isdigit():
         issue = int(issue)
-    if type(issue) is not int or issue < 1 or type(value["publication_authorized"]) is not bool:
+    authorized = value["publication_authorized"]
+    if isinstance(authorized, str) and authorized in {"true", "false"}:
+        authorized = authorized == "true"
+    if type(issue) is not int or issue < 1 or type(authorized) is not bool:
         fail("request is invalid")
-    return issue, value["publication_authorized"]
+    return issue, authorized
 
 
 def main() -> int:
     if len(sys.argv) != 3 or sys.argv[1] != "resume":
         fail("expected the resume operation and one JSON request")
     issue, authorized = request(sys.argv[2])
-    report = run(str(HERE / "acme-report-github-issue-workflow"), "report", "--issue", str(issue))
+    report_args = (str(HERE / "acme-report-github-issue-workflow"), "report", "--issue", str(issue),
+                   "--requested-recipe", "acme-recipe-resume-github-issue-workflow")
+    report = run(*report_args)
     if report.get("status") == "branch-recovery-required":
         run(str(HERE / "acme-git-recipe-branch"), "prepare", json.dumps({"issue": issue, "worklog_session": "", "branch": ""}))
-        report = run(str(HERE / "acme-report-github-issue-workflow"), "report", "--issue", str(issue))
+        report = run(*report_args)
     if report.get("status") == "stack-republish-required" and authorized:
         run(str(HERE / "acme-republish-rebased-git-stack"), "republish", json.dumps({"issue": issue, "publication_authorized": True}))
-        report = run(str(HERE / "acme-report-github-issue-workflow"), "report", "--issue", str(issue))
+        report = run(*report_args)
     write_json(report)
     return 0
 

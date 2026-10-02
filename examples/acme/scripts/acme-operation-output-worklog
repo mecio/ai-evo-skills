@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -275,9 +277,70 @@ def load_or_create_session(
     return value
 
 
+def record_from_transition() -> int:
+    """Record a ready save-worklog transition without rewriting its output."""
+    try:
+        transition = json.loads(sys.stdin.read())
+    except json.JSONDecodeError as exc:
+        fail(f"transition is not valid JSON: {exc}")
+    if not isinstance(transition, dict) or transition.get("status") != "ready":
+        fail("transition status must be ready")
+    step = transition.get("step", transition)
+    if not isinstance(step, dict) or step.get("uses") != "acme-cmd-save-worklog-output":
+        fail("transition step.uses must be acme-cmd-save-worklog-output")
+    values = step.get("with")
+    required = {"session_name", "recipe_name", "session_input", "step_name", "source_name", "outcome",
+                "output", "expected_output_sha256", "error"}
+    if not isinstance(values, dict) or not required <= set(values):
+        fail("transition step.with does not contain the save-worklog contract")
+    if not isinstance(values["output"], str):
+        fail("transition output must be text")
+
+    def decoded_json(name: str) -> Any:
+        value = values[name]
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            fail(f"transition {name} is not valid JSON: {exc}")
+
+    session_input = decoded_json("session_input")
+    error = decoded_json("error")
+    complete = values.get("complete", "false")
+    if complete not in (True, False, "true", "false"):
+        fail("transition complete must be true or false")
+    with tempfile.TemporaryDirectory(prefix="ai-evo-worklog-", dir="/tmp") as temporary:
+        directory = Path(temporary)
+        input_path, output_path, error_path = (directory / "session-input.json", directory / "output.txt",
+                                               directory / "error.json")
+        input_path.write_text(json.dumps(session_input, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(values["output"], encoding="utf-8", newline="")
+        error_path.write_text(json.dumps(error, ensure_ascii=False), encoding="utf-8")
+        command = [sys.executable, str(Path(__file__).resolve()), "record", "--session-name", str(values["session_name"]),
+                   "--recipe-name", str(values["recipe_name"]), "--session-input", str(input_path),
+                   "--step-name", str(values["step_name"]), "--source-name", str(values["source_name"]),
+                   "--outcome", str(values["outcome"]), "--output", str(output_path),
+                   "--expected-output-sha256", str(values["expected_output_sha256"]), "--error", str(error_path),
+                   "--temporary-directory", str(directory)]
+        if values.get("artifact_name", ""):
+            command.extend(["--artifact-name", str(values["artifact_name"])])
+        if complete is True or complete == "true":
+            command.append("--complete")
+        completed = subprocess.run(command, capture_output=True)
+    if completed.stderr:
+        os.write(2, completed.stderr)
+    if completed.returncode:
+        raise SystemExit(completed.returncode)
+    os.write(1, completed.stdout)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("record",))
+    parser.add_argument("operation", choices=("record", "record-from-transition"))
+    if len(sys.argv) == 2 and sys.argv[1] == "record-from-transition":
+        return record_from_transition()
     parser.add_argument("--session-name", required=True)
     parser.add_argument("--recipe-name", required=True)
     parser.add_argument("--session-input", type=Path, required=True)

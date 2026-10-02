@@ -28,6 +28,9 @@ inputs:
   commit_plan:
     description: Piano prodotto da acme-cmd-prepare-commit-current-changes.
     required: true
+  paths:
+    description: "Lista opzionale di file del piano da includere nel commit logico corrente."
+    default: ""
 ```
 
 ## Procedure
@@ -40,7 +43,9 @@ inputs:
 3. Per un piano ready, dalla root applicativa eseguire `.ai-evo-prj/scripts/acme-git-local commit '<JSON>'`,
    passando il piano integrale come un solo argomento JSON quotato come dato. Non eseguire `git add` o
    `git commit` direttamente né aggiungere opzioni all'helper.
-4. L'helper rivalida messaggio, branch, OID, identità, percorsi e digest prima di toccare l'indice. Aggiunge
+4. Se `paths` è valorizzato, inserirlo nel JSON come lista di percorsi repository-relative univoci e aggiornare
+   `files` del piano affinché descriva esattamente quel sottoinsieme; l'helper lascia le altre modifiche non staged.
+   L'helper rivalida messaggio, branch, OID, identità, percorsi e digest prima di toccare l'indice. Aggiunge
    soltanto i file previsti, verifica i contenuti staged e crea un solo commit con il messaggio approvato,
    mantenendo gli hook configurati. Non offre amend, push, configurazione Git o bypass degli hook.
 5. Propagare output ed errori invariati. Un errore dopo lo staging può lasciare effetti locali: conservarne
