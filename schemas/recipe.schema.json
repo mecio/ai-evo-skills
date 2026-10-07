@@ -38,7 +38,7 @@
           "uses": { "$ref": "#/$defs/skillName" },
           "executor": {
             "type": "string",
-            "pattern": "^(current|[a-z][a-z0-9-]*)$"
+            "pattern": "^(current|[a-z][a-z0-9-]*|\\$\\{\\{ inputs\\.[a-z][a-z0-9_]* \\}\\})$"
           },
           "for_each": {
             "type": "object",

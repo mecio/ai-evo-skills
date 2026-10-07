@@ -58,3 +58,28 @@ class ProjectCapabilitiesTest(unittest.TestCase):
         for deny in ['Bash(*)', 'Bash(.ai-evo-prj/scripts/* commit *)']:
             with self.assertRaises(ClaudePolicyError):
                 require_claude_grants(['--allowedTools', grant, '--disallowedTools', deny], [grant], 'abc.local')
+
+    def test_codex_github_remote_write_requires_native_user_approval(self):
+        temporary, root = self.repository()
+        with temporary:
+            self.initialize(root, 'codex')
+            self.add_command(root)
+            profile = root / '.ai-evo-prj/skills/config/effort-profiles/abc-default.yaml'
+            data = yaml.safe_load(profile.read_text())
+            data['resources']['network'] = 'auto'
+            profile.write_text(yaml.safe_dump(data))
+            skill = root / '.ai-evo-prj/skills/catalog/commands/abc-inspect/SKILL.md'
+            skill.write_text(fixtures.VALID_COMMAND.replace(
+                'workspace: read-only', 'workspace: read-write').replace(
+                'network: disabled', 'network: enabled\n  capabilities: [github.remote-write]'))
+            result = self.run_cli(root, 'command', 'plan', 'abc-inspect', '--adapter', 'codex')
+            self.assertEqual(0, result.returncode, result.stderr)
+            application = json.loads(result.stdout)['application']
+            self.assertEqual('codex', application['executor'])
+            self.assertIn('--sandbox', application['cli_arguments'])
+            self.assertEqual('workspace-write', application['cli_arguments'][
+                application['cli_arguments'].index('--sandbox') + 1])
+            self.assertIn('--ask-for-approval', application['cli_arguments'])
+            self.assertEqual('on-request', application['cli_arguments'][
+                application['cli_arguments'].index('--ask-for-approval') + 1])
+            self.assertNotIn('--allowedTools', application['cli_arguments'])

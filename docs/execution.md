@@ -121,7 +121,9 @@ An omitted or empty list adds no grants. Deny-only entries are translated to nat
 Capability plans disable unconfigured MCP servers and use non-interactive permission denial.
 
 The initial mappings support the three GitHub read operations on Claude with `workspace: read-only`.
-Codex and read-write capability mappings are not implemented: requests in those modes fail planning.
+Codex supports `github.remote-write` in `workspace: read-write` through its native `on-request` approval
+policy: planning never auto-approves the network write, and the command is released only after user approval.
+Other Codex and read-write capability mappings are not implemented: requests in those modes fail planning.
 Existing commands without capability declarations retain their baseline policy. To add support,
 implement and verify native enforcement before exposing another adapter mapping; prompt instructions
 alone do not satisfy the contract. Rebuild saved plans after changing command declarations or adapters.

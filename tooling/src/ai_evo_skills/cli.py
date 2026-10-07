@@ -586,6 +586,8 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
         if skill.recipe is not None:
             for step in skill.recipe["steps"]:
                 executor = step.get("executor", "current")
+                if parse_variable(executor):
+                    continue
                 if executor != "current" and executor not in known_adapters:
                     errors.append(f"{skill.path.parent / 'recipe.yaml'}:steps.{step['id']}: unknown executor adapter {executor}")
 
@@ -672,6 +674,8 @@ def validate_recipes(context: Context) -> list[str]:
                 if spec.get("required") is True and name not in supplied:
                     errors.append(f"{skill.name}.{sid}: required child input {name} is not mapped")
             references = dict(supplied)
+            if "executor" in step:
+                references["executor"] = step["executor"]
             if "when" in step:
                 references["when.value"] = step["when"]["value"]
             if foreach is not None:
@@ -744,10 +748,25 @@ def validate_recipe_executors(context: Context) -> list[str]:
             if child is None:
                 continue
             executor = step.get("executor", "current")
+            if parse_variable(executor):
+                continue
             if executor != "current" and executor not in enabled:
                 kind = child.kind if child.kind in {"command", "step"} else "nested recipe"
                 errors.append(f"{recipe.name}:steps.{step['id']}: {kind} {child.name} requires disabled adapter {executor}")
     return errors
+
+
+def resolve_step_executor(step: dict[str, Any], values: dict[str, Any], recipe_name: str,
+                          known_adapters: set[str]) -> str:
+    """Resolve an optional recipe-input executor and validate its planned value."""
+    declared = step.get("executor", "current")
+    variable = parse_variable(declared)
+    executor = values[variable[1]] if variable and variable[0] == "inputs" else declared
+    if not isinstance(executor, str) or not re.fullmatch(r"current|[a-z][a-z0-9-]*", executor):
+        raise EvoError(f"{recipe_name}.{step['id']}: executor must resolve to current or an adapter ID")
+    if executor != "current" and executor not in known_adapters:
+        raise EvoError(f"{recipe_name}.{step['id']}: unknown executor adapter {executor}")
+    return executor
 
 
 def validated_context(*, for_creation: bool = False) -> Context:
@@ -845,10 +864,18 @@ def command_application(
     denied_grants = []
     for name in dict.fromkeys(policy.get("capabilities", []) + policy.get("deny-capabilities", [])):
         mapping = adapter.get("capability-translation", {}).get(name)
-        if (adapter_id != "claude" or not mapping or mapping.get("enforcement") != "native"
-                or policy.get("workspace") not in mapping["workspaces"]):
+        # Codex's approval boundary is native for outbound GitHub writes only:
+        # it cannot scope an arbitrary local script or a generic shell command.
+        codex_approval = (adapter_id == "codex" and name == "github.remote-write" and mapping
+                          and mapping.get("approval-policy") == "on-request"
+                          and mapping.get("requires-network") is True)
+        if (not mapping or mapping.get("enforcement") != "native"
+                or policy.get("workspace") not in mapping["workspaces"]
+                or (adapter_id != "claude" and not codex_approval)):
             raise EvoError(f"adapter {adapter_id} cannot enforce capability {name} for {skill.name} with workspace={policy.get('workspace')}")
         if name in policy.get("deny-capabilities", []):
+            if adapter_id != "claude":
+                raise EvoError(f"adapter {adapter_id} cannot enforce denied capability {name} for {skill.name}")
             denied_grants.extend(mapping["allow-tools"])
         if name in policy.get("capabilities", []):
             if name in policy.get("deny-capabilities", []):
@@ -861,6 +888,8 @@ def command_application(
                     raise EvoError(f"capability {name} requires an executable project script: {script}")
             required_grants[name] = mapping["allow-tools"]
             policy_instructions.extend(mapping.get("instructions", []))
+    if adapter_id == "codex" and required_grants:
+        arguments.extend(["--ask-for-approval", "on-request"])
     grant_baseline = False
     for dimension in ("workspace", "network"):
         value = policy.get(dimension)
@@ -877,7 +906,7 @@ def command_application(
         translated = list(translation["cli-arguments"])
         # Extend only the adapter's policy baselines. Invocation, session and
         # profile ceilings are composed below and must never be widened.
-        if required_grants:
+        if required_grants and adapter_id == "claude":
             if "--allowedTools" not in translated:
                 raise EvoError(f"adapter {adapter_id} cannot enforce capabilities: workspace translation has no native allowlist")
             index = translated.index("--allowedTools") + 1
@@ -885,11 +914,11 @@ def command_application(
             grant_baseline = True
         arguments.extend(translated)
         policy_instructions.extend(translation.get("instructions", []))
-    if required_grants and not grant_baseline:
+    if required_grants and not grant_baseline and adapter_id == "claude":
         arguments.extend(["--allowedTools", ",".join(rule for rules in required_grants.values() for rule in rules)])
     if denied_grants:
         arguments.extend(["--disallowedTools", ",".join(denied_grants)])
-    if required_grants or denied_grants:
+    if (required_grants or denied_grants) and adapter_id == "claude":
         arguments.append("--strict-mcp-config")
     deny_option = adapter["profile-translation"]["delegated-cli"].get("disallowed-tools-option") if adapter["profile-translation"]["delegated-cli"] else None
     command = adapter["invocation"]["command"]
@@ -1606,6 +1635,10 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
         outputs: dict[str, Any] = {}
         assert skill.recipe is not None
         for step in skill.recipe["steps"]:
+            declared_executor = resolve_step_executor(
+                step, values, skill.name,
+                {target["adapter"] for target in context.config["targets"] if target["enabled"]},
+            )
             child = context.registry[step["uses"]]
             child_values = {}
             for key, value in (step.get("with") or {}).items():
@@ -1625,7 +1658,7 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
             if "for_each" in step:
                 if template_mode:
                     raise EvoError(f"{skill.name}.{step['id']}: nested for_each is not supported")
-                declared = step.get("executor", "current")
+                declared = declared_executor
                 child_coordinator = coordinator if declared == "current" else declared
                 templates: list[dict[str, Any]] = []
                 child_result = expand(
@@ -1641,14 +1674,14 @@ def cmd_recipe_plan(args: argparse.Namespace) -> None:
                 outputs[step["id"]] = step_output_reference(full_id)
                 continue
             if child.kind == "recipe":
-                declared = step.get("executor", "current")
+                declared = declared_executor
                 child_coordinator = coordinator if declared == "current" else declared
                 outputs[step["id"]] = expand(
                     child, child_values, full_id, guards, child_coordinator,
                     delegated_scope or declared != "current", target, template_mode,
                 )
             else:
-                executor = step.get("executor", "current")
+                executor = declared_executor
                 # A nested recipe's current AI may differ from the root coordinator.
                 # Its commands then need delegated execution, even without restrictions.
                 if executor == "current" and (delegated_scope or coordinator != args.adapter):

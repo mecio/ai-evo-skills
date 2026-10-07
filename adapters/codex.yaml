@@ -47,3 +47,13 @@ execution-policy-translation:
       - browser_use
       - --disable
       - browser_use_external
+
+capability-translation:
+  github.remote-write:
+    enforcement: native
+    workspaces: [read-write]
+    requires-network: true
+    approval-policy: on-request
+    allow-tools: ["Codex approval for the requested GitHub write"]
+    instructions:
+      - Preserve Codex's native on-request approval. Perform only the approved GitHub write declared by the command.

@@ -95,6 +95,24 @@ class StepExecutorTest(unittest.TestCase):
                 self.assertEqual(adapter, json.loads(direct.stdout)['application']['executor'])
             self.assertNotIn('executor:', command.read_text())
 
+    def test_recipe_input_can_select_the_executor_for_its_commands(self):
+        with self.project() as (root, _):
+            self.recipe(root, 'abc-recipe-flow', [{
+                'id': 'run', 'uses': 'abc-inspect',
+                'executor': '${{ inputs.command_executor }}',
+            }], inputs={'command_executor': {
+                'description': 'AI used for recipe commands.', 'default': 'current',
+            }})
+            self.assertEqual('codex', self.plan(root, 'codex')['execution']['steps'][0]['application']['executor'])
+            result = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex',
+                                  '--input', 'command_executor=claude')
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual('claude', json.loads(result.stdout)['execution']['steps'][0]['application']['executor'])
+            invalid = self.run_cli(root, 'recipe', 'plan', 'abc-recipe-flow', '--adapter', 'codex',
+                                   '--input', 'command_executor=missing')
+            self.assertNotEqual(0, invalid.returncode)
+            self.assertIn('unknown executor adapter missing', invalid.stderr)
+
     def test_explicit_step_executor_delegates_even_without_restrictive_policy(self):
         with self.project() as (root, command):
             command.write_text(command.read_text().replace('read-only', 'read-write').replace('disabled', 'auto'))
@@ -180,7 +198,7 @@ class StepExecutorTest(unittest.TestCase):
         with self.project('codex') as (root, _):
             self.recipe(root, 'abc-recipe-inner', [{'id': 'run', 'uses': 'abc-inspect'}])
             for used in ('abc-inspect', 'abc-recipe-inner'):
-                for executor in ('claude', 'missing', '', None, True, [], '${{ inputs.executor }}'):
+                for executor in ('claude', 'missing', '', None, True, []):
                     with self.subTest(used=used, executor=executor):
                         self.recipe(root, 'abc-recipe-flow', [{
                             'id': 'run', 'uses': used, 'executor': executor,

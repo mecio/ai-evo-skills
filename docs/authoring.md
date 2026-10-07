@@ -156,7 +156,9 @@ The two underscore directories are reserved collections:
 A directly invocable recipe always uses the invoking AI as its coordinator and is published to every enabled
 AI. A top-level `executor` field is invalid, including `executor: current`. Each step may declare a literal
 `executor: claude`, `executor: codex`, another installed adapter
-ID, or `executor: current`. Executor is metadata, not a command input; input expressions are not accepted.
+ID, or `executor: current`. To select the executor when a recipe is invoked, a step may instead reference one
+of that recipe's inputs, for example `executor: "${{ inputs.command_executor }}"`. The input must resolve to
+`current` or to an installed adapter ID. Executor is recipe metadata, never a command input.
 
 ```yaml
 steps:
@@ -173,6 +175,8 @@ steps:
 ```
 
 An omitted step executor uses the calling recipe's AI.
+Use an omitted executor when a command should inherit the recipe's AI; use the shared `command_executor` input
+only when the caller must be able to override the AI for the recipe's commands.
 For a nested recipe, an explicit adapter selects that call's AI context; steps without their own executor
 inherit it, including through further nesting. `current` means the calling recipe's AI context. Overrides
 are local to the call and do not affect later sibling steps or standalone invocations. The root coordinator

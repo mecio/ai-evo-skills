@@ -45,7 +45,9 @@ planning stops naming only those inputs. Resolver commands do not start an AI su
 ## How AIs exchange results
 
 The AI where a recipe is invoked remains its coordinator. A step's `executor` selects the AI that performs
-that task; the coordinator drives the plan even when successive steps use different executors.
+that task; the coordinator drives the plan even when successive steps use different executors. A step without
+an executor inherits the recipe AI. A step can use a recipe input such as
+`executor: "${{ inputs.command_executor }}"`; the resolved value is `current` by default or an installed adapter.
 The [review, verification and revision example](first-skill.md#compose-skills-into-recipes) shows a complete
 Claude → Codex → Claude recipe.
 
