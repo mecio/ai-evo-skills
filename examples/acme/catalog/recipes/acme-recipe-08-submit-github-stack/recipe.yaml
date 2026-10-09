@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-08-submit-github-stack" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero o URL della issue principale o dell'epic proprietario dello stack." }
   publication_report: { required: true, description: "Rapporto conclusivo della recipe 07." }
   verification_report: { required: true, description: "Report `verified` della recipe 05 oppure `accepted` della recipe 06." }
@@ -13,11 +14,11 @@ inputs:
 steps:
   - id: submit_stack
     uses: acme-cmd-submit-github-stack-prs
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { publication_report: "${{ inputs.publication_report }}", verification_report: "${{ inputs.verification_report }}", submit_authorized: "${{ inputs.submit_authorized }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-08-submit-github-stack, session_input: "${{ inputs.worklog_session_input }}", step_name: submit_stack, source_name: acme-cmd-submit-github-stack-prs, outcome: succeeded, output: "${{ steps.submit_stack.output }}", expected_output_sha256: "${{ steps.submit_stack.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

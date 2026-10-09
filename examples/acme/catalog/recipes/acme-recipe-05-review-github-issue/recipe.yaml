@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-05-review-github-issue" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero o URL della issue implementata." }
   base: { default: "", description: "Parent stacked esplicito; se vuoto risolvere il parent del branch corrente." }
   focus: { default: "general", description: "Focus della review." }
@@ -18,15 +19,15 @@ inputs:
 steps:
   - id: review_issue
     uses: acme-cmd-review
-    executor: claude
+    executor: "${{ inputs.command_executor }}"
     with: { target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", issue: "${{ inputs.issue }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", previous_review: "${{ inputs.previous_review }}", constraints: "Review della sola issue indicata rispetto al parent stacked." }
   - id: verify_review
     uses: acme-cmd-verify-review
-    executor: claude
+    executor: "${{ inputs.command_executor }}"
     with: { review: "${{ steps.review_issue.output }}", target: current, base: "${{ inputs.base }}", focus: "${{ inputs.focus }}", work_specification: "${{ inputs.work_specification }}", implementation_instructions: "${{ inputs.implementation_instructions }}", previous_review: "${{ inputs.previous_review }}" }
   - id: checkpoint_review
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-05-review-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: verify_review, source_name: acme-cmd-verify-review, outcome: succeeded, output: "${{ steps.verify_review.output }}", expected_output_sha256: "${{ steps.verify_review.output_sha256 }}", error: "null", artifact_name: "${{ inputs.review_artifact_name }}", complete: "false" }
   - id: verify_layer
     uses: acme-cmd-verify-git-stacked-branch
@@ -34,7 +35,7 @@ steps:
     with: { work_specification: "${{ inputs.stack_layer }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-05-review-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: verify_layer, source_name: acme-cmd-verify-git-stacked-branch, outcome: succeeded, output: "${{ steps.verify_layer.output }}", expected_output_sha256: "${{ steps.verify_layer.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

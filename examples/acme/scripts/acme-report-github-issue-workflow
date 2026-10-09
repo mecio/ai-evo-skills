@@ -19,6 +19,7 @@ from lib.acme_worklog_recovery import order_layers, published_layers, registered
 
 SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
 LAYER_RE = re.compile(r"^[Ll][0-9]+$")
+PENDING_ROOT_RE = re.compile(r"^issue-pending(?:-[1-9][0-9]*)?$")
 RECIPE_ROOT = Path(__file__).resolve().parents[1] / "skills" / "catalog" / "recipes"
 
 NEW_WORKFLOW_RECIPES = {
@@ -46,36 +47,106 @@ def parse_issue(value: str) -> int:
     return int(match.group(1))
 
 
-def pending_creation_sessions(workspace: Path, issue: int) -> list[dict[str, Any]]:
-    """Find completed recipe 00 sessions that recorded creation of ``issue``."""
-    root = workspace / ".ai-evo-work" / "issue-pending"
-    found: list[dict[str, Any]] = []
+WorklogRoots = tuple[Path, Path]
+
+
+def is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def worklog_root(workspace: Path) -> WorklogRoots | None:
+    """Return lexical and resolved roots, allowing the top-level worklog link."""
+    root = workspace / ".ai-evo-work"
+    if not root.exists():
+        return None
+    try:
+        resolved = root.resolve(strict=True)
+    except OSError as exc:
+        fail(f"cannot resolve worklog root {root}: {exc}")
+    if not resolved.is_dir():
+        fail(f"worklog root is not a directory: {root}")
+    return root, resolved
+
+
+def checked_worklog_path(roots: WorklogRoots, path: Path, description: str,
+                         *, must_exist: bool = True) -> Path:
+    """Validate a worklog path while allowing only the root to be a symlink."""
+    lexical_root, resolved_root = roots
+    if not is_within(path, lexical_root):
+        fail(f"{description} is outside the worklog root")
+    current = lexical_root
+    for component in path.relative_to(lexical_root).parts:
+        current /= component
+        if current.is_symlink():
+            fail(f"{description} or one of its internal worklog parents cannot be a symbolic link")
+    try:
+        resolved = path.resolve(strict=must_exist)
+    except OSError as exc:
+        fail(f"cannot resolve {description}: {exc}")
+    if not is_within(resolved, resolved_root):
+        fail(f"{description} resolves outside the worklog root")
+    return resolved
+
+
+def checked_worklog_tree(roots: WorklogRoots, root: Path, description: str) -> bool:
+    checked_worklog_path(roots, root, description, must_exist=False)
     if not root.is_dir():
+        return False
+    for current, directories, files in os.walk(root, followlinks=False):
+        for entry in [*directories, *files]:
+            candidate = Path(current) / entry
+            if candidate.is_symlink():
+                checked_worklog_path(roots, candidate, description, must_exist=False)
+    return True
+
+
+def pending_worklog_roots(roots: WorklogRoots) -> list[Path]:
+    lexical_root, _ = roots
+    if not lexical_root.is_dir():
+        return []
+    return sorted((path for path in lexical_root.iterdir() if PENDING_ROOT_RE.fullmatch(path.name)),
+                  key=lambda path: (path.name != "issue-pending", path.name))
+
+
+def pending_creation_sessions(workspace: Path, issue: int,
+                              roots: WorklogRoots | None = None) -> list[dict[str, Any]]:
+    """Find completed recipe 00 sessions that recorded creation of ``issue``."""
+    found: list[dict[str, Any]] = []
+    roots = roots or worklog_root(workspace)
+    if roots is None:
         return found
-    for path in root.glob("attempt-*/00-design-attempt-*/session.json"):
-        session = read_json(path)
-        if (session.get("recipe_name") != "acme-recipe-00-design-github-issue"
-                or session.get("status") != "completed"):
+    for root in pending_worklog_roots(roots):
+        if not checked_worklog_tree(roots, root, "pending creation root"):
             continue
-        entries = session.get("entries")
-        if not isinstance(entries, list):
-            continue
-        for entry in reversed(entries):
-            if not isinstance(entry, dict) or entry.get("step_name") != "create_issue":
+        for path in root.glob("attempt-*/00-design-attempt-*/session.json"):
+            checked_worklog_path(roots, path.parent, "pending creation session")
+            session = read_json(path)
+            if (session.get("recipe_name") != "acme-recipe-00-design-github-issue"
+                    or session.get("status") != "completed"):
                 continue
-            filename = entry.get("file")
-            if not isinstance(filename, str):
+            entries = session.get("entries")
+            if not isinstance(entries, list):
                 continue
-            record = read_json(path.parent / filename)
-            if record.get("outcome") != "succeeded" or not isinstance(record.get("output"), str):
-                continue
-            try:
-                output = json.loads(record["output"])
-            except json.JSONDecodeError:
-                continue
-            if output.get("number") == issue:
-                found.append({"path": path.parent, "session": session})
-            break
+            for entry in reversed(entries):
+                if not isinstance(entry, dict) or entry.get("step_name") != "create_issue":
+                    continue
+                filename = entry.get("file")
+                if not isinstance(filename, str):
+                    continue
+                record = read_json(path.parent / filename)
+                if record.get("outcome") != "succeeded" or not isinstance(record.get("output"), str):
+                    continue
+                try:
+                    output = json.loads(record["output"])
+                except json.JSONDecodeError:
+                    continue
+                if output.get("number") == issue:
+                    found.append({"path": path.parent, "session": session})
+                break
     return found
 
 
@@ -186,26 +257,35 @@ def normalize_moved_creation(session_dir: Path, issue: int) -> dict[str, Any]:
     return normalized
 
 
-def moved_creation_sessions(workspace: Path, issue: int) -> list[dict[str, Any]]:
+def moved_creation_sessions(workspace: Path, issue: int,
+                            roots: WorklogRoots | None = None) -> list[dict[str, Any]]:
     """Find recipe 00 creation sessions already under the issue root, including legacy metadata."""
     root = workspace / ".ai-evo-work" / f"issue-{issue}" / "attempt-01"
     found: list[dict[str, Any]] = []
-    if not root.is_dir():
+    roots = roots or worklog_root(workspace)
+    if roots is None or not checked_worklog_tree(roots, root, "moved creation root"):
         return found
     for path in root.glob("00-design-attempt-*/session.json"):
+        checked_worklog_path(roots, path.parent, "moved creation session")
         session = read_json(path)
         if creation_checkpoint(path.parent, session, issue) is not None:
             found.append({"path": path.parent, "session": session})
     return found
 
 
-def promote_pending_creation(workspace: Path, issue: int, creation: dict[str, Any]) -> dict[str, Any]:
+def promote_pending_creation(workspace: Path, issue: int, creation: dict[str, Any],
+                             roots: WorklogRoots | None = None) -> dict[str, Any]:
     """Atomically move one verified pending recipe 00 to its canonical issue path."""
     source = creation["path"]
     session = creation["session"]
     if not isinstance(source, Path) or creation_checkpoint(source, session, issue) is None:
         fail("la sessione 00 pending non è completa o non contiene il checkpoint create_issue richiesto")
     destination = workspace / ".ai-evo-work" / f"issue-{issue}" / "attempt-01" / source.name
+    roots = roots or worklog_root(workspace)
+    if roots is None:
+        fail("worklog root does not exist while promoting pending creation")
+    checked_worklog_path(roots, source, "pending creation session")
+    checked_worklog_path(roots, destination, "promotion destination", must_exist=False)
     if destination.exists():
         existing = read_json(destination / "session.json") if (destination / "session.json").is_file() else {}
         source_checkpoint = creation_checkpoint(source, session, issue)
@@ -214,8 +294,6 @@ def promote_pending_creation(workspace: Path, issue: int, creation: dict[str, An
                 or destination_checkpoint.get("output") != source_checkpoint.get("output")):
             fail(f"la destinazione esiste con una sessione 00 diversa: {destination}")
         return {"path": destination, "session": existing}
-    if source.is_symlink() or any(parent.is_symlink() for parent in source.parents if parent != workspace.parent):
-        fail("la sessione pending o uno dei suoi genitori non può essere un collegamento simbolico")
     destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     if source.stat().st_dev != destination.parent.stat().st_dev:
         fail("la promozione richiede source e destinazione sullo stesso filesystem")
@@ -245,9 +323,13 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def sessions(issue_root: Path) -> list[dict[str, Any]]:
+def sessions(workspace: Path, issue_root: Path, roots: WorklogRoots | None = None) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
+    roots = roots or worklog_root(workspace)
+    if roots is None or not checked_worklog_tree(roots, issue_root, "issue worklog root"):
+        return found
     for path in issue_root.glob("attempt-*/**/session.json"):
+        checked_worklog_path(roots, path.parent, "worklog session")
         relative = path.parent.relative_to(issue_root)
         parts = relative.parts
         if not parts or not re.fullmatch(r"attempt-[0-9]+", parts[0]):
@@ -1528,10 +1610,11 @@ def main() -> int:
     if args.new_workflow_attempt not in {"", "true"}:
         fail('new-workflow-attempt must be "true" or empty')
     workspace = find_workspace(Path.cwd())
+    roots = worklog_root(workspace)
     if args.operation == "migrate":
         if pending:
             fail('migrate requires a numeric issue, not "pending"')
-        moved = moved_creation_sessions(workspace, issue)
+        moved = moved_creation_sessions(workspace, issue, roots)
         if len(moved) != 1:
             fail(f"la migrazione richiede una sola sessione 00 sotto issue-{issue}/attempt-01")
         normalized = normalize_moved_creation(moved[0]["path"], issue)
@@ -1546,11 +1629,13 @@ def main() -> int:
     assert trunk is not None
     context_warnings += stack_trunk_warnings(workspace, trunk)
     issue_root = workspace / ".ai-evo-work" / f"issue-{issue}"
-    candidates = sessions(issue_root) if issue_root.is_dir() else []
+    if roots is not None:
+        checked_worklog_path(roots, issue_root, "issue worklog root", must_exist=False)
+    candidates = sessions(workspace, issue_root, roots) if issue_root.is_dir() else []
     workflow = latest_workflow(candidates)
     if pending:
-        creations = pending_creation_sessions(workspace, issue)
-        moved = moved_creation_sessions(workspace, issue)
+        creations = pending_creation_sessions(workspace, issue, roots)
+        moved = moved_creation_sessions(workspace, issue, roots)
         if len(creations) > 1:
             current = {"session": {"session_name": None}}
             result = blocked(issue, current, f"Più recipe 00 pending registrano la creazione della issue #{issue}; indicare una sessione specifica.")
@@ -1562,8 +1647,8 @@ def main() -> int:
             print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
             return 0
         if creations:
-            promoted = promote_pending_creation(workspace, issue, creations[0])
-            candidates = sessions(issue_root)
+            promoted = promote_pending_creation(workspace, issue, creations[0], roots)
+            candidates = sessions(workspace, issue_root, roots)
             workflow = latest_workflow(candidates)
             # The requested 01 or 02 is the first session after a design creation;
             # returning it here ensures its input names the canonical location.

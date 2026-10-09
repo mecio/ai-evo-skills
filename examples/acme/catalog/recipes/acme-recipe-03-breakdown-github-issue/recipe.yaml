@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-03-breakdown-github-issue", new_workflow_attempt: "${{ inputs.new_workflow_attempt }}", reason: "${{ inputs.reason }}" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero o URL della issue principale." }
   issue_analysis: { required: true, description: "Analisi tecnica ready della issue principale." }
   new_workflow_attempt: { default: "", description: "Usare \"true\" per aprire un nuovo attempt di scomposizione." }
@@ -13,23 +14,23 @@ inputs:
 steps:
   - id: breakdown_issue
     uses: acme-cmd-breakdown-github-issue
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { issue_analysis: "${{ inputs.issue_analysis }}" }
   - id: create_breakdown
     uses: acme-cmd-create-github-issue-breakdown
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { breakdown: "${{ steps.breakdown_issue.output }}" }
   - id: checkpoint_creation
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: create_breakdown, source_name: acme-cmd-create-github-issue-breakdown, outcome: succeeded, output: "${{ steps.create_breakdown.output }}", expected_output_sha256: "${{ steps.create_breakdown.output_sha256 }}", error: "null", complete: "false" }
   - id: record_breakdown
     uses: acme-cmd-record-github-issue-breakdown
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", breakdown: "${{ steps.checkpoint_creation.output }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: record_breakdown, source_name: acme-cmd-record-github-issue-breakdown, outcome: succeeded, output: "${{ steps.record_breakdown.output }}", expected_output_sha256: "${{ steps.record_breakdown.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

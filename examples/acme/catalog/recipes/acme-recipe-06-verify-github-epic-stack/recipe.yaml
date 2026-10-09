@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-06-verify-github-epic-stack" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero o URL dell'issue epic." }
   epic_analysis: { required: true, description: "Analisi tecnica ready dell’issue principale." }
   epic_breakdown: { required: true, description: "Mappa epic e sub-issue della recipe 02." }
@@ -14,11 +15,11 @@ inputs:
 steps:
   - id: verify_epic
     uses: acme-cmd-verify-github-issue-stack
-    executor: claude
+    executor: "${{ inputs.command_executor }}"
     with: { issue_analysis: "${{ inputs.epic_analysis }}", technical_plan: "${{ inputs.epic_breakdown }}", base_branch: "${{ inputs.base_branch }}", verification_evidence: "${{ inputs.verification_evidence }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-06-verify-github-epic-stack, session_input: "${{ inputs.worklog_session_input }}", step_name: verify_epic, source_name: acme-cmd-verify-github-issue-stack, outcome: succeeded, output: "${{ steps.verify_epic.output }}", expected_output_sha256: "${{ steps.verify_epic.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

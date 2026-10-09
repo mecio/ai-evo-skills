@@ -1,12 +1,13 @@
 version: "1.0"
 name: acme-recipe-resume-github-issue-workflow
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero o URL della issue il cui workflow deve essere ripreso." }
   publication_authorized: { default: "false", description: "true registra una ripubblicazione già effettuata manualmente dopo il rebase." }
 steps:
   - id: resume_workflow
     uses: acme-cmd-resume-github-issue-workflow
-    executor: current
+    executor: claude
     with: { issue: "${{ inputs.issue }}", publication_authorized: "${{ inputs.publication_authorized }}" }
 outputs:
   result: { value: "${{ steps.resume_workflow.output }}" }

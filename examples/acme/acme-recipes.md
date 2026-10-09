@@ -28,6 +28,7 @@ Tutte le recipe ricevono questi attributi:
 |---|---|
 | `worklog_session_name` | Percorso relativo, umano e stabile della sessione sotto `.ai-evo-work/`. |
 | `worklog_session_input` | Oggetto JSON immutabile con gli input della fase; rende riproducibile il recupero. |
+| `command_executor` | Facoltativo; `current` usa l'AI che pianifica gli step AI e GitHub. Gli step che chiamano script locali con capability di progetto restano su Claude. |
 
 Ogni invocazione usa `.ai-evo/bin/ai-evo-skills recipe plan <nome-recipe> --adapter <adapter-corrente>`; l'adapter
 è obbligatorio anche quando la recipe è avviata dal raccordo di ripresa. Per le recipe dalla 01 alla 06, `recipe plan`
@@ -47,7 +48,7 @@ delle fasi precedenti. L'esistenza e lo stato aperto della issue sono verificati
 
 Dopo una recipe 00, la recipe 01 o 02 può ricevere `issue="pending"` e `issue_number="<numero creato>"`. Prima di
 proporre la nuova sessione il resolver verifica offline il checkpoint `create_issue` della sola sessione completata
-in `issue-pending` che contiene quel numero e la sposta atomicamente in
+in una radice `issue-pending` o `issue-pending-<n>` che contiene quel numero e la sposta atomicamente in
 `issue-<numero>/attempt-01/00-design-attempt-<nn>`. Aggiorna `session_name` e `session_slug` della sessione e dei
 checkpoint, conserva invariati `output` e `output_sha256` di `create_issue`, ricalcola gli SHA-256 dei file di
 checkpoint nell'indice e salva il vecchio nome in `previous_session_name`. Rimuove le directory pending rimaste
@@ -94,6 +95,7 @@ Esempi:
 
 ```text
 issue-pending/attempt-01/00-design-attempt-01
+issue-pending-2/attempt-01/00-design-attempt-01
 issue-12553/attempt-01/01-refine-attempt-01
 issue-12553/attempt-01/02-analyze-attempt-01
 issue-12553/attempt-01/subissues/issue-12554/02-analyze-attempt-01

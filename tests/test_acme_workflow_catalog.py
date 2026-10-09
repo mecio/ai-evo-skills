@@ -47,6 +47,17 @@ class AcmeWorkflowCatalogTest(unittest.TestCase):
             for arguments in (("validate",), ("sync", "--dry-run"), ("sync",)):
                 result = case.run_cli(root, *arguments)
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            delegated = case.run_cli(
+                root, "recipe", "plan", "acme-recipe-00-design-github-issue", "--adapter", "codex",
+                "--input", "command_executor=claude", "--input", "problem_description=Test delegation",
+                "--input", "worklog_session_name=issue-pending/attempt-01/00-design-attempt-01",
+                "--input", 'worklog_session_input={"problem_description":"Test delegation"}',
+            )
+            self.assertEqual(0, delegated.returncode, delegated.stderr)
+            plan = json.loads(delegated.stdout)
+            self.assertEqual(["claude"] * len(plan["execution"]["steps"]), [
+                step["application"]["executor"] for step in plan["execution"]["steps"]
+            ])
 
     def test_recipe_instructions_always_select_the_current_adapter(self) -> None:
         for path in (CATALOG / "recipes").glob("*/SKILL.md"):
@@ -54,6 +65,69 @@ class AcmeWorkflowCatalogTest(unittest.TestCase):
             for line in lines:
                 with self.subTest(recipe=path.parent.name):
                     self.assertIn("--adapter <adapter-corrente>", line)
+
+    def test_recipes_default_to_a_parameterized_executor(self) -> None:
+        local_script_commands = {
+            path.parent.name
+            for path in (CATALOG / "commands").glob("*/SKILL.md")
+            if re.search(r"^  capabilities: \[acme\.", path.read_text(encoding="utf-8"), flags=re.MULTILINE)
+        }
+        for path in (CATALOG / "recipes").glob("*/recipe.yaml"):
+            recipe = yaml.safe_load(path.read_text(encoding="utf-8"))
+            with self.subTest(recipe=path.parent.name):
+                self.assertEqual("current", recipe["inputs"]["command_executor"]["default"])
+                self.assertTrue(recipe["steps"])
+                for step in recipe["steps"]:
+                    expected = "claude" if step["uses"] in local_script_commands else "${{ inputs.command_executor }}"
+                    self.assertEqual(expected, step["executor"], step["id"])
+
+    def test_pending_worklog_roots_support_shared_worklog_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "application"
+            shared_worklog = Path(directory) / "shared-worklog"
+            workspace.mkdir()
+            (workspace / ".ai-evo").mkdir()
+            shared_worklog.mkdir()
+            (workspace / ".ai-evo-work").symlink_to(shared_worklog, target_is_directory=True)
+            session = shared_worklog / "issue-pending-2/attempt-01/00-design-attempt-01"
+            session.mkdir(parents=True)
+            (session / "create.json").write_text(
+                json.dumps({"outcome": "succeeded", "output": '{"number":12603}'}), encoding="utf-8"
+            )
+            (session / "session.json").write_text(json.dumps({
+                "recipe_name": "acme-recipe-00-design-github-issue", "status": "completed",
+                "session_name": "issue-pending-2/attempt-01/00-design-attempt-01",
+                "session_slug": "issue-pending-2/attempt-01/00-design-attempt-01",
+                "entries": [{"step_name": "create_issue", "file": "create.json"}],
+            }), encoding="utf-8")
+            sys.path.insert(0, str(SCRIPTS))
+            try:
+                report = load_extensionless("acme_report_workflow", SCRIPTS / "acme-report-github-issue-workflow")
+            finally:
+                sys.path.pop(0)
+            found = report.pending_creation_sessions(workspace, 12603)
+            self.assertEqual([workspace / ".ai-evo-work/issue-pending-2/attempt-01/00-design-attempt-01"],
+                             [item["path"] for item in found])
+            promoted = report.promote_pending_creation(workspace, 12603, found[0])
+            destination = workspace / ".ai-evo-work/issue-12603/attempt-01/00-design-attempt-01"
+            self.assertEqual(destination, promoted["path"])
+            self.assertEqual('{"number":12603}', json.loads((destination / "create.json").read_text())["output"])
+
+    def test_pending_worklog_rejects_an_internal_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "application"
+            workspace.mkdir()
+            (workspace / ".ai-evo").mkdir()
+            pending = workspace / ".ai-evo-work/issue-pending"
+            pending.mkdir(parents=True)
+            (pending / "unexpected-link").symlink_to(Path(directory), target_is_directory=True)
+            sys.path.insert(0, str(SCRIPTS))
+            try:
+                report = load_extensionless("acme_report_workflow_symlink", SCRIPTS / "acme-report-github-issue-workflow")
+            finally:
+                sys.path.pop(0)
+            with self.assertRaisesRegex(SystemExit, "internal worklog parents cannot be a symbolic link"):
+                report.pending_creation_sessions(workspace, 12603)
 
     def test_declared_project_capabilities_are_registered(self) -> None:
         capabilities = yaml.safe_load((EXAMPLE / "config/execution-capabilities.yaml").read_text(encoding="utf-8"))

@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", requested_recipe: "acme-recipe-04-adopt-github-issue-layer" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero della issue principale." }
   layer: { required: true, description: "JSON del layer stacked da adottare." }
   branch: { required: true, description: "Branch locale già implementato." }
@@ -12,11 +13,11 @@ inputs:
 steps:
   - id: adopt_layer
     uses: acme-cmd-adopt-github-issue-layer
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { issue: "${{ inputs.issue }}", layer: "${{ inputs.layer }}", branch: "${{ inputs.branch }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-adopt-github-issue-layer, session_input: "${{ inputs.worklog_session_input }}", step_name: adopt_layer, source_name: acme-cmd-adopt-github-issue-layer, outcome: succeeded, output: "${{ steps.adopt_layer.output }}", expected_output_sha256: "${{ steps.adopt_layer.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

@@ -4,6 +4,7 @@ input-resolver:
   uses: acme-cmd-report-github-issue-workflow
   with: { issue: "${{ inputs.issue }}", issue_number: "${{ inputs.issue_number }}", requested_recipe: "acme-recipe-02-analyze-github-issue-code", developer_instructions: "${{ inputs.developer_instructions }}" }
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero della issue GitHub da analizzare, oppure pending con issue_number valorizzato per collegare la recipe 00." }
   issue_number: { default: "", description: "Numero reale della issue: obbligatorio con issue=pending e sempre risolto dal workflow per l'analisi." }
   developer_instructions: { default: "", description: "Vincoli e chiarimenti iniziali dello sviluppatore." }
@@ -12,15 +13,15 @@ inputs:
 steps:
   - id: analyze_issue
     uses: acme-cmd-analyze-github-issue-code
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { issue: "${{ inputs.issue_number }}", developer_instructions: "${{ inputs.developer_instructions }}" }
   - id: record_analysis
     uses: acme-cmd-record-github-issue-analysis
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", analysis: "${{ steps.analyze_issue.output }}" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-02-analyze-github-issue-code, session_input: "${{ inputs.worklog_session_input }}", step_name: record_analysis, source_name: acme-cmd-record-github-issue-analysis, outcome: succeeded, output: "${{ steps.record_analysis.output }}", expected_output_sha256: "${{ steps.record_analysis.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

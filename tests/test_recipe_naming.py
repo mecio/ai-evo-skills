@@ -177,26 +177,37 @@ class RecipeNamingTest(unittest.TestCase):
                 recipe['name'] = name
                 self.assertFalse(validator.is_valid(recipe))
 
-    def test_acme_review_example_plans_and_publishes_for_both_clients(self):
+    def test_acme_delivery_example_plans_and_publishes_for_both_clients(self):
         temporary, root = self.repository()
         with temporary:
             result = self.run_cli(root, 'init', '--namespace', 'acme', '--adapter', 'codex', '--adapter', 'claude')
             self.assertEqual(0, result.returncode, result.stderr)
             shutil.copytree(fixtures.ENGINE / 'examples/acme/catalog',
                             root / '.ai-evo-prj/skills/catalog', dirs_exist_ok=True)
+            shutil.copytree(fixtures.ENGINE / 'examples/acme/scripts',
+                            root / '.ai-evo-prj/scripts', dirs_exist_ok=True)
+            shutil.copytree(fixtures.ENGINE / 'examples/acme/config',
+                            root / '.ai-evo-prj/skills/config', dirs_exist_ok=True)
             result = self.run_cli(root, 'validate')
             self.assertEqual(0, result.returncode, result.stderr)
             for adapter in ('codex', 'claude'):
-                result = self.run_cli(root, 'recipe', 'plan', 'acme-recipe-reviewed-change',
-                                      '--adapter', adapter, '--input', 'target=HEAD')
+                result = self.run_cli(
+                    root, 'recipe', 'plan', 'acme-recipe-00-design-github-issue', '--adapter', adapter,
+                    '--input', 'problem_description=Test delivery workflow',
+                    '--input', 'worklog_session_name=issue-pending/attempt-01/00-design-attempt-01',
+                    '--input', 'worklog_session_input={"problem_description":"Test delivery workflow"}',
+                )
                 self.assertEqual(0, result.returncode, result.stderr)
-                self.assertEqual(['acme-cmd-review', 'acme-step-check-review-output',
-                                  'acme-cmd-report-review'],
-                                 [step['uses'] for step in json.loads(result.stdout)['execution']['steps']])
+                plan = json.loads(result.stdout)
+                self.assertEqual(['acme-cmd-design-github-issue', 'acme-cmd-create-github-issue',
+                                  'acme-cmd-save-worklog-output', 'acme-cmd-save-worklog-output'],
+                                 [step['uses'] for step in plan['execution']['steps']])
+                self.assertEqual([adapter, adapter, 'claude', 'claude'],
+                                 [step['application']['executor'] for step in plan['execution']['steps']])
             result = self.run_cli(root, 'sync')
             self.assertEqual(0, result.returncode, result.stderr)
             for client in ('.agents', '.claude'):
-                for name in ('acme-cmd-detect-changes', 'acme-cmd-review', 'acme-cmd-report-review',
-                             'acme-recipe-reviewed-change', 'acme-recipe-review-security-if-changed'):
+                for name in ('acme-cmd-design-github-issue', 'acme-cmd-create-github-issue',
+                             'acme-cmd-report-github-issue-workflow', 'acme-recipe-00-design-github-issue',
+                             'acme-recipe-05-review-github-issue'):
                     self.assertTrue((root / client / 'skills' / name).is_symlink())
-                self.assertFalse((root / client / 'skills/acme-step-check-review-output').exists())

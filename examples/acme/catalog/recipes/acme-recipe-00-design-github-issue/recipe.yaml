@@ -1,25 +1,26 @@
 version: "1.0"
 name: acme-recipe-00-design-github-issue
 inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   problem_description: { required: true, description: "Descrizione libera iniziale dello sviluppatore." }
   worklog_session_name: { required: true, description: "Percorso canonico; se omesso l'agente deriva issue-pending/attempt-<nn>/00-design-attempt-<nn>." }
   worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
   - id: design_issue
     uses: acme-cmd-design-github-issue
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { problem_description: "${{ inputs.problem_description }}" }
   - id: create_issue
     uses: acme-cmd-create-github-issue
-    executor: current
+    executor: "${{ inputs.command_executor }}"
     with: { issue_draft: "${{ steps.design_issue.output }}" }
   - id: checkpoint_creation
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-00-design-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: create_issue, source_name: acme-cmd-create-github-issue, outcome: succeeded, output: "${{ steps.create_issue.output }}", expected_output_sha256: "${{ steps.create_issue.output_sha256 }}", error: "null", complete: "false" }
   - id: save_result
     uses: acme-cmd-save-worklog-output
-    executor: current
+    executor: claude
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-00-design-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: create_issue, source_name: acme-cmd-create-github-issue, outcome: succeeded, output: "${{ steps.checkpoint_creation.output }}", expected_output_sha256: "${{ steps.checkpoint_creation.output_sha256 }}", error: "null", complete: "true" }
 outputs:
   result: { value: "${{ steps.save_result.output }}" }

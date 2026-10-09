@@ -1,15 +1,16 @@
 # Acme workflow catalog
 
 This is a copyable GitHub delivery workflow modeled on a production catalog. `acme` is a placeholder namespace;
-replace it consistently when adopting the catalog. Recipes use the invoking AI and their YAML does not select a
-specific AI.
+replace it consistently when adopting the catalog. Each recipe defaults to the invoking AI through
+`command_executor=current`; pass an installed adapter ID to select AI and GitHub steps. Local project scripts and
+their worklog checkpoints run through Claude, whose adapter grants their fixed command capabilities.
 
 ## Install the catalog
 
 Run from the application repository root, with the engine checkout linked as `.ai-evo`.
 
 ```bash
-./.ai-evo/bin/ai-evo-skills init --namespace acme --adapter <your-adapter>
+./.ai-evo/bin/ai-evo-skills init --namespace acme --adapter codex --adapter claude
 cp -R .ai-evo/examples/acme/catalog/. .ai-evo-prj/skills/catalog/
 cp -R .ai-evo/examples/acme/scripts/. .ai-evo-prj/scripts/
 cp -R .ai-evo/examples/acme/config/. .ai-evo-prj/skills/config/
@@ -22,6 +23,8 @@ cp .ai-evo/examples/acme/acme-recipes.md .ai-evo-prj/skills/acme-recipes.md
 Before running a recipe, replace every placeholder in `acme-worktrees.yaml` and `acme-git-branches.yaml` with the
 project's worktree roots, runtime and lint commands, branch strategy and stack tool. The helpers are copied as a starting
 implementation; validate their behavior against the repository before allowing commits, pushes or pull requests.
+The catalog requires the Claude adapter for the fixed, capability-scoped local scripts; Codex can run the AI and
+GitHub steps through the default executor or `command_executor=codex`.
 For machine-specific worktree roots, copy `acme-worktrees.local.tpl.yaml` to
 `.ai-evo-prj/acme-worktrees.local.yaml`, add the destination to the application `.gitignore`, and set only the
 values that differ locally. `acme-worktree-context` merges this ignored file over the shared configuration.
@@ -57,3 +60,10 @@ explicit publication authorization to verify patch equivalence, record the new r
 `acme-recipes.md` describes the worklog layout and recovery rules. The [authoring guide](../../docs/authoring.md)
 describes command and recipe contracts, while [command scripts](../../docs/command-scripts.md) covers helper
 ownership and verification.
+
+## Why use recipes and commands
+
+Use a direct prompt for exploration or a one-off fix. Recipes become useful when work changes a repository or
+GitHub: they make the approved scope, immutable inputs, checkpoints, tests, publication and recovery evidence
+explicit. Commands keep each operation small and verifiable, so another agent can resume from the recorded state
+without reconstructing it from conversation history.

@@ -44,7 +44,7 @@ la recipe richiesta e gli input canonici di `issue-<numero>/attempt-01`; per le 
 `manual-assessment-required`, perché gli artefatti delle fasi precedenti non sono deducibili.
 
 Per proseguire dopo la recipe 00 usare `issue: "pending"` e `issue_number: "<numero creato>"`. Il comando cerca
-una sola recipe 00 completata sotto `issue-pending` il cui checkpoint `create_issue` contenga quel numero; se la
+una sola recipe 00 completata sotto `issue-pending` o `issue-pending-<n>` il cui checkpoint `create_issue` contenga quel numero; se la
 trova, prima di proporre la 01 o la 02 sposta atomicamente la sessione nel workflow canonico
 `issue-<numero>/attempt-01/00-design-attempt-<nn>`. Normalizza i riferimenti interni, conserva `output` e
 `output_sha256` del checkpoint e registra il nome precedente in `previous_session_name`; poi `creation_session`
