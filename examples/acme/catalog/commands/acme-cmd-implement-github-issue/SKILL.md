@@ -38,7 +38,8 @@ Leggi con `gh` la issue indicata e usa esclusivamente il lavoro, i pre-test, la 
 
 Un JSON conforme a [references/output.schema.json](references/output.schema.json), con coordinate del branch,
 commit, test, decisioni aperte, limiti e il report Markdown nel campo `report`. Quando `layer` è valorizzato,
-includere anche il relativo `layer_id`.
+includere anche il relativo `layer_id` e la sua `sequence` (uguale a `layer.sequence`). Per una issue senza
+layer, `sequence` può essere omessa: la pubblicazione registra `0`.
 
 ## Constraints
 

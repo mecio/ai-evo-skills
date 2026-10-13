@@ -378,6 +378,54 @@ def workflow_attempts(sessions_for_issue: list[dict[str, Any]]) -> list[int]:
     return sorted({item["workflow_attempt"] for item in sessions_for_issue})
 
 
+def latest_completed_session(workflow: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the last completed top-level session in one workflow attempt."""
+    completed = [item for item in workflow if item["layer_id"] is None
+                 and item["session"].get("status") == "completed"]
+    return max(completed, key=lambda item: (item["phase"], item["phase_attempt"])) if completed else None
+
+
+def has_successful_entry(session: dict[str, Any], *step_names: str) -> bool:
+    entries = session["session"].get("entries")
+    return isinstance(entries, list) and any(
+        isinstance(entry, dict) and entry.get("outcome") == "succeeded"
+        and entry.get("step_name") in step_names for entry in entries
+    )
+
+
+def backward_attempt_safety(issue: int, workflow: list[dict[str, Any]]) -> str | None:
+    """Reject a rewind once the current attempt may have remote consequences."""
+    if any(item["session"].get("status") != "completed" for item in workflow):
+        return "L'attempt corrente contiene sessioni incomplete da recuperare prima di tornare a una fase precedente."
+    for item in workflow:
+        if item["phase"] == "03" and item["layer_id"] is None:
+            path = artifact(item["path"], f"issue-{issue}-breakdown.json")
+            if path:
+                breakdown = read_json(Path(path))
+                if breakdown.get("mode") == "epic" and isinstance(breakdown.get("sub_issues"), list) and breakdown["sub_issues"]:
+                    return "L'attempt corrente ha creato sub-issue: non è sicuro tornare a una fase precedente."
+        if has_successful_entry(item, "publish_branch", "configure_upstreams"):
+            return "L'attempt corrente ha branch pubblicati: non è sicuro tornare a una fase precedente."
+        if item["phase"] == "08" or has_successful_entry(item, "submit_stack"):
+            return "L'attempt corrente ha creato pull request: non è sicuro tornare a una fase precedente."
+    return None
+
+
+def record_superseded_attempt(issue_root: Path, previous_attempt: int, next_attempt: int,
+                              reason: str, superseded_session: str) -> None:
+    """Keep attempt-level lineage outside immutable session directories."""
+    index_path = issue_root / "index.json"
+    index = read_json(index_path) if index_path.is_file() else {"schema_version": 1, "attempts": {}}
+    attempts = index.setdefault("attempts", {})
+    if not isinstance(attempts, dict):
+        fail(f"invalid issue index: {index_path}")
+    attempts[f"attempt-{previous_attempt:02d}"] = {
+        "status": "superseded", "superseded_by": next_attempt,
+        "reason": reason, "superseded_session": superseded_session,
+    }
+    atomic_write(index_path, render_json(index))
+
+
 def artifact(session_dir: Path, pattern: str) -> str | None:
     matches = sorted(session_dir.glob(pattern))
     return str(matches[0]) if len(matches) == 1 else None
@@ -644,6 +692,54 @@ def new_breakdown_attempt(issue: int, current_workflow: list[dict[str, Any]], al
             "worklog_session_name": name, "resolved_inputs": inputs, "missing_inputs": [],
             "suggested_invocation": invocation,
             "reason": "Si apre un nuovo attempt di scomposizione con l'analisi conclusa dell'attempt precedente."}
+
+
+def backward_workflow_attempt(issue: int, issue_root: Path, current_workflow: list[dict[str, Any]],
+                              all_sessions: list[dict[str, Any]], requested_recipe: str,
+                              developer_instructions: str, reason: str) -> dict[str, Any]:
+    """Resolve an explicit return to refinement or analysis without rewriting history."""
+    current = latest_phase(current_workflow)
+    problem = backward_attempt_safety(issue, current_workflow)
+    if problem:
+        return blocked(issue, current, problem)
+    previous = latest_completed_session(current_workflow)
+    if previous is None:
+        return blocked(issue, current, "Manca una sessione conclusa da segnare come superata.")
+
+    refinements = [item for item in current_workflow if item["phase"] == "01" and item["layer_id"] is None
+                   and item["session"].get("status") == "completed"]
+    last_refinement = max(refinements, key=lambda item: item["phase_attempt"], default=None)
+    if (requested_recipe == "acme-recipe-02-analyze-github-issue-code" and last_refinement is not None
+            and isinstance(last_refinement["session"].get("session_input"), dict)
+            and "previous_attempt" in last_refinement["session"]["session_input"]):
+        return recommendation(issue, last_refinement, requested_recipe,
+                              next_session(issue, last_refinement["workflow_attempt"], "02", "analyze"),
+                              {"issue": str(issue), "issue_number": str(issue)}, [],
+                              "La fase 01 aperta per il cambio di piano è conclusa: la 02 prosegue nello stesso attempt.")
+
+    next_attempt = max(workflow_attempts(all_sessions)) + 1
+    phase, action = NEW_WORKFLOW_RECIPES[requested_recipe]
+    name = next_session(issue, next_attempt, phase, action)
+    session_input: dict[str, Any] = {
+        "issue": str(issue), "previous_attempt": current["workflow_attempt"], "reason": reason,
+        "superseded_session": previous["session"]["session_name"],
+    }
+    if developer_instructions:
+        session_input["developer_instructions"] = developer_instructions
+    inputs = {"issue": str(issue), "worklog_session_name": name,
+              "worklog_session_input": json.dumps(session_input, ensure_ascii=False, sort_keys=True)}
+    if requested_recipe == "acme-recipe-02-analyze-github-issue-code":
+        inputs["issue_number"] = str(issue)
+    require_declared_recipe_inputs(requested_recipe, inputs)
+    record_superseded_attempt(issue_root, current["workflow_attempt"], next_attempt, reason,
+                              previous["session"]["session_name"])
+    invocation = " ".join([f"${requested_recipe}"] +
+                          [f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in inputs.items()])
+    return {"schema_version": 1, "status": "ready", "issue": issue,
+            "current_session": current["session"]["session_name"], "recommended_recipe": requested_recipe,
+            "worklog_session_name": name, "resolved_inputs": inputs, "missing_inputs": [],
+            "suggested_invocation": invocation,
+            "reason": "Il cambio di piano apre un nuovo attempt e conserva immutati sessioni e artefatti precedenti."}
 
 
 def implementation_evidence(workspace: Path, issue: int, trunk: str) -> tuple[str | None, str | None]:
@@ -1682,14 +1778,23 @@ def main() -> int:
                   else blocked(issue, current, "Il motivo è obbligatorio per aprire un nuovo workflow attempt."))
         print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
-    current = latest_phase(workflow)
-    recovery = published_branch_recovery(issue, current, workspace)
-    if recovery:
-        print(json.dumps(add_warnings(recovery, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+    if args.new_workflow_attempt == "true" and args.requested_recipe in NEW_WORKFLOW_RECIPES:
+        current = latest_phase(workflow)
+        result = (backward_workflow_attempt(
+            issue, issue_root, workflow, candidates, args.requested_recipe,
+            args.developer_instructions, args.reason.strip(),
+        ) if args.reason.strip() else blocked(
+            issue, current, "Il motivo è obbligatorio per tornare a una fase precedente."))
+        print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+    current = latest_phase(workflow)
     republish = stack_republish_required(issue, current, workspace)
     if republish:
         print(json.dumps(add_warnings(republish, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    recovery = published_branch_recovery(issue, current, workspace)
+    if recovery:
+        print(json.dumps(add_warnings(recovery, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     rewrite_problem = unreconciled_published_rewrite(issue, workspace)
     if rewrite_problem:

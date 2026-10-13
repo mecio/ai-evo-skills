@@ -28,7 +28,7 @@ inputs:
   requested_recipe: { required: true, description: "Recipe che il runtime sta pianificando." }
   developer_instructions: { default: "", description: "Vincoli iniziali dello sviluppatore da includere nel worklog del primo tentativo." }
   correction_instructions: { default: "", description: "Correzioni esplicite per una sessione 04 non ancora pubblicata." }
-  new_workflow_attempt: { default: "", description: "\"true\" permette alla recipe 03 di aprire un nuovo attempt." }
+  new_workflow_attempt: { default: "", description: "\"true\" permette alle recipe 01, 02 o 03 di aprire un nuovo attempt." }
   reason: { default: "", description: "Motivo obbligatorio quando new_workflow_attempt è true." }
 ```
 
@@ -54,6 +54,14 @@ senza duplicarla; se è ambigua, incompleta o la destinazione differisce, si fer
 Per le sessioni spostate manualmente in passato, `migrate --issue '<numero>'` normalizza in modo esplicito e
 idempotente `session_name`, `session_slug`, checkpoint e indice senza modificare gli output dei checkpoint.
 
+Con `new_workflow_attempt: "true"` e recipe richiesta 01, richiede `reason`, apre
+`attempt-<max+1>/01-refine-attempt-01` e registra nell'input immutabile `previous_attempt`, `reason` e
+`superseded_session`. L'indice dell'issue conserva il collegamento di supersessione senza modificare le sessioni
+o gli artefatti precedenti. Con recipe richiesta 02, se l'attempt più recente è stato aperto dalla 01 di ritorno,
+propone la 02 nello stesso attempt; altrimenti apre `attempt-<max+1>/02-analyze-attempt-01` con la stessa lineage.
+Entrambi i ritorni sono rifiutati se l'attempt corrente contiene sessioni incomplete, sub-issue create, branch
+pubblicati o pull request create.
+
 Con `new_workflow_attempt: "true"` e recipe richiesta 03, richiede `reason`, riusa l'ultima analisi 02 conclusa
 dell'attempt corrente e propone `attempt-<max+1>/03-breakdown-attempt-01`. Blocca l'operazione se esistono
 sessioni da recuperare o se una scomposizione epic ha già creato sub-issue; non invalida effetti remoti.
@@ -77,7 +85,8 @@ Un JSON conforme a [references/output.schema.json](references/output.schema.json
 ## Constraints
 
 Non modifica Git o GitHub e non esegue recipe. `report` scrive solo nel worklog locale quando promuove una recipe
-00 pending verificata; `migrate` scrive solo la metadata di una recipe 00 già spostata.
+00 pending verificata o quando registra nell'indice dell'issue la supersessione autorizzata di un attempt; `migrate`
+scrive solo la metadata di una recipe 00 già spostata.
 
 ## Success criteria
 

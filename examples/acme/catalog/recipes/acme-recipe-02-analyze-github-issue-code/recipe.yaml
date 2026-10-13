@@ -2,12 +2,14 @@ version: "1.0"
 name: acme-recipe-02-analyze-github-issue-code
 input-resolver:
   uses: acme-cmd-report-github-issue-workflow
-  with: { issue: "${{ inputs.issue }}", issue_number: "${{ inputs.issue_number }}", requested_recipe: "acme-recipe-02-analyze-github-issue-code", developer_instructions: "${{ inputs.developer_instructions }}" }
+  with: { issue: "${{ inputs.issue }}", issue_number: "${{ inputs.issue_number }}", requested_recipe: "acme-recipe-02-analyze-github-issue-code", developer_instructions: "${{ inputs.developer_instructions }}", new_workflow_attempt: "${{ inputs.new_workflow_attempt }}", reason: "${{ inputs.reason }}" }
 inputs:
   command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
   issue: { required: true, description: "Numero della issue GitHub da analizzare, oppure pending con issue_number valorizzato per collegare la recipe 00." }
   issue_number: { default: "", description: "Numero reale della issue: obbligatorio con issue=pending e sempre risolto dal workflow per l'analisi." }
   developer_instructions: { default: "", description: "Vincoli e chiarimenti iniziali dello sviluppatore." }
+  new_workflow_attempt: { default: "", description: "Usare \"true\" per tornare direttamente alla 02 in un nuovo attempt." }
+  reason: { default: "", description: "Motivo obbligatorio quando new_workflow_attempt è true." }
   worklog_session_name: { required: true, description: "Percorso canonico; se omesso l'agente deriva issue-<numero>/attempt-<nn>/02-analyze-attempt-<nn>." }
   worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
