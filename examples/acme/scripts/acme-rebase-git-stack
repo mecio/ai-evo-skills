@@ -1,0 +1,540 @@
+#!/usr/bin/env python3
+"""Safely simulate or publish a trunk-driven rebase of a published Git stack."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from lib.acme_script_common import fail, write_json
+from lib.acme_worklog_recovery import order_layers, published_layers
+
+
+HERE = Path(__file__).resolve().parent
+REPORT = HERE / "acme-report-github-issue-workflow"
+ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "GIT_EDITOR": "true",
+       "GIT_SEQUENCE_EDITOR": "true"}
+
+
+def run(*arguments: str, cwd: Path | None = None, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(arguments, cwd=cwd, env=ENV, input=input, capture_output=True, text=True, check=False)
+
+
+def git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return run("git", "-C", str(root), *arguments)
+
+
+def git_text(root: Path, *arguments: str) -> str:
+    result = git(root, *arguments)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"git {arguments[0]} failed")
+    return result.stdout.strip()
+
+
+def parse_request(raw: str) -> tuple[int, bool]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(value, dict) or set(value) != {"issue", "publication_authorized"}:
+        fail("request fields do not match the operation contract")
+    issue = value["issue"]
+    if isinstance(issue, str) and issue.isdigit():
+        issue = int(issue)
+    authorized = value["publication_authorized"]
+    if isinstance(authorized, str) and authorized in {"true", "false"}:
+        authorized = authorized == "true"
+    if type(issue) is not int or issue < 1 or type(authorized) is not bool:
+        fail("request is invalid")
+    return issue, authorized
+
+
+def blocked(issue: int, code: str, reason: str, details: dict[str, Any] | None = None,
+            warnings: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "status": "stack-rebase-blocked",
+        "issue": issue,
+        "code": code,
+        "reason": reason,
+        "warnings": warnings or [],
+        "details": details or {},
+    }
+
+
+def report(issue: int, root: Path) -> dict[str, Any]:
+    result = run(str(REPORT), "report", "--issue", str(issue), cwd=root)
+    if result.returncode:
+        fail(result.stderr.strip() or result.stdout.strip() or "workflow report failed")
+    try:
+        value = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        fail(f"workflow report is not valid JSON: {exc}")
+    if not isinstance(value, dict):
+        fail("workflow report is not a JSON object")
+    return value
+
+
+def ref_oid(root: Path, ref: str) -> str:
+    result = git(root, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def ancestor(root: Path, older: str, newer: str) -> bool:
+    return git(root, "merge-base", "--is-ancestor", older, newer).returncode == 0
+
+
+def worktrees(root: Path) -> dict[str, Path]:
+    result = git(root, "worktree", "list", "--porcelain", "-z")
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "cannot list Git worktrees")
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for field in result.stdout.split("\0"):
+        if not field:
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = field.partition(" ")
+        if key == "worktree" and current:
+            records.append(current)
+            current = {}
+        current[key] = value
+    if current:
+        records.append(current)
+    mapped: dict[str, Path] = {}
+    for record in records:
+        branch = record.get("branch", "")
+        path = record.get("worktree", "")
+        if branch.startswith("refs/heads/") and path:
+            name = branch.removeprefix("refs/heads/")
+            if name in mapped:
+                raise RuntimeError(f"branch is open in multiple worktrees: {name}")
+            mapped[name] = Path(path).resolve()
+    return mapped
+
+
+def status(root: Path) -> list[str]:
+    result = git(root, "status", "--porcelain=v1", "-z")
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"cannot inspect worktree {root}")
+    return [entry for entry in result.stdout.split("\0") if entry]
+
+
+def upstream(root: Path, branch: str) -> str:
+    result = git(root, "for-each-ref", "--format=%(upstream:short)", f"refs/heads/{branch}")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def patch_sequence(root: Path, base: str, tip: str) -> tuple[list[str], list[str]]:
+    commits_result = git(root, "rev-list", "--reverse", f"{base}..{tip}")
+    if commits_result.returncode:
+        raise RuntimeError(commits_result.stderr.strip() or f"cannot list commits in {base}..{tip}")
+    commits = commits_result.stdout.splitlines()
+    patches: list[str] = []
+    for commit in commits:
+        shown = git(root, "show", "--format=", "--no-ext-diff", "--binary", commit)
+        if shown.returncode:
+            raise RuntimeError(shown.stderr.strip() or f"cannot read patch for {commit}")
+        calculated = run("git", "patch-id", "--stable", input=shown.stdout)
+        values = calculated.stdout.strip().split() if calculated.returncode == 0 else []
+        if not values:
+            raise RuntimeError(f"cannot calculate patch-id for {commit}")
+        patches.append(values[0])
+    return commits, patches
+
+
+def commit_titles(root: Path, base: str, tip: str) -> list[tuple[str, str]]:
+    result = git(root, "log", "--reverse", "--format=%H%x00%s%x00", f"{base}..{tip}")
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"cannot read commit titles in {base}..{tip}")
+    fields = result.stdout.split("\0")
+    if fields and not fields[-1].strip():
+        fields.pop()
+    return [(fields[index].strip(), fields[index + 1]) for index in range(0, len(fields) - 1, 2)]
+
+
+def remote_oids(root: Path, remote: str, branches: list[str]) -> tuple[dict[str, str], str]:
+    refs = [f"refs/heads/{branch}" for branch in branches]
+    result = git(root, "ls-remote", "--refs", remote, *refs)
+    if result.returncode:
+        return {}, result.stderr.strip() or result.stdout.strip() or "git ls-remote failed"
+    values: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        oid, _, ref = line.partition("\t")
+        if ref.startswith("refs/heads/"):
+            values[ref.removeprefix("refs/heads/")] = oid
+    return values, ""
+
+
+def fetch_stack(root: Path, remote: str, branches: list[str]) -> str:
+    refspecs = [f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}" for branch in branches]
+    result = git(root, "fetch", "--no-tags", remote, *refspecs)
+    return "" if result.returncode == 0 else (result.stderr.strip() or result.stdout.strip() or "git fetch failed")
+
+
+def validate_local_state(root: Path, remote: str, trunk: str, trunk_oid: str,
+                         ordered: list[dict[str, str]], expected_heads: dict[str, str],
+                         expected_worktrees: dict[str, Path], require_remote_tracking: bool = True) -> tuple[str, dict[str, Any]] | None:
+    try:
+        current_worktrees = worktrees(root)
+    except RuntimeError as exc:
+        return "local-state-changed", {"error": str(exc)}
+    relevant = [trunk, *(layer["branch"] for layer in ordered)]
+    for branch in relevant:
+        if current_worktrees.get(branch) != expected_worktrees.get(branch):
+            return "local-state-changed", {"branch": branch, "expected_worktree": str(expected_worktrees.get(branch, "")),
+                                            "actual_worktree": str(current_worktrees.get(branch, ""))}
+        actual = ref_oid(root, f"refs/heads/{branch}")
+        if actual != expected_heads[branch]:
+            return "local-state-changed", {"branch": branch, "expected_oid": expected_heads[branch], "actual_oid": actual}
+        path = current_worktrees.get(branch)
+        if path:
+            try:
+                dirty = status(path)
+            except RuntimeError as exc:
+                return "local-state-changed", {"branch": branch, "worktree": str(path), "error": str(exc)}
+            if dirty:
+                return "dirty-worktree", {"branch": branch, "worktree": str(path), "status": dirty}
+    for layer in ordered:
+        branch = layer["branch"]
+        expected_upstream = f"{remote}/{branch}"
+        actual_upstream = upstream(root, branch)
+        if actual_upstream != expected_upstream:
+            return "local-remote-divergence", {"branch": branch, "expected_upstream": expected_upstream,
+                                                "actual_upstream": actual_upstream or None}
+        if require_remote_tracking:
+            tracked = ref_oid(root, f"refs/remotes/{remote}/{branch}")
+            if tracked != layer["remote_oid"]:
+                return "local-remote-divergence", {"branch": branch, "expected_remote_oid": layer["remote_oid"],
+                                                    "actual_remote_oid": tracked}
+    tracked_trunk = ref_oid(root, f"refs/remotes/{remote}/{trunk}")
+    if require_remote_tracking and tracked_trunk != trunk_oid:
+        return "local-state-changed", {"branch": trunk, "expected_remote_oid": trunk_oid,
+                                        "actual_remote_oid": tracked_trunk}
+    return None
+
+
+def cleanup_worktree(root: Path, temporary_root: Path | None, temporary_worktree: Path | None) -> str:
+    errors: list[str] = []
+    if temporary_worktree is not None:
+        result = git(root, "worktree", "remove", "--force", str(temporary_worktree))
+        if result.returncode:
+            errors.append(result.stderr.strip() or result.stdout.strip() or "git worktree remove failed")
+    if temporary_root is not None and temporary_root.exists():
+        try:
+            temporary_root.rmdir()
+        except OSError as exc:
+            errors.append(str(exc))
+    return "; ".join(error for error in errors if error)
+
+
+def relevant_worktrees(mapping: dict[str, Path], branches: list[str]) -> dict[str, Path]:
+    return {branch: mapping[branch] for branch in branches if branch in mapping}
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "rebase":
+        fail("expected the rebase operation and one JSON request")
+    issue, authorized = parse_request(sys.argv[2])
+    root_result = run("git", "rev-parse", "--show-toplevel")
+    if root_result.returncode:
+        fail(root_result.stderr.strip() or "run from an application Git root")
+    root = Path(root_result.stdout.strip()).resolve()
+    if Path.cwd().resolve() != root:
+        fail("run from the application Git root")
+
+    layers = published_layers(root, issue)
+    if not layers:
+        write_json(report(issue, root))
+        return 0
+    try:
+        trunk, ordered = order_layers(layers)
+    except SystemExit as exc:
+        write_json(blocked(issue, "non-linear-stack", str(exc).removeprefix("error: ")))
+        return 0
+    remotes = {layer["remote"] for layer in ordered}
+    if len(remotes) != 1:
+        write_json(blocked(issue, "local-remote-divergence", "I layer pubblicati non usano un solo remote.",
+                           {"remotes": sorted(remotes)}))
+        return 0
+    remote = next(iter(remotes))
+    fetch_error = fetch_stack(root, remote, [trunk, *(layer["branch"] for layer in ordered)])
+    if fetch_error:
+        write_json(blocked(issue, "fetch-failed", "Impossibile aggiornare i ref remoti dello stack.",
+                           {"remote": remote, "error": fetch_error}))
+        return 0
+
+    workflow_report = report(issue, root)
+    if workflow_report.get("status") != "stack-rebase-required":
+        write_json(workflow_report)
+        return 0
+    resolved = workflow_report.get("resolved_inputs")
+    if not isinstance(resolved, dict):
+        write_json(blocked(issue, "non-linear-stack", "Il report non contiene coordinate di rebase valide."))
+        return 0
+    if "parent_branch" in resolved:
+        write_json(blocked(
+            issue, "unsupported-rebase-case",
+            "Il comando supporta soltanto il rebase causato dall'avanzamento del trunk; il figlio di un layer corretto resta fuori perimetro.",
+            {"branch": resolved.get("branch"), "parent_branch": resolved.get("parent_branch"), "modified_refs": []},
+        ))
+        return 0
+    if resolved.get("trunk") != trunk or resolved.get("branch") != ordered[0]["branch"]:
+        write_json(blocked(issue, "non-linear-stack", "Il report e il worklog descrivono stack differenti.",
+                           {"report": resolved, "trunk": trunk, "first_layer": ordered[0]["branch"]}))
+        return 0
+    old_base = resolved.get("layer_base_oid")
+    trunk_oid = resolved.get("trunk_oid")
+    if not isinstance(old_base, str) or not old_base or not isinstance(trunk_oid, str) or not trunk_oid:
+        write_json(blocked(issue, "non-linear-stack", "Il report non contiene gli OID richiesti per il rebase."))
+        return 0
+    remote_trunk = f"refs/remotes/{remote}/{trunk}"
+    if ref_oid(root, remote_trunk) != trunk_oid:
+        write_json(blocked(issue, "local-state-changed", "Il trunk remoto non coincide con il report aggiornato.",
+                           {"expected_oid": trunk_oid, "actual_oid": ref_oid(root, remote_trunk)}))
+        return 0
+
+    expected_heads: dict[str, str] = {trunk: ref_oid(root, f"refs/heads/{trunk}")}
+    if not expected_heads[trunk]:
+        write_json(blocked(issue, "trunk-not-fast-forward", "Il branch locale del trunk non esiste.", {"trunk": trunk}))
+        return 0
+    for layer in ordered:
+        expected_heads[layer["branch"]] = ref_oid(root, f"refs/heads/{layer['branch']}")
+        if expected_heads[layer["branch"]] != layer["remote_oid"]:
+            write_json(blocked(issue, "local-remote-divergence", "Un branch locale non coincide con l'OID pubblicato.",
+                               {"branch": layer["branch"], "local_oid": expected_heads[layer["branch"]],
+                                "published_oid": layer["remote_oid"]}))
+            return 0
+    if expected_heads[trunk] != trunk_oid and not ancestor(root, expected_heads[trunk], trunk_oid):
+        own = git(root, "log", "--format=%H %s", f"{trunk_oid}..{expected_heads[trunk]}").stdout.splitlines()
+        write_json(blocked(issue, "trunk-not-fast-forward", "Il trunk locale non può avanzare con fast-forward.",
+                           {"trunk": trunk, "local_oid": expected_heads[trunk], "remote_oid": trunk_oid,
+                            "local_commits": own}))
+        return 0
+    try:
+        initial_worktrees = worktrees(root)
+    except RuntimeError as exc:
+        write_json(blocked(issue, "local-state-changed", str(exc)))
+        return 0
+    initial_state = validate_local_state(root, remote, trunk, trunk_oid, ordered, expected_heads, initial_worktrees)
+    if initial_state:
+        code, details = initial_state
+        write_json(blocked(issue, code, "Le precondizioni locali dello stack non sono soddisfatte.", details))
+        return 0
+    if not ancestor(root, old_base, ordered[0]["remote_oid"]):
+        write_json(blocked(issue, "non-linear-stack", "La vecchia base non è antenata del primo layer.",
+                           {"base": old_base, "branch": ordered[0]["branch"]}))
+        return 0
+    for index in range(1, len(ordered)):
+        if not ancestor(root, ordered[index - 1]["remote_oid"], ordered[index]["remote_oid"]):
+            write_json(blocked(issue, "non-linear-stack", "Lo stack pubblicato non è lineare.",
+                               {"parent": ordered[index - 1]["branch"], "child": ordered[index]["branch"]}))
+            return 0
+
+    warnings: list[str] = []
+    comment = git(root, "config", "--get", "core.commentChar")
+    if comment.returncode or comment.stdout.strip() != ";":
+        warnings.append("git config core.commentChar non vale ';'; la configurazione non è stata modificata.")
+
+    temporary_root: Path | None = Path(tempfile.mkdtemp(prefix="acme-rebase-stack-"))
+    temporary_worktree: Path | None = temporary_root / "worktree"
+    outcome: dict[str, Any] | None = None
+    new_layers: list[dict[str, Any]] = []
+    pushed = False
+    try:
+        added = git(root, "worktree", "add", "--detach", str(temporary_worktree), ordered[0]["remote_oid"])
+        if added.returncode:
+            outcome = blocked(issue, "rebase-failed", "Impossibile creare la worktree temporanea.",
+                              {"error": added.stderr.strip() or added.stdout.strip()}, warnings)
+        new_parent = trunk_oid
+        old_parent = old_base
+        for layer in ordered if outcome is None else []:
+            old_tip = layer["remote_oid"]
+            checked = git(temporary_worktree, "checkout", "--detach", "--force", old_tip)
+            if checked.returncode:
+                outcome = blocked(issue, "rebase-failed", "Impossibile selezionare il vecchio OID del layer.",
+                                  {"branch": layer["branch"], "error": checked.stderr.strip() or checked.stdout.strip()}, warnings)
+                break
+            rebased = git(temporary_worktree, "-c", "rebase.autoStash=false", "rebase", "--no-autostash",
+                          "--onto", new_parent, old_parent, old_tip)
+            if rebased.returncode:
+                unresolved = git(temporary_worktree, "diff", "--name-only", "--diff-filter=U", "-z")
+                files = [name for name in unresolved.stdout.split("\0") if name] if unresolved.returncode == 0 else []
+                abort = git(temporary_worktree, "rebase", "--abort")
+                error = rebased.stderr.strip() or rebased.stdout.strip() or "git rebase failed"
+                if files:
+                    outcome = {
+                        "schema_version": 1, "status": "stack-rebase-conflict", "issue": issue,
+                        "layer": layer["branch"], "old_base": old_parent, "new_base": new_parent,
+                        "files": sorted(files), "reason": error, "warnings": warnings,
+                        "details": {"abort_error": "" if abort.returncode == 0 else abort.stderr.strip()},
+                    }
+                else:
+                    outcome = blocked(issue, "rebase-failed", "Il rebase è fallito senza conflitti classificabili.",
+                                      {"branch": layer["branch"], "error": error,
+                                       "abort_error": "" if abort.returncode == 0 else abort.stderr.strip()}, warnings)
+                break
+            new_tip = git_text(temporary_worktree, "rev-parse", "HEAD")
+            old_commits, old_patches = patch_sequence(root, old_parent, old_tip)
+            new_commits, new_patches = patch_sequence(temporary_worktree, new_parent, new_tip)
+            if old_patches != new_patches:
+                missing = [commit for commit, patch in zip(old_commits, old_patches) if patch not in new_patches]
+                outcome = blocked(issue, "patch-id-mismatch", "Il rebase ha cambiato o scartato patch del layer.",
+                                  {"branch": layer["branch"], "old_commits": old_commits,
+                                   "new_commits": new_commits, "missing_commits": missing}, warnings)
+                break
+            if not ancestor(temporary_worktree, new_parent, new_tip):
+                outcome = blocked(issue, "non-linear-stack", "La nuova catena non è lineare.",
+                                  {"branch": layer["branch"], "parent_oid": new_parent, "new_oid": new_tip}, warnings)
+                break
+            invalid = [{"oid": oid, "subject": subject} for oid, subject in commit_titles(
+                temporary_worktree, new_parent, new_tip) if not subject.startswith(f"#{issue} ")]
+            if invalid:
+                outcome = blocked(issue, "invalid-commit-title", "Un titolo di commit non conserva il prefisso della issue.",
+                                  {"branch": layer["branch"], "commits": invalid}, warnings)
+                break
+            new_layers.append({"branch": layer["branch"], "old_oid": old_tip, "new_oid": new_tip,
+                               "old_base": old_parent, "new_base": new_parent, "patch_ids": old_patches})
+            old_parent = old_tip
+            new_parent = new_tip
+
+        if outcome is None and not authorized:
+            outcome = {
+                "schema_version": 1, "status": "stack-rebase-simulated", "issue": issue,
+                "trunk": {"branch": trunk, "old_oid": expected_heads[trunk], "new_oid": trunk_oid,
+                          "fast_forward": expected_heads[trunk] != trunk_oid},
+                "layers": new_layers, "warnings": warnings,
+                "reason": "Il rebase è applicabile senza conflitti e conserva tutti i patch-id; nessun branch o ref remoto è stato modificato.",
+            }
+
+        if outcome is None:
+            changed = validate_local_state(root, remote, trunk, trunk_oid, ordered, expected_heads, initial_worktrees)
+            if changed:
+                code, details = changed
+                outcome = blocked(issue, code, "Lo stato locale è cambiato durante la simulazione; il push non è stato eseguito.", details, warnings)
+        if outcome is None:
+            names = [trunk, *(layer["branch"] for layer in ordered)]
+            observed, remote_error = remote_oids(root, remote, names)
+            expected_remote = {trunk: trunk_oid, **{layer["branch"]: layer["remote_oid"] for layer in ordered}}
+            if remote_error or observed != expected_remote:
+                outcome = blocked(issue, "remote-ref-changed", "I ref remoti sono cambiati dopo il fetch.",
+                                  {"expected": expected_remote, "observed": observed, "error": remote_error}, warnings)
+        if outcome is None:
+            arguments = ["push", "--atomic"]
+            for layer in ordered:
+                arguments.append(f"--force-with-lease=refs/heads/{layer['branch']}:{layer['remote_oid']}")
+            arguments.append(remote)
+            arguments.extend(f"{new['new_oid']}:refs/heads/{new['branch']}" for new in new_layers)
+            publication = git(root, *arguments)
+            if publication.returncode:
+                error = publication.stderr.strip() or publication.stdout.strip() or "git push failed"
+                lowered = error.lower()
+                if "does not support --atomic" in lowered or "does not support atomic" in lowered:
+                    code = "atomic-push-unsupported"
+                elif "stale info" in lowered or "fetch first" in lowered:
+                    code = "remote-ref-changed"
+                else:
+                    code = "push-rejected"
+                outcome = blocked(issue, code, "Il push atomico dello stack è stato rifiutato.", {"error": error}, warnings)
+            else:
+                pushed = True
+        if outcome is None:
+            observed, remote_error = remote_oids(root, remote, [trunk, *(layer["branch"] for layer in ordered)])
+            expected_remote = {trunk: trunk_oid, **{layer["branch"]: layer["new_oid"] for layer in new_layers}}
+            if remote_error or observed != expected_remote:
+                outcome = blocked(issue, "post-push-verification-failed", "Il push è stato accettato ma i ref remoti non sono verificabili.",
+                                  {"expected": expected_remote, "observed": observed, "error": remote_error}, warnings)
+        if outcome is None:
+            alignment_errors: list[dict[str, Any]] = []
+            current_worktrees = worktrees(root)
+            relevant_branches = [trunk, *(layer["branch"] for layer in ordered)]
+            initial_relevant = relevant_worktrees(initial_worktrees, relevant_branches)
+            current_relevant = relevant_worktrees(current_worktrees, relevant_branches)
+            if current_relevant != initial_relevant:
+                alignment_errors.append({"kind": "worktree-map-changed", "expected": {k: str(v) for k, v in initial_relevant.items()},
+                                         "actual": {k: str(v) for k, v in current_relevant.items()}})
+            else:
+                # Make remote-tracking refs reflect the push before the final workflow report.
+                for layer, new in zip(ordered, new_layers):
+                    tracking = f"refs/remotes/{remote}/{layer['branch']}"
+                    current = ref_oid(root, tracking)
+                    if current == layer["remote_oid"]:
+                        updated = git(root, "update-ref", tracking, new["new_oid"], current)
+                        if updated.returncode:
+                            alignment_errors.append({"branch": layer["branch"], "kind": "remote-tracking",
+                                                     "error": updated.stderr.strip()})
+                    elif current != new["new_oid"]:
+                        alignment_errors.append({"branch": layer["branch"], "kind": "remote-tracking",
+                                                 "expected_old": layer["remote_oid"], "actual": current})
+                if expected_heads[trunk] != trunk_oid and not alignment_errors:
+                    trunk_path = current_worktrees.get(trunk)
+                    if trunk_path:
+                        if status(trunk_path) or ref_oid(root, f"refs/heads/{trunk}") != expected_heads[trunk]:
+                            alignment_errors.append({"branch": trunk, "kind": "local-state-changed"})
+                        else:
+                            moved = git(trunk_path, "merge", "--ff-only", remote_trunk)
+                            if moved.returncode:
+                                alignment_errors.append({"branch": trunk, "kind": "fast-forward",
+                                                         "error": moved.stderr.strip() or moved.stdout.strip()})
+                    else:
+                        moved = git(root, "update-ref", f"refs/heads/{trunk}", trunk_oid, expected_heads[trunk])
+                        if moved.returncode:
+                            alignment_errors.append({"branch": trunk, "kind": "fast-forward",
+                                                     "error": moved.stderr.strip()})
+                for layer, new in zip(ordered, new_layers):
+                    branch = layer["branch"]
+                    path = current_worktrees.get(branch)
+                    if path:
+                        if status(path) or ref_oid(root, f"refs/heads/{branch}") != layer["remote_oid"]:
+                            alignment_errors.append({"branch": branch, "kind": "local-state-changed"})
+                            continue
+                        moved = git(path, "reset", "--keep", new["new_oid"])
+                    else:
+                        moved = git(root, "update-ref", f"refs/heads/{branch}", new["new_oid"], layer["remote_oid"])
+                    if moved.returncode:
+                        alignment_errors.append({"branch": branch, "kind": "alignment",
+                                                 "error": moved.stderr.strip() or moved.stdout.strip()})
+                for name, expected in [(trunk, trunk_oid), *((new["branch"], new["new_oid"]) for new in new_layers)]:
+                    actual = ref_oid(root, f"refs/heads/{name}")
+                    if actual != expected:
+                        alignment_errors.append({"branch": name, "kind": "verification", "expected": expected, "actual": actual})
+                    path = current_worktrees.get(name)
+                    if path and status(path):
+                        alignment_errors.append({"branch": name, "kind": "dirty-after-alignment", "worktree": str(path)})
+            if alignment_errors:
+                recovery = []
+                if expected_heads[trunk] != trunk_oid:
+                    path = initial_worktrees.get(trunk)
+                    recovery.append({"branch": trunk, "expected_oid": trunk_oid,
+                                     "command": (f"git -C {path} merge --ff-only {trunk_oid}" if path else
+                                                 f"git update-ref refs/heads/{trunk} {trunk_oid} {expected_heads[trunk]}")})
+                for layer, new in zip(ordered, new_layers):
+                    path = initial_worktrees.get(layer["branch"])
+                    recovery.append({"branch": layer["branch"], "expected_oid": new["new_oid"],
+                                     "command": (f"git -C {path} reset --keep {new['new_oid']}" if path else
+                                                 f"git update-ref refs/heads/{layer['branch']} {new['new_oid']} {layer['remote_oid']}")})
+                outcome = blocked(issue, "post-push-local-alignment-failed", "Il push è riuscito ma l'allineamento locale non è completo.",
+                                  {"errors": alignment_errors, "recovery_after_verification": recovery}, warnings)
+    except (RuntimeError, OSError) as exc:
+        outcome = blocked(issue, "rebase-failed" if not pushed else "post-push-local-alignment-failed",
+                          "L'operazione Git non è stata completata.", {"error": str(exc)}, warnings)
+    cleanup_error = cleanup_worktree(root, temporary_root, temporary_worktree)
+    if cleanup_error:
+        outcome = blocked(issue, "temporary-worktree-cleanup-failed", "La worktree temporanea non è stata rimossa completamente.",
+                          {"temporary_root": str(temporary_root), "error": cleanup_error, "primary_outcome": outcome}, warnings)
+    if outcome is not None:
+        write_json(outcome)
+        return 0
+    write_json(report(issue, root))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

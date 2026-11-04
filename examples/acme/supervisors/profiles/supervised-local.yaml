@@ -1,0 +1,99 @@
+version: "1.0"
+name: supervised-local
+description: Porta una issue a una soluzione verificata e committata localmente senza scritture remote.
+
+start:
+  requested_recipe: acme-recipe-02-analyze-github-issue-code
+  workspace_mode: current
+
+target:
+  outcome: completed-local
+  require:
+    - implementation-checkpoint
+    - review-checkpoint
+    - local-commit
+    - clean-worktree
+
+effects:
+  workspace_write: allow
+  local_git_commit: allow
+  remote_write: deny
+
+remote_authorization:
+  mode: disabled
+  inputs: []
+
+recipes:
+  default:
+    action: handoff
+    reason: La recipe non è inclusa nell'elenco locale consentito dal profilo.
+
+  acme-recipe-01-refine-github-issue:
+    action: execute-recommended-recipe
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-02-analyze-github-issue-code:
+    action: execute-recommended-recipe
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-03-breakdown-github-issue:
+    action: substitute-recipe
+    recipe: acme-recipe-03-breakdown-github-issue-local
+    inputs:
+      allowed_modes: '["single","stacked"]'
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: handoff
+
+  acme-recipe-04-implement-github-issue:
+    action: execute-recommended-recipe
+    inputs:
+      publish_branch: "false"
+    max_attempts: 2
+    outcomes:
+      succeeded: reread-report
+      failed: diagnose-and-replan
+      input-required: request-input
+
+  acme-recipe-04-implement-github-issue-correction:
+    action: execute-recommended-recipe
+    inputs:
+      publish_branch: "false"
+    max_attempts: 2
+    outcomes:
+      succeeded: reread-report
+      failed: diagnose-and-replan
+      input-required: request-input
+
+  acme-recipe-05-review-github-issue:
+    action: execute-recommended-recipe
+    max_attempts: 3
+    result_handling:
+      evaluator: ai
+      checkpoint_step: verify_review
+      accepted_when: no-actionable-findings
+      on_actionable_findings: request-correction
+      on_ambiguous_result: handoff
+    outcomes:
+      succeeded: evaluate-review
+      failed: stop-and-preserve-state
+      input-required: request-input
+
+  acme-recipe-07-push-github-stack:
+    action: finalize
+    reason: Il target locale termina prima della pubblicazione dello stack.
+
+  acme-recipe-08-submit-github-stack:
+    action: finalize
+    reason: Il target locale non crea o aggiorna pull request.
+
+  acme-recipe-rebase-and-republish-github-stack:
+    action: handoff
+    reason: Rebase e ripubblicazione richiedono una policy diversa dal profilo locale.

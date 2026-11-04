@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "default_profile", "runtime", "effects", "statuses", "sensitive_inputs", "handoff"],
+  "properties": {
+    "version": {"const": "1.0"},
+    "name": {"const": "acme-github-issue-workflow-supervisor"},
+    "default_profile": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "max_transitions", "reread_report_after_action", "rerun_report_before_effects", "stop_on_unknown_status"],
+      "properties": {
+        "mode": {"const": "run-to-pause"},
+        "max_transitions": {"type": "integer", "minimum": 1, "maximum": 100},
+        "reread_report_after_action": {"const": true},
+        "rerun_report_before_effects": {"const": true},
+        "stop_on_unknown_status": {"const": true}
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["remote_write", "infer_authorization"],
+      "properties": {
+        "remote_write": {"const": "profile-controlled"},
+        "infer_authorization": {"const": "deny"}
+      }
+    },
+    "statuses": {
+      "type": "object",
+      "additionalProperties": {"enum": ["apply-recipe-policy", "request-input", "handoff", "finalize", "stop"]},
+      "required": ["ready", "input-required", "branch-recovery-required", "stack-rebase-required", "stack-republish-required", "manual-assessment-required", "workflow-completed"]
+    },
+    "sensitive_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publication_authorized", "submit_authorized"],
+      "properties": {
+        "publication_authorized": {"$ref": "#/$defs/sensitiveInput"},
+        "submit_authorized": {"$ref": "#/$defs/sensitiveInput"}
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require_issue_assignment", "preserve_report", "preserve_worklog"],
+      "properties": {
+        "require_issue_assignment": {"const": true},
+        "preserve_report": {"const": true},
+        "preserve_worklog": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "sensitiveInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "default", "never_infer", "invalidate_when_state_changes"],
+      "properties": {
+        "source": {"const": "human-only"},
+        "default": {"const": false},
+        "never_infer": {"const": true},
+        "invalidate_when_state_changes": {"const": true}
+      }
+    }
+  }
+}

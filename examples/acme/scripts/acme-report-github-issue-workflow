@@ -17,10 +17,15 @@ from acme_worklog_paths import layer_session_name
 from lib.acme_worklog_recovery import order_layers, published_layers, registered_branch
 
 
-SESSION_RE = re.compile(r"^(?P<phase>0[0-8])-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
+SESSION_RE = re.compile(r"^(?P<phase>0[0-8]|04r)-(?P<action>[a-z0-9-]+)-attempt-(?P<attempt>[0-9]+)$")
 LAYER_RE = re.compile(r"^[Ll][0-9]+$")
 PENDING_ROOT_RE = re.compile(r"^issue-pending(?:-[1-9][0-9]*)?$")
-RECIPE_ROOT = Path(__file__).resolve().parents[1] / "skills" / "catalog" / "recipes"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RECIPE_ROOT = (
+    PROJECT_ROOT / "skills" / "catalog" / "recipes"
+    if (PROJECT_ROOT / "skills" / "catalog" / "recipes").is_dir()
+    else PROJECT_ROOT / "catalog" / "recipes"
+)
 
 NEW_WORKFLOW_RECIPES = {
     "acme-recipe-01-refine-github-issue": ("01", "refine"),
@@ -584,7 +589,8 @@ def inherited_implementation_instructions(current: dict[str, Any], workflow: lis
 
 
 def repeat_review(issue: int, current: dict[str, Any], verification: dict[str, Any], branch: str, head: str,
-                  commits: list[str], workflow: list[dict[str, Any]]) -> dict[str, Any]:
+                  commits: list[str], workflow: list[dict[str, Any]], workspace: Path,
+                  layer: dict[str, Any] | None = None, *, allow_non_top: bool = False) -> dict[str, Any]:
     state = verification["stack_state"]
     branches = state.get("branches", []) if isinstance(state, dict) else []
     entry = next((item for item in branches if isinstance(item, dict) and item.get("name") == branch), {})
@@ -592,22 +598,53 @@ def repeat_review(issue: int, current: dict[str, Any], verification: dict[str, A
     trunk = state.get("trunk", "") if isinstance(state, dict) else ""
     sequence = next((index for index, item in enumerate(branches) if isinstance(item, dict) and item.get("name") == branch), 0)
     previous_inputs = current["session"].get("session_input")
-    instructions = inherited_implementation_instructions(current, workflow)
+    correction = published_correction(workflow, current.get("layer_id"))
+    correction_matches_head = (
+        correction is not None
+        and correction[1].get("branch") == branch
+        and correction[1].get("remote_oid") == head
+    )
+    instructions = inherited_implementation_instructions(
+        correction[0] if correction_matches_head else current, workflow
+    )
+    stack_layer = {
+        "base_branch": trunk,
+        "parent_branch": parent,
+        "branch": branch,
+        "sequence": sequence,
+    }
+    if allow_non_top:
+        stack_layer["allow_non_top"] = True
     inputs = {"issue": str(issue), "branch": branch, "base": parent,
               "review_artifact_name": f"issue-{issue}-review.md",
-              "stack_layer": json.dumps({"base_branch": trunk, "parent_branch": parent, "branch": branch, "sequence": sequence}, ensure_ascii=False, sort_keys=True),
+              "stack_layer": json.dumps(stack_layer, ensure_ascii=False, sort_keys=True),
               "implementation_instructions": instructions}
     if isinstance(previous_inputs, dict):
         work_specification = previous_inputs.get("work_specification")
         if isinstance(work_specification, str):
             inputs["work_specification"] = work_specification
+    if "work_specification" not in inputs and layer is not None:
+        inputs["work_specification"] = json.dumps(layer, ensure_ascii=False, sort_keys=True)
     previous_review = artifact(current["path"], f"issue-{issue}-review.md")
     if previous_review:
         inputs["previous_review"] = previous_review
+    attempt = current["phase_attempt"] + 1
+    layer_id = current.get("layer_id")
+    session_name = (
+        layer_session_name(issue, current["workflow_attempt"], layer_id, "05", "review", attempt)
+        if isinstance(layer_id, str)
+        else next_session(issue, current["workflow_attempt"], "05", "review", attempt)
+    )
+    lineage = {"implementation_instructions": instructions}
+    if isinstance(layer_id, str):
+        lineage.update({"layer_id": layer_id, "layer_sequence": sequence})
+    if "work_specification" in inputs:
+        lineage["work_specification"] = inputs["work_specification"]
     return recommendation(issue, current, "acme-recipe-05-review-github-issue",
-        next_session(issue, current["workflow_attempt"], "05", "review", current["phase_attempt"] + 1),
+        session_name,
         inputs, [],
-        f"Il branch è avanzato da {verification['commit']['oid']} a {head}; ripetere la review. Commit non revisionati: {'; '.join(commits) or 'nessun dettaglio disponibile'}.")
+        f"Il branch è avanzato da {verification['commit']['oid']} a {head}; ripetere la review. Commit non revisionati: {'; '.join(commits) or 'nessun dettaglio disponibile'}.",
+        lineage)
 
 
 def propose_push(issue: int, current: dict[str, Any], verification: dict[str, Any]) -> dict[str, Any]:
@@ -953,10 +990,14 @@ def local_branch_exists(workspace: Path, branch: str) -> bool:
 
 
 def correction_recommendation(issue: int, source: dict[str, Any], workspace: Path,
-                              correction_instructions: str, layer: dict[str, Any] | None = None) -> dict[str, Any]:
+                              correction_instructions: str, layer: dict[str, Any] | None = None,
+                              source_review: dict[str, Any] | None = None,
+                              implementation_report: dict[str, Any] | None = None,
+                              developer_instructions: str | None = None,
+                              prior_implementation_instructions: str | None = None) -> dict[str, Any]:
     """Resolve an independent correction only from a successful 04 checkpoint."""
     step_name = "correct_implementation" if source.get("action") == "correction" else "implement_issue"
-    implementation = successful_step_output(source, step_name)
+    implementation = implementation_report or successful_step_output(source, step_name)
     if implementation is None:
         return blocked(issue, source, f"Il checkpoint {step_name} della recipe 04 non contiene un output JSON riutilizzabile.")
     branch = implementation.get("branch")
@@ -969,10 +1010,17 @@ def correction_recommendation(issue: int, source: dict[str, Any], workspace: Pat
         return blocked(issue, source, "Il branch registrato dalla recipe 04 non contiene i commit dell'issue rispetto al parent registrato.")
     session_name = correction_session_name(issue, source)
     combined = source["session"].get("session_input")
-    original = combined.get("developer_instructions", "") if isinstance(combined, dict) else ""
-    if not isinstance(original, str):
-        original = ""
-    instructions = "\n\n".join(item for item in (original, correction_instructions) if item)
+    source_original = combined.get("developer_instructions", "") if isinstance(combined, dict) else ""
+    if not isinstance(source_original, str):
+        source_original = ""
+    original = developer_instructions if isinstance(developer_instructions, str) else source_original
+    prior = (prior_implementation_instructions
+             if isinstance(prior_implementation_instructions, str) else original)
+    instruction_parts: list[str] = []
+    for item in (prior or original, correction_instructions):
+        if item and item not in instruction_parts:
+            instruction_parts.append(item)
+    instructions = "\n\n".join(instruction_parts)
     inputs = {
         "issue": str(issue), "branch": branch, "parent_branch": parent,
         "implementation_report": json.dumps(implementation, ensure_ascii=False, sort_keys=True),
@@ -983,14 +1031,156 @@ def correction_recommendation(issue: int, source: dict[str, Any], workspace: Pat
     if correction_instructions:
         inputs["correction_instructions"] = correction_instructions
     missing = [] if correction_instructions.strip() else ["correction_instructions"]
+    lineage = {"implementation_session": source["session"]["session_name"], "branch": branch,
+               "parent_branch": parent, "implementation_instructions": instructions,
+               "correction_instructions": correction_instructions,
+               **({"layer_id": layer["id"], "layer_sequence": layer["sequence"]} if layer else {})}
+    if source_review:
+        review_path = artifact(source_review["path"], f"issue-{issue}-review.md")
+        lineage["source_review"] = review_path or source_review["session"]["session_name"]
+        lineage["source_review_session"] = source_review["session"]["session_name"]
     return recommendation(
-        issue, source, CORRECTION_RECIPE, session_name, inputs, missing,
-        "Il checkpoint di implementazione è riuscito ma il branch non è ancora pubblicato: si apre una sessione di correzione separata.",
-        {"implementation_session": source["session"]["session_name"], "branch": branch,
-         "parent_branch": parent, "implementation_instructions": instructions,
-         "correction_instructions": correction_instructions,
-         **({"layer_id": layer["id"], "layer_sequence": layer["sequence"]} if layer else {})},
+        issue, source_review or source, CORRECTION_RECIPE, session_name, inputs, missing,
+        ("La review corrente ha finding da correggere: si apre una sessione 04 aggiuntiva sul branch pubblicato."
+         if source_review else
+         "Il checkpoint di implementazione è riuscito ma il branch non è ancora pubblicato: si apre una sessione di correzione separata."),
+        lineage,
     )
+
+
+def refreshed_implementation_report(workspace: Path, issue: int, source: dict[str, Any]) -> dict[str, Any] | None:
+    """Refresh immutable implementation evidence after rebase or an earlier correction."""
+    step = "correct_implementation" if source.get("action") == "correction" else "implement_issue"
+    report = successful_step_output(source, step)
+    if not isinstance(report, dict):
+        return None
+    branch, parent = report.get("branch"), report.get("parent_branch")
+    if not isinstance(branch, str) or not isinstance(parent, str):
+        return None
+    history = subprocess.run(
+        ["git", "-C", str(workspace), "log", "--reverse", "--format=%H%x00%s", f"{parent}..{branch}"],
+        capture_output=True, text=True, check=False,
+    )
+    if history.returncode:
+        return None
+    commits = []
+    for line in history.stdout.splitlines():
+        sha, separator, subject = line.partition("\x00")
+        if separator and subject.startswith(f"#{issue} "):
+            commits.append({"sha": sha, "subject": subject})
+    if not commits:
+        return None
+    return {**report, "commits": commits}
+
+
+def latest_implementation(workflow: list[dict[str, Any]], layer_id: str | None) -> dict[str, Any] | None:
+    candidates = [item for item in workflow if item["layer_id"] == layer_id and item["phase"] == "04"
+                  and successful_step_output(item, "correct_implementation" if item.get("action") == "correction" else "implement_issue")]
+    corrections = [item for item in candidates if item.get("action") == "correction"]
+    return max(corrections or candidates, key=lambda item: item["phase_attempt"], default=None)
+
+
+def original_developer_instructions(workflow: list[dict[str, Any]], layer_id: str | None) -> str:
+    """Read only the developer constraints from the original implementation session."""
+    implementations = [item for item in workflow if item["layer_id"] == layer_id and item["phase"] == "04"
+                       and item.get("action") == "implement"]
+    for item in sorted(implementations, key=lambda candidate: candidate["phase_attempt"]):
+        session_input = item["session"].get("session_input")
+        value = session_input.get("developer_instructions") if isinstance(session_input, dict) else None
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def unpublished_correction_recommendation(issue: int, workflow: list[dict[str, Any]],
+                                          source: dict[str, Any], workspace: Path,
+                                          correction_instructions: str,
+                                          layer: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Preserve original and cumulative instructions while replacing an unpublished correction."""
+    layer_id = str(layer["id"]).upper() if layer else source.get("layer_id")
+    return correction_recommendation(
+        issue, source, workspace, correction_instructions, layer,
+        developer_instructions=original_developer_instructions(workflow, layer_id),
+        prior_implementation_instructions=inherited_implementation_instructions(source, workflow),
+    )
+
+
+def review_oid(review: dict[str, Any] | None) -> str | None:
+    verification = successful_step_output(review, "verify_layer") if review else None
+    commit = verification.get("commit") if isinstance(verification, dict) else None
+    return commit.get("oid") if isinstance(commit, dict) and isinstance(commit.get("oid"), str) else None
+
+
+def published_correction(workflow: list[dict[str, Any]], layer_id: str | None) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    candidates = []
+    for item in workflow:
+        if item["layer_id"] != layer_id or item["phase"] != "04" or item.get("action") != "correction":
+            continue
+        receipt = successful_step_output(item, "publish_branch")
+        if isinstance(receipt, dict) and isinstance(receipt.get("remote_oid"), str):
+            candidates.append((item, receipt))
+    return max(candidates, key=lambda pair: pair[0]["phase_attempt"], default=None)
+
+
+def reviewed_correction_recommendation(issue: int, workflow: list[dict[str, Any]], workspace: Path,
+                                       review: dict[str, Any], correction_instructions: str,
+                                       layer: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Open an additive correction only from a review of the current published OID."""
+    if not correction_instructions.strip() or review["session"].get("status") != "completed":
+        return None
+    layer_id = str(layer["id"]).upper() if layer else None
+    source = latest_implementation(workflow, layer_id)
+    report = refreshed_implementation_report(workspace, issue, source) if source else None
+    if source is None or report is None:
+        return blocked(issue, review, "Non è disponibile un report di implementazione aggiornabile per la correzione richiesta.")
+    branch = report.get("branch")
+    if not isinstance(branch, str) or current_branch(workspace) != branch:
+        return None
+    oid = review_oid(review)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "--verify", f"{branch}^{{commit}}"],
+        capture_output=True, text=True, check=False,
+    )
+    if not oid or head.returncode or head.stdout.strip() != oid:
+        return None
+    publications = [item for item in published_layers(workspace, issue)
+                    if item.get("branch") == branch and item.get("remote_oid") == oid]
+    locally_unpublished = not has_successful_entry(source, "publish_branch")
+    if not publications and not locally_unpublished:
+        return blocked(issue, review, "La review corrente non corrisponde a una pubblicazione registrata del branch.")
+    prior = inherited_implementation_instructions(review, workflow)
+    return correction_recommendation(
+        issue, source, workspace, correction_instructions, layer, review, report,
+        original_developer_instructions(workflow, layer_id), prior,
+    )
+
+
+def stale_stacked_children(issue: int, current: dict[str, Any], workspace: Path, branch: str,
+                           ordered: list[dict[str, Any]], sequence: int,
+                           workflow: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Require child layers to be rebased after an intermediate layer advances."""
+    if sequence + 1 >= len(ordered):
+        return None
+    child_layer_id = str(ordered[sequence + 1]["id"]).upper()
+    if latest_layer_session(workflow, child_layer_id, "04") is None:
+        return None
+    child, problem, _ = layer_branch(workspace, issue, workflow, ordered, sequence + 1)
+    if problem or not child:
+        return blocked(issue, current, problem or "Il branch figlio del layer corretto non è risolvibile.")
+    if subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", branch, child],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0:
+        return None
+    return {
+        "schema_version": 1, "status": "stack-rebase-required", "issue": issue,
+        "current_session": current["session"]["session_name"], "recommended_recipe": None,
+        "worklog_session_name": None,
+        "resolved_inputs": {"issue": str(issue), "branch": child, "parent_branch": branch},
+        "missing_inputs": [], "suggested_invocation": None,
+        "reason": (f"Il layer {branch} è avanzato dopo una correzione pubblicata, ma il figlio {child} "
+                   "non contiene il nuovo OID. Ribasare e ripubblicare la catena con la procedura 04r prima delle review."),
+    }
 
 
 def trunk_branch(workspace: Path) -> tuple[str | None, list[str], str | None]:
@@ -1085,7 +1275,9 @@ def retry_interrupted_stacked_review(issue: int, breakdown_session: dict[str, An
     instructions = inherited_implementation_instructions(review, workflow)
     layer_id = str(layer["id"]).upper()
     lineage = {"layer_id": layer_id, "layer_sequence": layer["sequence"],
-               "breakdown_session": breakdown_session["session"]["session_name"]}
+               "breakdown_session": breakdown_session["session"]["session_name"],
+               "implementation_instructions": instructions,
+               "work_specification": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True)}
     if analysis:
         lineage["analysis_session"] = analysis
     return recommendation(
@@ -1099,6 +1291,154 @@ def retry_interrupted_stacked_review(issue: int, breakdown_session: dict[str, An
         "La review precedente è stata salvata ma non finalizzata; ripeterla in una nuova sessione.", lineage)
 
 
+def republish_review_recommendation(issue: int, breakdown_session: dict[str, Any], workflow: list[dict[str, Any]],
+                                    workspace: Path, ordered: list[dict[str, Any]], analysis: str | None) -> dict[str, Any] | None:
+    """Reopen each completed layer review whose published OID was replaced by a rebase.
+
+    A review is current only when its immutable verify_layer receipt names the
+    latest republished OID.  This is stronger than filesystem timestamps and
+    keeps copied worklogs deterministic.
+    """
+    for layer in ordered:
+        layer_id, sequence = layer.get("id"), layer.get("sequence")
+        if not isinstance(layer_id, str) or not LAYER_RE.fullmatch(layer_id) or not isinstance(sequence, int):
+            continue
+        layer_id = layer_id.upper()
+        republished = [item for item in workflow if item["layer_id"] == layer_id and item["phase"] == "04r"
+                       and successful_step_output(item, "publish_branch")]
+        if not republished:
+            continue
+        republish = max(republished, key=lambda item: item["phase_attempt"])
+        receipt = successful_step_output(republish, "publish_branch")
+        if not isinstance(receipt, dict) or receipt.get("republished_after_rebase") is not True:
+            continue
+        receipt_branch = receipt.get("branch")
+        current_publication = next(
+            (item for item in published_layers(workspace, issue) if item.get("branch") == receipt_branch), None,
+        ) if isinstance(receipt_branch, str) else None
+        if (current_publication is not None
+                and current_publication.get("session_name") != republish["session"]["session_name"]):
+            continue
+        remote_oid = receipt.get("remote_oid")
+        if not isinstance(remote_oid, str) or not remote_oid:
+            continue
+        review = latest_layer_session(workflow, layer_id, "05")
+        verification = successful_step_output(review, "verify_layer") if review else None
+        commit = verification.get("commit") if isinstance(verification, dict) else None
+        reviewed_oid = commit.get("oid") if isinstance(commit, dict) else None
+        if review and review["session"].get("status") == "completed" and reviewed_oid == remote_oid:
+            continue
+        branch, problem, warnings = layer_branch(workspace, issue, workflow, ordered, sequence)
+        if problem or not branch:
+            return blocked(issue, republish, with_stack_warnings(problem or "Il branch ripubblicato non è risolvibile.", warnings))
+        stack, problem, stack_warnings = implementation_stack_layer(workspace, issue, branch)
+        if problem or not stack:
+            return blocked(issue, republish, with_stack_warnings(problem or "Lo stack ripubblicato non è verificabile.", warnings + stack_warnings))
+        instructions = inherited_implementation_instructions(review, workflow) if review else ""
+        if not instructions:
+            implementation = latest_layer_session(workflow, layer_id, "04")
+            instructions = inherited_implementation_instructions(implementation, workflow) if implementation else ""
+        attempt = max((item["phase_attempt"] for item in stacked_sessions(workflow, layer_id, "05")), default=0) + 1
+        inputs = {
+            "issue": str(issue), "branch": stack["branch"], "base": stack["parent_branch"],
+            "stack_layer": json.dumps({**stack, "allow_non_top": True}, ensure_ascii=False, sort_keys=True),
+            "work_specification": json.dumps({**layer, "id": layer_id}, ensure_ascii=False, sort_keys=True),
+            "review_artifact_name": f"issue-{issue}-review.md", "implementation_instructions": instructions,
+        }
+        if review:
+            previous_review = artifact(review["path"], f"issue-{issue}-review.md")
+            if previous_review:
+                inputs["previous_review"] = previous_review
+        lineage = {"layer_id": layer_id, "layer_sequence": sequence,
+                   "breakdown_session": breakdown_session["session"]["session_name"],
+                   "implementation_instructions": instructions,
+                   "work_specification": inputs["work_specification"]}
+        if analysis:
+            lineage["analysis_session"] = analysis
+        return recommendation(issue, republish, "acme-recipe-05-review-github-issue",
+            layer_session_name(issue, breakdown_session["workflow_attempt"], layer_id, "05", "review", attempt), inputs, [],
+            "Il layer è stato ripubblicato dopo un rebase; ripetere la review sul nuovo OID.", lineage)
+    return None
+
+
+def single_republish_review_recommendation(issue: int, workflow: list[dict[str, Any]],
+                                           workspace: Path) -> dict[str, Any] | None:
+    """Reopen a single-issue review when 04r replaced its published commit."""
+    republished = [
+        item for item in workflow
+        if item["layer_id"] is None and item["phase"] == "04r"
+        and successful_step_output(item, "publish_branch")
+    ]
+    if not republished:
+        return None
+    republish = max(republished, key=lambda item: item["phase_attempt"])
+    receipt = successful_step_output(republish, "publish_branch")
+    if not isinstance(receipt, dict) or receipt.get("republished_after_rebase") is not True:
+        return None
+    branch, remote_oid = receipt.get("branch"), receipt.get("remote_oid")
+    if not isinstance(branch, str) or not branch or not isinstance(remote_oid, str) or not remote_oid:
+        return blocked(issue, republish, "Il checkpoint 04r non identifica branch e OID ripubblicato.")
+    current_publication = next(
+        (item for item in published_layers(workspace, issue) if item.get("branch") == branch), None,
+    )
+    if (current_publication is not None
+            and current_publication.get("session_name") != republish["session"]["session_name"]):
+        return None
+    reviews = [item for item in workflow if item["layer_id"] is None and item["phase"] == "05"]
+    review = max(reviews, key=lambda item: item["phase_attempt"]) if reviews else None
+    if review and review["session"].get("status") != "completed":
+        return None
+    verification = successful_step_output(review, "verify_layer") if review else None
+    commit = verification.get("commit") if isinstance(verification, dict) else None
+    reviewed_oid = commit.get("oid") if isinstance(commit, dict) else None
+    if reviewed_oid == remote_oid:
+        return None
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "--verify", f"{branch}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if head.returncode or head.stdout.strip() != remote_oid:
+        return branch_recovery_required(
+            issue, republish, workspace, branch,
+            "Il branch locale non coincide con l'OID ripubblicato registrato dal checkpoint 04r.",
+        )
+    stack, problem, warnings = implementation_stack_layer(workspace, issue, branch)
+    if problem or not stack:
+        return blocked(issue, republish, with_stack_warnings(
+            problem or "Lo stack ripubblicato non è verificabile.", warnings))
+    implementation = max(
+        (item for item in workflow if item["layer_id"] is None and item["phase"] == "04"),
+        key=lambda item: (item["phase_attempt"], item.get("action") == "correction"),
+        default=None,
+    )
+    instructions = inherited_implementation_instructions(review, workflow) if review else ""
+    if not instructions and implementation:
+        instructions = inherited_implementation_instructions(implementation, workflow)
+    attempt = max((item["phase_attempt"] for item in reviews), default=0) + 1
+    inputs = {
+        "issue": str(issue), "branch": stack["branch"], "base": stack["parent_branch"],
+        "stack_layer": json.dumps(stack, ensure_ascii=False, sort_keys=True),
+        "review_artifact_name": f"issue-{issue}-review.md",
+        "implementation_instructions": instructions,
+    }
+    if review:
+        previous_review = artifact(review["path"], f"issue-{issue}-review.md")
+        if previous_review:
+            inputs["previous_review"] = previous_review
+    return recommendation(
+        issue, republish, "acme-recipe-05-review-github-issue",
+        next_session(issue, republish["workflow_attempt"], "05", "review", attempt),
+        inputs, [],
+        with_stack_warnings(
+            "Il branch single è stato ripubblicato dopo un rebase; ripetere la review sul nuovo OID.",
+            warnings,
+        ),
+        {"implementation_instructions": instructions},
+    )
+
+
 def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list[dict[str, Any]],
                    workspace: Path, breakdown: dict[str, Any], developer_instructions: str = "",
                    requested_recipe: str | None = None, correction_instructions: str = "") -> dict[str, Any]:
@@ -1106,47 +1446,91 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
     if not isinstance(layers, list) or len(layers) < 2:
         return blocked(issue, breakdown_session, "La scomposizione stacked non contiene almeno due layer validi.")
     ordered = sorted((item for item in layers if isinstance(item, dict)), key=lambda item: item.get("sequence", -1))
+    analysis = next((item["session"].get("session_name") for item in workflow
+                     if item["phase"] == "02" and item["layer_id"] is None and item["session"].get("status") == "completed"), None)
+    republish_review = republish_review_recommendation(issue, breakdown_session, workflow, workspace, ordered, analysis)
+    if republish_review:
+        return republish_review
     publication_sessions = [item for item in workflow if item["layer_id"] is None and item["phase"] in {"07", "08"}]
     if publication_sessions:
         publication_current = max(publication_sessions, key=lambda item: (item["phase"], item["phase_attempt"]))
         if publication_current["session"].get("status") != "completed":
             return blocked(issue, publication_current, "La pubblicazione o il submit dello stack è attivo: recuperare prima la stessa sessione.")
         if publication_current["phase"] == "08":
-            return {
+            result = {
                 "schema_version": 1, "status": "workflow-completed", "issue": issue,
                 "current_session": publication_current["session"]["session_name"],
                 "recommended_recipe": None, "worklog_session_name": None,
                 "resolved_inputs": {}, "missing_inputs": [], "suggested_invocation": None,
                 "reason": "Il submit dello stack è concluso.",
             }
+            if any(item["phase"] == "04r" for item in workflow):
+                result["warnings"] = ["Le pull request esistenti possono citare OID o misure superate dopo il rebase; aggiornarne eventualmente titolo e descrizione con la recipe 08."]
+            return result
         publication = successful_step_output(publication_current, "configure_upstreams")
         verification = verification_from_lineage(publication_current, workflow) or report_input(publication_current, "verification_report")
         return propose_submit(issue, publication_current, publication, verification) if publication and verification else blocked(
             issue, publication_current, "Mancano publication_report o verification_report della recipe 07.")
-    analysis = next((item["session"].get("session_name") for item in workflow
-                     if item["phase"] == "02" and item["layer_id"] is None and item["session"].get("status") == "completed"), None)
     for layer in ordered:
         layer_id = layer.get("id")
         sequence = layer.get("sequence")
         if not isinstance(layer_id, str) or not LAYER_RE.fullmatch(layer_id) or not isinstance(sequence, int):
             return blocked(issue, breakdown_session, "La scomposizione stacked contiene un layer non valido.")
         layer_id = layer_id.upper()
+        implementation = latest_layer_session(workflow, layer_id, "04")
+        if (implementation and implementation.get("action") == "correction"
+                and implementation["session"].get("status") != "completed"):
+            if (requested_recipe == CORRECTION_RECIPE
+                    and has_unpublished_correction_checkpoint(implementation)):
+                return unpublished_correction_recommendation(
+                    issue, workflow, implementation, workspace, correction_instructions,
+                    {**layer, "id": layer_id})
+            return blocked(issue, implementation, "La correzione del layer è attiva: recuperare prima la stessa sessione.")
         review = latest_layer_session(workflow, layer_id, "05")
         if review:
             if review["session"].get("status") == "completed":
+                if requested_recipe == CORRECTION_RECIPE:
+                    correction = reviewed_correction_recommendation(
+                        issue, workflow, workspace, review, correction_instructions,
+                        {**layer, "id": layer_id},
+                    )
+                    if correction:
+                        return correction
+                publication = published_correction(workflow, layer_id)
+                if publication and review_oid(review) != publication[1]["remote_oid"]:
+                    state, branch, head, commits = review_state(
+                        workspace, successful_step_output(review, "verify_layer") or {},
+                    )
+                    if state == "advanced" and head == publication[1]["remote_oid"]:
+                        stale = stale_stacked_children(
+                            issue, publication[0], workspace, branch, ordered, sequence, workflow,
+                        )
+                        if stale:
+                            return stale
+                        return repeat_review(issue, review,
+                            successful_step_output(review, "verify_layer") or {},
+                            branch, head, commits, workflow, workspace, {**layer, "id": layer_id},
+                            allow_non_top=(
+                                sequence + 1 < len(ordered)
+                                and latest_layer_session(
+                                    workflow,
+                                    str(ordered[sequence + 1].get("id", "")).upper(),
+                                    "04",
+                                ) is not None
+                            ))
                 continue
             retry = retry_interrupted_stacked_review(issue, breakdown_session, review, workspace, workflow,
                                                       {**layer, "id": layer_id}, analysis)
             if retry:
                 return retry
             return blocked(issue, review, "La review del layer è attiva: recuperare prima la stessa sessione.")
-        implementation = latest_layer_session(workflow, layer_id, "04")
         if implementation:
             if implementation["session"].get("status") != "completed":
                 if (requested_recipe == CORRECTION_RECIPE and implementation.get("action") in {"implement", "correction"}
                         and has_unpublished_correction_checkpoint(implementation)):
-                    return correction_recommendation(issue, implementation, workspace, correction_instructions,
-                                                     {**layer, "id": layer_id})
+                    return unpublished_correction_recommendation(
+                        issue, workflow, implementation, workspace, correction_instructions,
+                        {**layer, "id": layer_id})
                 return blocked(issue, implementation, "L'implementazione del layer è attiva: recuperare prima la stessa sessione.")
             branch, problem, recovery_warnings = layer_branch(workspace, issue, workflow, ordered, sequence)
             if problem or not branch:
@@ -1226,7 +1610,10 @@ def report_stacked(issue: int, breakdown_session: dict[str, Any], workflow: list
         return blocked(issue, breakdown_session, "Manca l'output verificato della review dell'ultimo layer stacked.")
     state, branch, head, commits = review_state(workspace, verification)
     if state == "advanced":
-        return repeat_review(issue, last_review, verification, branch, head, commits, workflow)
+        return repeat_review(
+            issue, last_review, verification, branch, head, commits, workflow, workspace,
+            {**ordered[-1], "id": str(ordered[-1].get("id", "")).upper()},
+        )
     if state != "current":
         return blocked(issue, last_review, "Il branch è stato riscritto o non è più verificabile dopo la review.")
     return propose_push(issue, last_review, verification)
@@ -1309,7 +1696,7 @@ def report_completed(issue: int, current: dict[str, Any], workflow: list[dict[st
             return blocked(issue, current, "Manca l'output verificato della recipe 05.")
         state, branch, head, commits = review_state(workspace, verification)
         if state == "advanced":
-            return repeat_review(issue, current, verification, branch, head, commits, workflow)
+            return repeat_review(issue, current, verification, branch, head, commits, workflow, workspace)
         if state != "current":
             return blocked(issue, current, "Il branch è stato riscritto o non è più verificabile dopo la review.")
         return propose_push(issue, current, verification)
@@ -1493,11 +1880,18 @@ def stack_rebase_required(issue: int, current: dict[str, Any], workspace: Path) 
         ["git", "-C", str(workspace), "rev-list", "--count", f"{base}..{branch_ref}", "--not", trunk_ref],
         capture_output=True, text=True, check=False,
     ).stdout.strip()
+    def is_ancestor(older: str, newer: str) -> bool:
+        return subprocess.run(
+            ["git", "-C", str(workspace), "merge-base", "--is-ancestor", older, newer],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+
     checkpoints = [first[key] for key in ("base_oid", "parent_oid") if first.get(key)]
-    checkpoints_match = all(subprocess.run(
-        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", checkpoint, base],
-        capture_output=True, text=True, check=False,
-    ).returncode == 0 for checkpoint in checkpoints)
+    checkpoints_match = all(
+        is_ancestor(checkpoint, base)
+        or (is_ancestor(base, checkpoint) and is_ancestor(checkpoint, trunk_ref))
+        for checkpoint in checkpoints
+    )
     if not base_in_trunk or total != exclusive or not checkpoints_match:
         return None
     trunk_oid = subprocess.run(
@@ -1605,7 +1999,9 @@ def unreconciled_published_rewrite(issue: int, workspace: Path) -> str | None:
 
 def add_warnings(report: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     if warnings:
-        report["warnings"] = warnings
+        existing = report.get("warnings", [])
+        combined = ([item for item in existing if isinstance(item, str)] if isinstance(existing, list) else []) + warnings
+        report["warnings"] = list(dict.fromkeys(combined))
     return report
 
 
@@ -1690,6 +2086,8 @@ def main() -> int:
     parser.add_argument("--issue-number", default="", help="Numero reale quando --issue è pending")
     parser.add_argument("--requested-recipe", help="Recipe che il runtime sta pianificando")
     parser.add_argument("--developer-instructions", default="", help="Vincoli iniziali dello sviluppatore")
+    parser.add_argument("--workspace-mode", default="", choices=("", "current", "isolated"),
+                        help="Modalità workspace dichiarata dal coordinatore; il boilerplate la conserva fuori dal resolver")
     parser.add_argument("--correction-instructions", default="", help="Correzioni esplicite da applicare al branch non pubblicato")
     parser.add_argument("--new-workflow-attempt", default="", help='"true" per aprire un nuovo attempt della fase richiesta')
     parser.add_argument("--reason", default="", help="Motivo obbligatorio per un nuovo workflow attempt")
@@ -1820,6 +2218,42 @@ def main() -> int:
                                         args.requested_recipe, args.correction_instructions)
                 print(json.dumps(add_warnings(result, context_warnings), ensure_ascii=False, indent=2, sort_keys=True))
                 return 0
+            if breakdown.get("mode") == "single":
+                corrections = [
+                    item for item in workflow
+                    if item["layer_id"] is None and item["phase"] == "04"
+                    and item.get("action") == "correction"
+                ]
+                active_correction = max(corrections, key=lambda item: item["phase_attempt"], default=None)
+                if active_correction and active_correction["session"].get("status") != "completed":
+                    if (args.requested_recipe == CORRECTION_RECIPE
+                            and has_unpublished_correction_checkpoint(active_correction)):
+                        result = unpublished_correction_recommendation(
+                            issue, workflow, active_correction, workspace, args.correction_instructions)
+                    else:
+                        result = blocked(
+                            issue, active_correction,
+                            "La correzione è attiva: recuperare prima la stessa sessione.",
+                        )
+                    print(json.dumps(add_warnings(result, context_warnings),
+                                     ensure_ascii=False, indent=2, sort_keys=True))
+                    return 0
+                if args.requested_recipe == CORRECTION_RECIPE and args.correction_instructions.strip():
+                    reviews = [item for item in workflow
+                               if item["layer_id"] is None and item["phase"] == "05"]
+                    review = max(reviews, key=lambda item: item["phase_attempt"], default=None)
+                    correction = reviewed_correction_recommendation(
+                        issue, workflow, workspace, review, args.correction_instructions,
+                    ) if review else None
+                    if correction:
+                        print(json.dumps(add_warnings(correction, context_warnings),
+                                         ensure_ascii=False, indent=2, sort_keys=True))
+                        return 0
+                republish_review = single_republish_review_recommendation(issue, workflow, workspace)
+                if republish_review:
+                    print(json.dumps(add_warnings(republish_review, context_warnings),
+                                     ensure_ascii=False, indent=2, sort_keys=True))
+                    return 0
     current = latest_phase(workflow)
     status = current["session"].get("status")
     if status == "completed":
@@ -1830,7 +2264,8 @@ def main() -> int:
         if (args.requested_recipe == CORRECTION_RECIPE and current["phase"] == "04"
                 and current.get("action") in {"implement", "correction"} and not failed
                 and has_unpublished_correction_checkpoint(current)):
-            result = correction_recommendation(issue, current, workspace, args.correction_instructions)
+            result = unpublished_correction_recommendation(
+                issue, workflow, current, workspace, args.correction_instructions)
         else:
             reason = "L'ultimo checkpoint della sessione è fallito: recuperare prima piano e journal runtime della stessa recipe." if failed else "La sessione è attiva: recuperare prima piano e journal runtime della stessa recipe."
             result = blocked(issue, current, reason)

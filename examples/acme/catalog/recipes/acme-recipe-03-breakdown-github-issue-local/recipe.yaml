@@ -1,0 +1,28 @@
+version: "1.0"
+name: acme-recipe-03-breakdown-github-issue-local
+inputs:
+  command_executor: { default: "current", description: "AI che esegue tutti i comandi della recipe; current mantiene l'AI che ha avviato la recipe." }
+  issue: { required: true, description: "Numero della issue principale." }
+  issue_analysis: { required: true, description: "Analisi tecnica ready della issue principale." }
+  allowed_modes: { default: '["single","stacked"]', description: "Modi locali ammessi; epic è escluso perché richiede effetti remoti." }
+  worklog_session_name: { required: true, description: "Percorso canonico della sessione 03." }
+  worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali." }
+steps:
+  - id: breakdown_issue
+    uses: acme-cmd-breakdown-github-issue
+    executor: "${{ inputs.command_executor }}"
+    with: { issue_analysis: "${{ inputs.issue_analysis }}", allowed_modes: "${{ inputs.allowed_modes }}" }
+  - id: checkpoint_breakdown
+    uses: acme-cmd-save-worklog-output
+    executor: claude
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue-local, session_input: "${{ inputs.worklog_session_input }}", step_name: breakdown_issue, source_name: acme-cmd-breakdown-github-issue, outcome: succeeded, output: "${{ steps.breakdown_issue.output }}", expected_output_sha256: "${{ steps.breakdown_issue.output_sha256 }}", error: "null", complete: "false" }
+  - id: record_breakdown
+    uses: acme-cmd-record-github-issue-breakdown
+    executor: claude
+    with: { session_name: "${{ inputs.worklog_session_name }}", breakdown: "${{ steps.checkpoint_breakdown.output }}" }
+  - id: save_result
+    uses: acme-cmd-save-worklog-output
+    executor: claude
+    with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-03-breakdown-github-issue-local, session_input: "${{ inputs.worklog_session_input }}", step_name: record_breakdown, source_name: acme-cmd-record-github-issue-breakdown, outcome: succeeded, output: "${{ steps.record_breakdown.output }}", expected_output_sha256: "${{ steps.record_breakdown.output_sha256 }}", error: "null", complete: "true" }
+outputs:
+  result: { value: "${{ steps.save_result.output }}" }

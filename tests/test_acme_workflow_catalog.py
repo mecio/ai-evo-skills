@@ -270,6 +270,39 @@ class AcmeWorkflowCatalogTest(unittest.TestCase):
             changed = subprocess.check_output(["git", "status", "--short"], cwd=root, text=True)
             self.assertEqual(" M second.txt\n", changed)
 
+    def test_commit_message_rejects_lines_stripped_by_git_comment_char(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+            subprocess.run(["git", "config", "core.commentChar", ";"], cwd=root, check=True)
+            message = root / "message.txt"
+            message.write_text(
+                "#12603 Preserve commit title\n\nA valid line; with punctuation.\n; stripped by Git\n",
+                encoding="utf-8",
+            )
+            rejected = subprocess.run(
+                [str(SCRIPTS / "acme-git-commit-check"), "--message-file", str(message),
+                 "--issue-number", "12603"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(1, rejected.returncode)
+            self.assertIn("Git comment character ';'", rejected.stdout)
+
+            message.write_text(
+                "#12603 Preserve commit title\n\nA valid line; with punctuation.\n",
+                encoding="utf-8",
+            )
+            accepted = subprocess.run(
+                [str(SCRIPTS / "acme-git-commit-check"), "--message-file", str(message),
+                 "--issue-number", "12603"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
+
     def test_local_worktree_configuration_overrides_shared_roots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "vms/application"

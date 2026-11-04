@@ -1,6 +1,6 @@
 ---
 name: acme-recipe-04-implement-github-issue-correction
-description: Corregge un'implementazione locale già committata prima della sua pubblicazione.
+description: Corregge con commit aggiuntivi un'implementazione locale non pubblicata o già revisionata e pubblicata.
 metadata:
   ai-evo-kind: recipe
   ai-evo-version: "1.0"
@@ -10,7 +10,7 @@ metadata:
 
 ## Purpose
 
-Correggere un'implementazione locale già committata prima della pubblicazione, senza riusare la sessione nativa di Claude.
+Correggere un'implementazione già committata, prima della pubblicazione oppure dopo una review del corrente OID pubblicato, senza riusare la sessione nativa di Claude.
 
 ## Interface
 
@@ -19,10 +19,11 @@ Input, step e output sono definiti in [recipe.yaml](recipe.yaml). Per sessioni e
 
 ## Procedure
 
-Il resolver la propone solo dopo un checkpoint `implement_issue` riuscito della recipe 04 originale, senza
-checkpoint `publish_branch`, e solo quando lo sviluppatore fornisce `correction_instructions` non vuote. La recipe
-apre una sessione autonoma, affida la correzione a Claude, registra un checkpoint non conclusivo, pubblica il
-branch e conserva il risultato conclusivo. Non modifica il piano o il journal della sessione 04 originaria.
+Il resolver la propone dopo un checkpoint `implement_issue` riuscito senza `publish_branch`, oppure dopo una 05
+conclusa sull'OID pubblicato corrente, e solo quando lo sviluppatore fornisce `correction_instructions` non vuote.
+Nel secondo caso aggiorna il report di implementazione alla storia corrente e collega la review in `source_review`.
+La recipe apre una sessione autonoma, registra un checkpoint non conclusivo, pubblica il branch con un push
+fast-forward e conserva il nuovo `remote_oid` nel risultato conclusivo. Non modifica il piano o il journal della sessione 04 originaria.
 
 Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-04-implement-github-issue-correction --adapter <adapter-corrente>`
 e gli input risolti. Seguire il protocollo in `.ai-evo/docs/recipe-runtime.md`: avanzare solo lo step risolto e

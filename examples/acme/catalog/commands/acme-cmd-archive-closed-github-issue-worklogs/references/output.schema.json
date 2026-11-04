@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "dry_run",
+    "checked_at",
+    "checked",
+    "subissues_checked",
+    "open",
+    "closed",
+    "archivable",
+    "archived",
+    "entries"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["dry-run", "archived"] },
+    "dry_run": { "type": "boolean" },
+    "checked_at": { "type": "string", "format": "date-time" },
+    "checked": { "type": "integer", "minimum": 0 },
+    "subissues_checked": { "type": "integer", "minimum": 0 },
+    "open": { "type": "integer", "minimum": 0 },
+    "closed": { "type": "integer", "minimum": 0 },
+    "archivable": { "type": "integer", "minimum": 0 },
+    "archived": { "type": "integer", "minimum": 0 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue", "state", "url", "action", "reason", "local_blockers", "subissues", "open_subissues", "source", "destination"],
+        "properties": {
+          "issue": { "type": "integer", "minimum": 1 },
+          "state": { "enum": ["OPEN", "CLOSED"] },
+          "url": { "type": "string", "minLength": 1 },
+          "action": { "enum": ["keep", "archive"] },
+          "reason": { "enum": ["issue-open", "active-worklog", "open-subissues", "issue-and-subissues-closed"] },
+          "local_blockers": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "subissues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["issue", "state", "url"],
+              "properties": {
+                "issue": { "type": "integer", "minimum": 1 },
+                "state": { "enum": ["OPEN", "CLOSED"] },
+                "url": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "open_subissues": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1 },
+            "uniqueItems": true
+          },
+          "source": { "type": "string", "pattern": "^\\.ai-evo-work/issue-[1-9][0-9]*$" },
+          "destination": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "pattern": "^\\.ai-evo-work/archive/issue-[1-9][0-9]*$" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

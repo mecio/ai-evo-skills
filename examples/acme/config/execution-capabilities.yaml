@@ -35,6 +35,16 @@ capabilities:
     operation: republish
     arguments: true
     workspaces: [read-write]
+  acme.git-stack-rebase:
+    script: acme-rebase-git-stack
+    operation: rebase
+    arguments: true
+    workspaces: [read-write]
+  acme.git-stack-rebase-and-republish:
+    script: acme-rebase-and-republish-github-stack
+    operation: run
+    arguments: true
+    workspaces: [read-write]
   acme.worklog-record:
     script: acme-operation-output-worklog
     operation: record
@@ -60,6 +70,51 @@ capabilities:
     operation: resume
     arguments: true
     workspaces: [read-write]
+  acme.github-issue-worklogs-archive:
+    script: acme-archive-closed-github-issue-worklogs
+    operation: archive
+    arguments: true
+    workspaces: [read-write]
+  acme.issue-workspace-prepare:
+    script: acme-issue-workspace
+    operation: prepare
+    arguments: true
+    workspaces: [read-write]
+  acme.issue-workspace-repair:
+    script: acme-issue-workspace
+    operation: repair
+    arguments: true
+    workspaces: [read-write]
+  acme.issue-workspace-cleanup:
+    script: acme-issue-workspace
+    operation: cleanup
+    arguments: true
+    workspaces: [read-write]
+  acme.workflow-supervisor-claim:
+    script: acme-supervisor-github-issue-workflow
+    operation: claim
+    arguments: true
+    workspaces: [read-write]
+  acme.workflow-supervisor-release:
+    script: acme-supervisor-github-issue-workflow
+    operation: release
+    arguments: true
+    workspaces: [read-write]
+  acme.workflow-supervisor-decide:
+    script: acme-supervisor-github-issue-workflow
+    operation: decide
+    arguments: true
+    workspaces: [read-only, read-write]
+  acme.workflow-supervisor-record:
+    script: acme-supervisor-github-issue-workflow
+    operation: record
+    arguments: true
+    workspaces: [read-write]
+  acme.workflow-summary:
+    script: acme-supervisor-github-issue-workflow
+    operation: summarize
+    arguments: true
+    workspaces: [read-only, read-write]
   acme.git-stack-plan:
     script: acme-git-stack-plan
     operation: plan

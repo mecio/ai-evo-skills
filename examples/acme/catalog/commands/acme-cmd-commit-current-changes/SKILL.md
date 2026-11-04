@@ -66,6 +66,9 @@ Un JSON con `status: committed` e l'OID creato, oppure lo stato `skipped` ricevu
 
 - Non reinterpretare o aggiornare il piano durante l'esecuzione.
 - Non modificare i contenuti dei file o la configurazione Git.
+- Prima di operazioni che riscrivono messaggi, verificare `core.commentChar`; segnalare configurazioni che
+  eliminerebbero i titoli `#<numero>` senza modificarle. Il validatore rifiuta righe che iniziano con il carattere
+  di commento fisso configurato, perché Git le eliminerebbe durante la ripulitura del messaggio.
 - Non eseguire amend, push, tag, branch, release o bypass degli hook.
 
 ## Success criteria

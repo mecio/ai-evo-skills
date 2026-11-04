@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "issue", "attempt", "profile", "sessions", "git", "commits", "implementation_reports", "review_reports", "tests", "open_decisions", "limits", "remote_effects", "pull_requests", "evidence", "missing_requirements", "policy_violations", "report"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["completed-local", "completed-draft-prs", "incomplete", "handoff-required", "policy-violation"]},
+    "issue": {"type": "integer", "minimum": 1},
+    "attempt": {"type": "integer", "minimum": 1},
+    "profile": {"type": "string", "minLength": 1},
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session", "recipe", "status", "entries"],
+        "properties": {
+          "session": {"type": ["string", "null"]},
+          "recipe": {"type": ["string", "null"]},
+          "status": {"type": ["string", "null"]},
+          "entries": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["working_directory", "branch", "head", "clean"],
+      "properties": {
+        "working_directory": {"type": "string", "minLength": 1},
+        "branch": {"type": ["string", "null"]},
+        "head": {"type": ["string", "null"]},
+        "clean": {"type": "boolean"}
+      }
+    },
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha", "subject"],
+        "properties": {
+          "sha": {"type": "string", "pattern": "^[a-f0-9]{7,64}$"},
+          "subject": {"type": "string"}
+        }
+      }
+    },
+    "implementation_reports": {"type": "array", "items": {"type": "string"}},
+    "review_reports": {"type": "array", "items": {"type": "string"}},
+    "tests": {"type": "array", "items": {"type": "string"}},
+    "open_decisions": {"type": "array", "items": {"type": "string"}},
+    "limits": {"type": "array", "items": {"type": "string"}},
+    "remote_effects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session", "source"],
+        "properties": {"session": {"type": "string"}, "source": {"type": "string"}}
+      }
+    },
+    "pull_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "url", "branch", "base", "draft", "title"],
+        "properties": {
+          "number": {"type": "integer", "minimum": 1},
+          "url": {"type": "string", "format": "uri"},
+          "branch": {"type": "string", "minLength": 1},
+          "base": {"type": "string", "minLength": 1},
+          "draft": {"const": true},
+          "title": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "evidence": {"type": "object", "additionalProperties": {"type": "boolean"}},
+    "missing_requirements": {"type": "array", "items": {"type": "string"}},
+    "policy_violations": {"type": "array", "items": {"type": "string"}},
+    "report": {"type": "string", "minLength": 1}
+  }
+}

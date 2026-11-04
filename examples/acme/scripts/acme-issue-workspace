@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""Prepare the persistent checkout selected for one issue workflow attempt."""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, NoReturn
+
+
+ISSUE = re.compile(r"^[1-9][0-9]*$")
+SESSION = re.compile(r"^issue-(?P<issue>[1-9][0-9]*)/attempt-(?P<attempt>[0-9]+)/")
+CLEANUP_SESSION = re.compile(
+    r"^issue-(?P<issue>[1-9][0-9]*)/attempt-(?P<attempt>[0-9]+)/08-submit-attempt-(?P<phase_attempt>[0-9]+)$"
+)
+ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+HERE = Path(__file__).resolve().parent
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, env=ENV, capture_output=True, text=True, check=False)
+    if check and result.returncode:
+        fail(result.stderr.strip() or result.stdout.strip() or f"command failed: {args[0]}")
+    return result
+
+
+def git(*args: str, check: bool = True) -> str:
+    return run("git", *args, check=check).stdout.strip()
+
+
+def parse_request(raw: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(value, dict):
+        fail("request must be a JSON object")
+    return value
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
+def coordinator_root() -> Path:
+    root = Path(git("rev-parse", "--show-toplevel")).resolve()
+    if Path.cwd().resolve() != root:
+        fail("run from the coordinator Git root")
+    return root
+
+
+def common_dir(root: Path) -> Path:
+    return Path(git("-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+
+
+def manifest_path(root: Path, issue: int, attempt: int) -> Path:
+    return common_dir(root) / "acme-issues" / f"issue-{issue}" / f"attempt-{attempt:02d}" / "workspace.json"
+
+
+def workflow_attempt(request: dict[str, Any], issue: int) -> int:
+    name = request.get("worklog_session_name")
+    if not isinstance(name, str):
+        fail("worklog_session_name must be a canonical session path")
+    match = SESSION.match(name)
+    if not match or int(match.group("issue")) != issue or int(match.group("attempt")) < 1:
+        fail("worklog_session_name does not match issue")
+    return int(match.group("attempt"))
+
+
+MANAGED_RESOURCES = (
+    ".ai-evo",
+    ".ai-evo-prj",
+    ".ai-evo-skills.yaml",
+    ".ai-evo-work",
+    ".agents/skills",
+    ".claude/skills",
+)
+
+
+def ensure_worktree_excludes(root: Path) -> None:
+    path = common_dir(root) / "info" / "exclude"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    lines = existing.splitlines()
+    managed_roots = sorted({Path(relative).parts[0] for relative in MANAGED_RESOURCES})
+    required = ["/.sub-worktrees/", *(f"/{relative}" for relative in managed_roots)]
+    missing = [line for line in required if line not in lines]
+    if missing:
+        path.write_text(existing.rstrip("\n") + ("\n" if existing else "")
+                        + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def provision_worktree(root: Path, path: Path) -> dict[str, Any]:
+    """Link only project-agnostic AI Evo resources into an isolated worktree."""
+    linked: list[str] = []
+    for relative in MANAGED_RESOURCES:
+        source = root / relative
+        if not source.exists() and not source.is_symlink():
+            continue
+        destination = path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_symlink():
+            if destination.resolve(strict=False) != source.resolve(strict=False):
+                fail(f"managed resource points to an unexpected target: {relative}")
+        elif destination.exists():
+            fail(f"managed resource already exists and is not a link: {relative}")
+        else:
+            destination.symlink_to(source.resolve(strict=False), target_is_directory=source.is_dir())
+        linked.append(relative)
+    return {"linked_resources": sorted(linked)}
+
+
+def validate_existing(root: Path, path: Path, manifest: dict[str, Any]) -> None:
+    top = git("-C", str(path), "rev-parse", "--show-toplevel", check=False)
+    common = git("-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    if (not path.is_dir() or not top or Path(top).resolve() != path.resolve()
+            or not common or Path(common).resolve() != common_dir(root)
+            or manifest.get("working_directory") != str(path)):
+        fail("registered issue workspace is missing or invalid")
+
+
+def validate_record(record: Any, issue: int, attempt: int, statuses: set[str]) -> dict[str, Any]:
+    if (not isinstance(record, dict) or record.get("schema_version") != 1
+            or record.get("issue") != issue or record.get("workflow_attempt") != attempt
+            or record.get("status") not in statuses
+            or record.get("workspace_mode") not in {"current", "isolated"}):
+        fail("issue workspace manifest has invalid coordinates or status")
+    return record
+
+
+def prepare_unlocked(request: dict[str, Any]) -> dict[str, Any]:
+    if set(request) != {"issue", "base_branch", "workspace_mode", "worklog_session_name"}:
+        fail("prepare fields do not match the operation contract")
+    raw_issue = request["issue"]
+    if isinstance(raw_issue, int):
+        raw_issue = str(raw_issue)
+    if not isinstance(raw_issue, str) or not ISSUE.fullmatch(raw_issue):
+        fail("issue must be a positive integer")
+    issue = int(raw_issue)
+    attempt = workflow_attempt(request, issue)
+    mode = request["workspace_mode"]
+    if mode not in {"current", "isolated"}:
+        fail("workspace_mode must be current or isolated")
+    base = request["base_branch"]
+    if not isinstance(base, str) or not base or base.startswith("-"):
+        fail("base_branch is invalid")
+    root = coordinator_root()
+    record_path = manifest_path(root, issue, attempt)
+    if record_path.is_file():
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"cannot read issue workspace manifest: {exc}")
+        record = validate_record(record, issue, attempt, {"ready"})
+        if record.get("workspace_mode") != mode or record.get("base_branch") != base:
+            fail("issue workspace manifest conflicts with the requested assignment")
+        recorded_directory = record.get("working_directory")
+        if not isinstance(recorded_directory, str):
+            fail("issue workspace manifest has no working_directory")
+        path = Path(recorded_directory).resolve()
+        validate_existing(root, path, record)
+        return record
+    base_oid = git("-C", str(root), "rev-parse", "--verify", f"refs/heads/{base}^{{commit}}")
+    if mode == "current":
+        record = {"schema_version": 1, "status": "ready", "workspace_mode": mode,
+                  "coordinator_root": str(root), "working_directory": str(root),
+                  "issue": issue, "workflow_attempt": attempt, "base_branch": base,
+                  "base_oid": base_oid, "provision": {"linked_resources": []}}
+        atomic_json(record_path, record)
+        return record
+
+    path = root / ".sub-worktrees" / "issues" / f"issue-{issue}" / f"attempt-{attempt:02d}"
+    if path.exists():
+        fail("isolated issue workspace path already exists without a manifest")
+
+    try:
+        ensure_worktree_excludes(root)
+        run("git", "-C", str(root), "worktree", "add", "--detach", str(path), base_oid)
+        provision = provision_worktree(root, path)
+        record = {"schema_version": 1, "status": "ready", "workspace_mode": mode,
+                  "coordinator_root": str(root), "working_directory": str(path),
+                  "issue": issue, "workflow_attempt": attempt, "base_branch": base,
+                  "base_oid": base_oid, "provision": provision}
+        atomic_json(record_path, record)
+        return record
+    except (SystemExit, OSError, KeyError) as exc:
+        run("git", "-C", str(root), "worktree", "remove", "--force", str(path), check=False)
+        fail(str(exc).removeprefix("error: ") or exc.__class__.__name__)
+
+
+def repair_unlocked(request: dict[str, Any]) -> dict[str, Any]:
+    if set(request) != {"issue", "worklog_session_name"}:
+        fail("repair fields do not match the operation contract")
+    raw_issue = request["issue"]
+    if isinstance(raw_issue, int):
+        raw_issue = str(raw_issue)
+    if not isinstance(raw_issue, str) or not ISSUE.fullmatch(raw_issue):
+        fail("issue must be a positive integer")
+    issue = int(raw_issue)
+    attempt = workflow_attempt(request, issue)
+    invocation_root = coordinator_root()
+    record_path = manifest_path(invocation_root, issue, attempt)
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read issue workspace manifest: {exc}")
+    record = validate_record(record, issue, attempt, {"ready"})
+    if record.get("workspace_mode") == "current":
+        validate_existing(invocation_root, Path(record.get("working_directory", "")).resolve(), record)
+        return {**record, "repair": "not-required"}
+    coordinator_value, directory_value = record.get("coordinator_root"), record.get("working_directory")
+    if (record.get("workspace_mode") != "isolated" or not isinstance(coordinator_value, str)
+            or not isinstance(directory_value, str)):
+        fail("issue workspace manifest is invalid")
+    coordinator, directory = Path(coordinator_value).resolve(), Path(directory_value).resolve()
+    validate_existing(invocation_root, directory, record)
+    coordinator_top = git("-C", str(coordinator), "rev-parse", "--show-toplevel", check=False)
+    if (not coordinator_top or Path(coordinator_top).resolve() != coordinator
+            or common_dir(coordinator) != common_dir(invocation_root)):
+        fail("registered issue coordinator is missing or invalid")
+    try:
+        provision = provision_worktree(coordinator, directory)
+    except (SystemExit, OSError, KeyError) as exc:
+        fail(str(exc).removeprefix("error: ") or exc.__class__.__name__)
+    record["provision"] = provision
+    record["repaired_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    atomic_json(record_path, record)
+    return record
+
+
+def cleanup_unlocked(request: dict[str, Any]) -> dict[str, Any]:
+    if set(request) != {"issue", "worklog_session_name"}:
+        fail("cleanup fields do not match the operation contract")
+    raw_issue = request["issue"]
+    if isinstance(raw_issue, int):
+        raw_issue = str(raw_issue)
+    if not isinstance(raw_issue, str) or not ISSUE.fullmatch(raw_issue):
+        fail("issue must be a positive integer")
+    issue = int(raw_issue)
+    attempt = workflow_attempt(request, issue)
+    root = coordinator_root()
+    session_name = request["worklog_session_name"]
+    cleanup_match = CLEANUP_SESSION.fullmatch(session_name) if isinstance(session_name, str) else None
+    if (not cleanup_match or int(cleanup_match.group("issue")) != issue
+            or int(cleanup_match.group("attempt")) != attempt
+            or int(cleanup_match.group("phase_attempt")) < 1):
+        fail("cleanup requires the canonical recipe 08 session of the selected attempt")
+    session_path = root / ".ai-evo-work" / session_name / "session.json"
+    worklog_root = root / ".ai-evo-work"
+    try:
+        resolved_worklog = worklog_root.resolve(strict=True)
+    except OSError as exc:
+        fail(f"cannot resolve worklog root: {exc}")
+    current = worklog_root
+    for component in Path(session_name).parts:
+        current /= component
+        if current.is_symlink():
+            fail("cleanup submit session cannot contain internal symbolic links")
+    if session_path.is_symlink():
+        fail("cleanup submit session file cannot be a symbolic link")
+    try:
+        resolved_session = session_path.resolve(strict=True)
+        resolved_session.relative_to(resolved_worklog)
+        session = json.loads(resolved_session.read_text(encoding="utf-8"))
+    except ValueError:
+        fail("cleanup submit session resolves outside the worklog root")
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read completed submit session: {exc}")
+    if (not isinstance(session, dict) or session.get("status") != "completed"
+            or session.get("recipe_name") != "acme-recipe-08-submit-github-stack"
+            or session.get("session_name") != session_name):
+        fail("cleanup requires a completed recipe 08 session")
+    record_path = manifest_path(root, issue, attempt)
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read issue workspace manifest: {exc}")
+    expected = root / ".sub-worktrees" / "issues" / f"issue-{issue}" / f"attempt-{attempt:02d}"
+    directory = record.get("working_directory") if isinstance(record, dict) else None
+    record = validate_record(record, issue, attempt, {"ready", "cleaned"})
+    if (record.get("workspace_mode") != "isolated" or not isinstance(directory, str)
+            or Path(directory).resolve() != expected.resolve()):
+        fail("issue workspace manifest is invalid")
+    if record.get("status") == "cleaned":
+        return record
+    validate_existing(root, expected, record)
+    if git("-C", str(expected), "status", "--porcelain=v1", "-z"):
+        fail("isolated issue worktree contains uncommitted changes")
+    run("git", "-C", str(root), "worktree", "remove", str(expected))
+    record["status"] = "cleaned"
+    record["cleaned_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    atomic_json(record_path, record)
+    return record
+
+
+def serialized(request: dict[str, Any], operation: Any) -> dict[str, Any]:
+    raw_issue = request.get("issue")
+    if isinstance(raw_issue, int):
+        raw_issue = str(raw_issue)
+    if not isinstance(raw_issue, str) or not ISSUE.fullmatch(raw_issue):
+        fail("issue must be a positive integer")
+    issue = int(raw_issue)
+    attempt = workflow_attempt(request, issue)
+    root = coordinator_root()
+    lock_path = manifest_path(root, issue, attempt).parent / "workspace.lock"
+    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        return operation(request)
+    finally:
+        os.close(descriptor)
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] not in {"prepare", "repair", "cleanup"}:
+        fail("expected prepare, repair or cleanup plus one JSON request")
+    request = parse_request(sys.argv[2])
+    operation = {"prepare": prepare_unlocked, "repair": repair_unlocked,
+                 "cleanup": cleanup_unlocked}[sys.argv[1]]
+    result = serialized(request, operation)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -16,6 +16,7 @@ Ogni recipe svolge una fase circoscritta e salva il risultato nel percorso relat
 | 06 | `acme-recipe-06-verify-github-epic-stack` | Solo epic: verificare l’insieme delle sub-issue completate. |
 | 07 | `acme-recipe-07-push-github-stack` | Su richiesta esplicita: ripubblicare e verificare lo stack completo dopo la review. |
 | 08 | `acme-recipe-08-submit-github-stack` | Su richiesta esplicita: creare o aggiornare in draft le pull request dello stack. |
+| raccordo | `acme-recipe-rebase-and-republish-github-stack` | Quando il trunk remoto è avanzato: simulare oppure, con autorizzazione esplicita, ribasare, ripubblicare e registrare lo stack. |
 | raccordo | `acme-recipe-resume-github-issue-workflow` | Quando il report richiede il recupero del branch pubblicato; non è una fase del flusso. |
 
 Un’issue non scomposta segue `00 → 02 → 03 → 04 → 05`; dopo il checkpoint `implement_issue` e prima del push può inserire una o più sessioni `04-correction`, poi prosegue con `05`. Una epic segue `00 → 02 → 03`, quindi `04 → 05` per ogni sub-issue nell’ordine delle dipendenze, e infine `06`; con autorizzazione esplicita può concludersi con `07 → 08`. Una issue `stacked` segue `00 → 02 → 03`, poi per ogni layer ordinato `adopt | (04 → 05, review persistita)` e può inserire `04-correction` nello stesso layer prima della pubblicazione.

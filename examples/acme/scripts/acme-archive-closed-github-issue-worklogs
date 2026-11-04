@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Archive top-level worklogs whose GitHub issues are closed."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, NoReturn
+
+from lib.acme_worklog_root import WorklogRootError, locked_worklog_root
+
+
+ISSUE_ROOT = re.compile(r"^issue-([1-9][0-9]*)$")
+ATTEMPT_ROOT = re.compile(r"^attempt-[0-9]+$")
+GITHUB_READ_TIMEOUT_SECONDS = 20
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def parse_request(raw: str) -> bool:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(value, dict) or not set(value) <= {"dry_run"}:
+        fail("request fields do not match the operation contract")
+    dry_run: Any = value.get("dry_run", True)
+    if isinstance(dry_run, str) and dry_run in {"true", "false"}:
+        dry_run = dry_run == "true"
+    if type(dry_run) is not bool:
+        fail("dry_run must be true or false")
+    return dry_run
+
+
+def workspace(start: Path) -> Path:
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        marker = candidate / ".ai-evo"
+        if marker.is_dir() or marker.is_symlink():
+            return candidate
+    fail("cannot find a .ai-evo directory or symlink in the current path or its parents")
+
+
+def worklog_root(root: Path) -> Path:
+    path = root / ".ai-evo-work"
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        fail(f"cannot resolve worklog root: {exc}")
+    if not resolved.is_dir():
+        fail("worklog root is not a directory")
+    return resolved
+
+
+def issue_roots(root: Path) -> list[tuple[int, Path]]:
+    result: list[tuple[int, Path]] = []
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        fail(f"cannot list worklog root: {exc}")
+    for path in children:
+        match = ISSUE_ROOT.fullmatch(path.name)
+        if not match:
+            continue
+        if path.is_symlink():
+            fail(f"issue worklog root must not be a symbolic link: {path.name}")
+        if not path.is_dir():
+            fail(f"issue worklog root is not a directory: {path.name}")
+        result.append((int(match.group(1)), path))
+    return sorted(result)
+
+
+def subissue_numbers(issue_root: Path) -> list[int]:
+    numbers: set[int] = set()
+    for attempt in issue_root.iterdir():
+        if not ATTEMPT_ROOT.fullmatch(attempt.name):
+            continue
+        if attempt.is_symlink():
+            fail(f"issue attempt must not be a symbolic link: {issue_root.name}/{attempt.name}")
+        if not attempt.is_dir():
+            fail(f"issue attempt is not a directory: {issue_root.name}/{attempt.name}")
+        subissues = attempt / "subissues"
+        if not subissues.exists():
+            continue
+        if subissues.is_symlink():
+            fail(f"subissues root must not be a symbolic link: {issue_root.name}/{attempt.name}/subissues")
+        if not subissues.is_dir():
+            fail(f"subissues root is not a directory: {issue_root.name}/{attempt.name}/subissues")
+        for path in subissues.iterdir():
+            match = ISSUE_ROOT.fullmatch(path.name)
+            if not match:
+                continue
+            if path.is_symlink():
+                fail(f"sub-issue worklog root must not be a symbolic link: {path}")
+            if not path.is_dir():
+                fail(f"sub-issue worklog root is not a directory: {path}")
+            numbers.add(int(match.group(1)))
+    return sorted(numbers)
+
+
+def tree_snapshot(root: Path) -> tuple[tuple[str, int, int, int, int], ...]:
+    rows: list[tuple[str, int, int, int, int]] = []
+    try:
+        metadata = root.lstat()
+        rows.append((".", metadata.st_mode, metadata.st_size, metadata.st_mtime_ns, metadata.st_ino))
+        for current, directories, files in os.walk(root, followlinks=False):
+            directories.sort()
+            files.sort()
+            for name in [*directories, *files]:
+                path = Path(current) / name
+                metadata = path.lstat()
+                relative = path.relative_to(root).as_posix()
+                if stat.S_ISLNK(metadata.st_mode):
+                    fail(f"issue worklog must not contain symbolic links: {root.name}/{relative}")
+                rows.append((relative, metadata.st_mode, metadata.st_size,
+                             metadata.st_mtime_ns, metadata.st_ino))
+    except OSError as exc:
+        fail(f"cannot snapshot issue worklog {root.name}: {exc}")
+    return tuple(rows)
+
+
+def local_blockers(issue_root: Path) -> list[str]:
+    blockers: list[str] = []
+    for path in sorted(issue_root.glob("**/session.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"cannot read worklog session {path}: {exc}")
+        if isinstance(value, dict) and value.get("status") == "active":
+            blockers.append(path.parent.relative_to(issue_root).as_posix())
+    supervisor = issue_root / "supervisor" / "state.json"
+    if supervisor.is_file():
+        try:
+            state = json.loads(supervisor.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"cannot read supervisor state {supervisor}: {exc}")
+        if isinstance(state, dict) and state.get("status") == "active":
+            blockers.append("supervisor")
+    return blockers
+
+
+def github_issue(root: Path, issue: int) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            ["gh", "issue", "view", str(issue), "--json", "number,state,url"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GITHUB_READ_TIMEOUT_SECONDS,
+            env={**os.environ, "GH_PAGER": "cat", "PAGER": "cat"},
+        )
+    except FileNotFoundError:
+        fail("cannot read GitHub issues: gh is not installed or not available in PATH")
+    except subprocess.TimeoutExpired:
+        fail(f"cannot read GitHub issue {issue}: timed out after {GITHUB_READ_TIMEOUT_SECONDS} seconds")
+    if completed.returncode:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "GitHub query failed"
+        fail(f"cannot read GitHub issue {issue}: {detail}")
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        fail(f"GitHub issue {issue} returned invalid JSON: {exc}")
+    if (not isinstance(value, dict) or value.get("number") != issue
+            or value.get("state") not in {"OPEN", "CLOSED"}
+            or not isinstance(value.get("url"), str) or not value["url"]):
+        fail(f"GitHub issue {issue} returned an invalid response")
+    return value
+
+
+def archive(root: Path, workspace_root: Path, dry_run: bool) -> dict[str, Any]:
+    candidates = issue_roots(root)
+    candidate_names = [path.name for _, path in candidates]
+    snapshots = {issue: tree_snapshot(source) for issue, source in candidates}
+    entries: list[dict[str, Any]] = []
+    closed: list[tuple[Path, Path]] = []
+    subissues_checked = 0
+    archive_root = root / "archive"
+
+    for issue, source in candidates:
+        blockers = local_blockers(source)
+        remote = github_issue(workspace_root, issue)
+        destination = archive_root / source.name
+        subissues: list[dict[str, Any]] = []
+        if remote["state"] == "CLOSED":
+            for subissue in subissue_numbers(source):
+                child = github_issue(workspace_root, subissue)
+                subissues.append({"issue": subissue, "state": child["state"], "url": child["url"]})
+            subissues_checked += len(subissues)
+        open_subissues = [child["issue"] for child in subissues if child["state"] == "OPEN"]
+        if remote["state"] == "OPEN":
+            action, reason = "keep", "issue-open"
+        elif blockers:
+            action, reason = "keep", "active-worklog"
+        elif open_subissues:
+            action, reason = "keep", "open-subissues"
+        else:
+            action, reason = "archive", "issue-and-subissues-closed"
+        if action == "archive":
+            closed.append((source, destination))
+        entries.append({
+            "issue": issue,
+            "state": remote["state"],
+            "url": remote["url"],
+            "action": action,
+            "reason": reason,
+            "local_blockers": blockers,
+            "subissues": subissues,
+            "open_subissues": open_subissues,
+            "source": f".ai-evo-work/{source.name}",
+            "destination": f".ai-evo-work/archive/{source.name}" if action == "archive" else None,
+        })
+
+    moved: list[tuple[Path, Path]] = []
+    archive_created = False
+    try:
+        with locked_worklog_root(root):
+            current = issue_roots(root)
+            if [path.name for _, path in current] != candidate_names:
+                fail("worklog roots changed during GitHub verification; run the command again")
+            for issue, source in current:
+                if tree_snapshot(source) != snapshots[issue]:
+                    fail(f"worklog issue-{issue} changed during GitHub verification; run the command again")
+            if archive_root.is_symlink():
+                fail("worklog archive must not be a symbolic link")
+            if archive_root.exists() and not archive_root.is_dir():
+                fail("worklog archive is not a directory")
+            for _, destination in closed:
+                if destination.exists() or destination.is_symlink():
+                    fail(f"archive destination already exists: archive/{destination.name}")
+            if not dry_run and closed:
+                archive_created = not archive_root.exists()
+                archive_root.mkdir(mode=0o755, exist_ok=True)
+                try:
+                    for source, destination in closed:
+                        source.rename(destination)
+                        moved.append((source, destination))
+                except (OSError, SystemExit) as exc:
+                    rollback_errors = []
+                    for source, destination in reversed(moved):
+                        try:
+                            destination.rename(source)
+                        except OSError as rollback_exc:
+                            rollback_errors.append(str(rollback_exc))
+                    if archive_created:
+                        try:
+                            archive_root.rmdir()
+                        except OSError as rollback_exc:
+                            rollback_errors.append(str(rollback_exc))
+                    suffix = f"; rollback failed: {'; '.join(rollback_errors)}" if rollback_errors else ""
+                    detail = str(exc)
+                    if detail.startswith("error: "):
+                        detail = detail[7:]
+                    fail(f"cannot archive issue worklogs: {detail}{suffix}")
+    except WorklogRootError as exc:
+        fail(str(exc))
+
+    return {
+        "schema_version": 1,
+        "status": "dry-run" if dry_run else "archived",
+        "dry_run": dry_run,
+        "checked_at": timestamp(),
+        "checked": len(entries),
+        "subissues_checked": subissues_checked,
+        "open": sum(entry["state"] == "OPEN" for entry in entries),
+        "closed": sum(entry["state"] == "CLOSED" for entry in entries),
+        "archivable": len(closed),
+        "archived": 0 if dry_run else len(moved),
+        "entries": entries,
+    }
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "archive":
+        fail("expected the archive operation and one JSON request")
+    dry_run = parse_request(sys.argv[2])
+    root = workspace(Path.cwd())
+    result = archive(worklog_root(root), root, dry_run)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

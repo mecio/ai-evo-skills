@@ -27,6 +27,7 @@ inputs:
   issue_number: { default: "", description: "Numero reale obbligatorio quando issue è pending." }
   requested_recipe: { required: true, description: "Recipe che il runtime sta pianificando." }
   developer_instructions: { default: "", description: "Vincoli iniziali dello sviluppatore da includere nel worklog del primo tentativo." }
+  workspace_mode: { default: "", description: "Modalità workspace dichiarata dal coordinatore; current è il default dei profili supervisor Acme." }
   correction_instructions: { default: "", description: "Correzioni esplicite per una sessione 04 non ancora pubblicata." }
   new_workflow_attempt: { default: "", description: "\"true\" permette alle recipe 01, 02 o 03 di aprire un nuovo attempt." }
   reason: { default: "", description: "Motivo obbligatorio quando new_workflow_attempt è true." }
@@ -34,7 +35,7 @@ inputs:
 
 ## Procedure
 
-Esegui `.ai-evo-prj/scripts/acme-report-github-issue-workflow report --issue '<issue>' --issue-number '<issue_number>' --requested-recipe '<requested_recipe>' --developer-instructions '<developer_instructions>' --correction-instructions '<correction_instructions>' --new-workflow-attempt '<new_workflow_attempt>' --reason '<reason>'` dalla root della worktree.
+Esegui `.ai-evo-prj/scripts/acme-report-github-issue-workflow report --issue '<issue>' --issue-number '<issue_number>' --requested-recipe '<requested_recipe>' --developer-instructions '<developer_instructions>' --workspace-mode '<workspace_mode>' --correction-instructions '<correction_instructions>' --new-workflow-attempt '<new_workflow_attempt>' --reason '<reason>'` dalla root della worktree.
 Restituisci invariato il JSON prodotto dallo script. Il comando seleziona il tentativo di workflow più recente,
 legge soltanto i relativi checkpoint e artefatti e restituisce una recipe consigliata, la sessione da aprire,
 gli input già determinabili e `suggested_invocation`, pronta da copiare.
@@ -73,8 +74,9 @@ Quando è richiesta la recipe di correzione 04, riconosce solo un checkpoint loc
 Se `status` è `input-required`, chiedi soltanto i campi elencati in `missing_inputs`. Se è
 `branch-recovery-required`, avvia `acme-recipe-resume-github-issue-workflow`: la recipe esegue il recupero e
 rilancia il report. Se è `stack-rebase-required`, il branch è stato recuperato ma il trunk è avanzato: eseguire
-manualmente rebase e push, poi rilanciare il report. Il nuovo stato `stack-republish-required` indica la recipe
-che verifica i patch-id e registra i nuovi OID nel worklog prima di proseguire. Se è
+`acme-recipe-rebase-and-republish-github-stack` prima in simulazione e poi, soltanto con autorizzazione esplicita,
+per l'aggiornamento atomico remoto. Il nuovo stato `stack-republish-required` indica la recipe che verifica i
+patch-id e registra i nuovi OID nel worklog prima di proseguire. Se è
 `manual-assessment-required`, non inventare il passo successivo. Non avviare la recipe suggerita: il comando
 orienta, mentre l'avvio resta una decisione esplicita dello sviluppatore.
 

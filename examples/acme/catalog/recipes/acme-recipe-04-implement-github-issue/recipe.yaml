@@ -10,6 +10,7 @@ inputs:
   layer: { default: "", description: "JSON opzionale del layer stacked (id, sequence, title, body, dependencies)." }
   previous_review: { default: "", description: "Percorso opzionale della review verificata del layer precedente." }
   developer_instructions: { default: "", description: "Vincoli ulteriori." }
+  publish_branch: { default: "true", description: "true pubblica il branch; false conclude la recipe senza effetti remoti." }
   worklog_session_name: { required: true, description: "Percorso canonico; per una sub-issue l'agente deriva il percorso sotto issue-<epic>/attempt-<nn>/subissues/." }
   worklog_session_input: { required: true, description: "JSON immutabile degli input funzionali; se omesso l'agente lo costruisce prima del piano." }
 steps:
@@ -24,10 +25,12 @@ steps:
   - id: publish_branch
     uses: acme-cmd-push-git-stacked-branch
     executor: "${{ inputs.command_executor }}"
+    when: { value: "${{ inputs.publish_branch }}", equals: "true" }
     with: { implementation_report: "${{ steps.implement_issue.output }}" }
   - id: checkpoint_publication
     uses: acme-cmd-save-worklog-output
     executor: claude
+    when: { value: "${{ inputs.publish_branch }}", equals: "true" }
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-implement-github-issue, session_input: "${{ inputs.worklog_session_input }}", step_name: publish_branch, source_name: acme-cmd-push-git-stacked-branch, outcome: succeeded, output: "${{ steps.publish_branch.output }}", expected_output_sha256: "${{ steps.publish_branch.output_sha256 }}", error: "null", complete: "false" }
   - id: save_result
     uses: acme-cmd-save-worklog-output

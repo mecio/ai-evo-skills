@@ -30,7 +30,7 @@ Esegui `.ai-evo-prj/scripts/acme-republish-rebased-git-stack republish '<JSON>'`
 branch locale coincida con il suo upstream. Verifica la linearità della catena e l'uguaglianza della sequenza di
 `git patch-id --stable` fra i commit pubblicati in precedenza e quelli ribasati. Non esegue push.
 
-Solo dopo tutte le verifiche registra per ogni layer una nuova sessione `04r-republish-attempt-01` con un checkpoint
+Solo dopo tutte le verifiche registra per ogni layer una nuova sessione nel primo `04r-republish-attempt-<nn>` libero con un checkpoint
 `publish_branch`; conserva `previous_remote_oid`, `previous_base_oid` e `patch_ids_equivalent: true` senza toccare
 i checkpoint originali.
 

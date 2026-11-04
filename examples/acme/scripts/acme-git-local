@@ -235,9 +235,11 @@ def push_branch(request):
     if not remote or remote.startswith('-'):
         raise ValueError('stack_remote is missing from branch configuration')
     git('remote', 'get-url', remote)
-    parent_oid = text('rev-parse', '--verify', f'refs/heads/{parent}^{{commit}}')
-    base_oid = text('rev-parse', '--verify', f'refs/heads/{base}^{{commit}}')
     local_oid = text('rev-parse', 'HEAD')
+    parent_oid = run('git', '--no-pager', 'merge-base', local_oid, f'refs/heads/{parent}', ok=(0, 1)).decode().strip()
+    base_oid = run('git', '--no-pager', 'merge-base', local_oid, f'refs/heads/{base}', ok=(0, 1)).decode().strip()
+    if not parent_oid or not base_oid:
+        raise ValueError('published branch has no common ancestor with its parent or base branch')
     result = subprocess.run(['git', 'push', '--set-upstream', remote, f'{name}:{name}'], env=ENV, capture_output=True)
     if result.returncode:
         raise ValueError(result.stderr.decode(errors='replace').strip() or 'non-fast-forward push failed')

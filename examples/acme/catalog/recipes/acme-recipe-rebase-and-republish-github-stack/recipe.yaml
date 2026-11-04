@@ -1,0 +1,13 @@
+version: "1.0"
+name: acme-recipe-rebase-and-republish-github-stack
+inputs:
+  command_executor: { default: "current", description: "AI che esegue il comando; current mantiene l'AI che ha avviato la recipe." }
+  issue: { required: true, description: "Numero della issue proprietaria dello stack." }
+  publication_authorized: { required: true, description: "false simula; solo true autorizza il push atomico e la registrazione 04r." }
+steps:
+  - id: rebase_and_republish
+    uses: acme-cmd-rebase-and-republish-github-stack
+    executor: claude
+    with: { issue: "${{ inputs.issue }}", publication_authorized: "${{ inputs.publication_authorized }}" }
+outputs:
+  result: { value: "${{ steps.rebase_and_republish.output }}" }

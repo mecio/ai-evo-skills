@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,7 @@ def _sessions(workspace: Path, issue: int, worklog_session: str = "") -> list[tu
 
 def published_layers(workspace: Path, issue: int, worklog_session: str = "") -> list[dict[str, str]]:
     """Return the latest successful publication checkpoint for each branch in the latest attempt."""
-    layers: dict[str, dict[str, str]] = {}
+    candidates: dict[str, list[tuple[Path, dict[str, str], bool]]] = {}
     for _, directory, session in sorted(_sessions(workspace, issue, worklog_session), key=lambda item: str(item[1])):
         entries = session.get("entries")
         if not isinstance(entries, list):
@@ -80,12 +81,42 @@ def published_layers(workspace: Path, issue: int, worklog_session: str = "") -> 
             # branch was published.  Older worklogs intentionally remain
             # recoverable without it.
             optional = ("base_oid", "parent_oid")
-            layers[output["branch"]] = {
+            layer = {
                 key: output[key] for key in (*required, *optional)
                 if isinstance(output.get(key), str) and output[key]
             }
-            layers[output["branch"]]["session_name"] = session["session_name"]
-    return list(layers.values())
+            layer["session_name"] = session["session_name"]
+            candidates.setdefault(output["branch"], []).append(
+                (directory, layer, output.get("republished_after_rebase") is True)
+            )
+
+    def is_ancestor(older: str, newer: str) -> bool:
+        return subprocess.run(
+            ["git", "-C", str(workspace), "merge-base", "--is-ancestor", older, newer],
+            capture_output=True, text=True, check=False,
+        ).returncode == 0
+
+    def fallback_key(item: tuple[Path, dict[str, str], bool]) -> tuple[int, str]:
+        name = item[0].name
+        return (1 if name.startswith("04-correction-") else 0, str(item[0]))
+
+    layers: list[dict[str, str]] = []
+    for publications in candidates.values():
+        republished_all = [item for item in publications if item[2]]
+        latest_republished = max(republished_all, key=lambda item: str(item[0]), default=None)
+        eligible = publications
+        if latest_republished:
+            baseline = latest_republished[1]["remote_oid"]
+            eligible = [item for item in publications
+                        if item == latest_republished or is_ancestor(baseline, item[1]["remote_oid"])]
+        maximal = [item for item in eligible if not any(
+            item[1]["remote_oid"] != other[1]["remote_oid"]
+            and is_ancestor(item[1]["remote_oid"], other[1]["remote_oid"])
+            for other in eligible
+        )]
+        chosen = max(maximal or ([latest_republished] if latest_republished else eligible), key=fallback_key)
+        layers.append(chosen[1])
+    return layers
 
 
 def registered_branch(workspace: Path, issue: int, worklog_session: str = "") -> str | None:

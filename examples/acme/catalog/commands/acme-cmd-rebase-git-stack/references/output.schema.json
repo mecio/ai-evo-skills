@@ -1,0 +1,529 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "oneOf": [
+    {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "issue",
+        "current_session",
+        "recommended_recipe",
+        "worklog_session_name",
+        "resolved_inputs",
+        "missing_inputs",
+        "suggested_invocation",
+        "reason"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "input-required",
+            "branch-recovery-required",
+            "stack-rebase-required",
+            "stack-republish-required",
+            "manual-assessment-required",
+            "workflow-completed"
+          ]
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "current_session": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "recommended_recipe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worklog_session_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resolved_inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "missing_inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "suggested_invocation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recommended_recipe": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklog_session_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "missing_inputs": {
+                "maxItems": 0
+              },
+              "suggested_invocation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "input-required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recommended_recipe": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklog_session_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "missing_inputs": {
+                "minItems": 1
+              },
+              "suggested_invocation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "branch-recovery-required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recommended_recipe": {
+                "const": "acme-recipe-resume-github-issue-workflow"
+              },
+              "worklog_session_name": {
+                "type": "null"
+              },
+              "missing_inputs": {
+                "maxItems": 0
+              },
+              "suggested_invocation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "stack-rebase-required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "worklog_session_name": {
+                "type": "null"
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "resolved_inputs": {
+                    "required": [
+                      "trunk"
+                    ],
+                    "not": {
+                      "required": [
+                        "parent_branch"
+                      ]
+                    }
+                  },
+                  "recommended_recipe": {
+                    "const": "acme-recipe-rebase-and-republish-github-stack"
+                  },
+                  "missing_inputs": {
+                    "const": [
+                      "publication_authorized"
+                    ]
+                  },
+                  "suggested_invocation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "resolved_inputs": {
+                    "required": [
+                      "parent_branch"
+                    ],
+                    "not": {
+                      "required": [
+                        "trunk"
+                      ]
+                    }
+                  },
+                  "recommended_recipe": {
+                    "type": "null"
+                  },
+                  "missing_inputs": {
+                    "maxItems": 0
+                  },
+                  "suggested_invocation": {
+                    "type": "null"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "stack-republish-required"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recommended_recipe": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worklog_session_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "missing_inputs": {
+                "minItems": 1
+              },
+              "suggested_invocation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "manual-assessment-required",
+                  "workflow-completed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recommended_recipe": {
+                "type": "null"
+              },
+              "worklog_session_name": {
+                "type": "null"
+              },
+              "suggested_invocation": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "issue",
+        "trunk",
+        "layers",
+        "warnings",
+        "reason"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "const": "stack-rebase-simulated"
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "trunk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "branch",
+            "old_oid",
+            "new_oid",
+            "fast_forward"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string",
+              "minLength": 1
+            },
+            "old_oid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            "new_oid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            "fast_forward": {
+              "type": "boolean"
+            }
+          }
+        },
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "branch",
+              "old_oid",
+              "new_oid",
+              "old_base",
+              "new_base",
+              "patch_ids"
+            ],
+            "properties": {
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "old_oid": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "new_oid": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "old_base": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "new_base": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "patch_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$"
+                }
+              }
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "issue",
+        "layer",
+        "old_base",
+        "new_base",
+        "files",
+        "reason",
+        "warnings"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "const": "stack-rebase-conflict"
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "old_base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "new_base": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "issue",
+        "code",
+        "reason",
+        "warnings",
+        "details"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "const": "stack-rebase-blocked"
+        },
+        "issue": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "code": {
+          "enum": [
+            "unsupported-rebase-case",
+            "fetch-failed",
+            "dirty-worktree",
+            "local-remote-divergence",
+            "trunk-not-fast-forward",
+            "non-linear-stack",
+            "rebase-failed",
+            "patch-id-mismatch",
+            "invalid-commit-title",
+            "local-state-changed",
+            "remote-ref-changed",
+            "atomic-push-unsupported",
+            "push-rejected",
+            "post-push-verification-failed",
+            "post-push-local-alignment-failed",
+            "temporary-worktree-cleanup-failed"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    }
+  ]
+}

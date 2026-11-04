@@ -91,7 +91,10 @@ def advanced_trunk_base(trunk_ref: str, layer_ref: str, layer: dict[str, str]) -
     if total != exclusive:
         fail(f"published stack is not linear: {layer['parent_branch']} is not an ancestor of {layer['branch']}")
     for checkpoint in (layer.get("base_oid", ""), layer.get("parent_oid", "")):
-        if checkpoint and not ancestor(checkpoint, base):
+        checkpoint_is_old_base = checkpoint and ancestor(checkpoint, base)
+        checkpoint_is_advanced_trunk = (checkpoint and ancestor(base, checkpoint)
+                                        and ancestor(checkpoint, trunk_ref))
+        if checkpoint and not checkpoint_is_old_base and not checkpoint_is_advanced_trunk:
             fail(f"published stack is not linear: {layer['parent_branch']} is not an ancestor of {layer['branch']}")
     return base
 

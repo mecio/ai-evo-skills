@@ -22,11 +22,14 @@ execution-policy:
   network: disabled
 inputs:
   issue_analysis: { required: true, description: "Analisi tecnica ready della issue principale." }
+  allowed_modes: { default: '["single","epic","stacked"]', description: "Array JSON dei soli modi ammessi dal coordinatore." }
 ```
 
 ## Procedure
 
-Ricevi l’analisi tecnica pronta della issue. Valuta coesione, dipendenze, confini di modifica, verificabilità e
+Ricevi l’analisi tecnica pronta della issue. Interpreta `allowed_modes` come array JSON non vuoto e limita la
+decisione ai modi dichiarati; se il modo necessario è escluso, fermati senza degradare artificialmente il piano.
+Valuta coesione, dipendenze, confini di modifica, verificabilità e
 valore di consegna. Se il lavoro è unitario restituisci `mode: single`. Suggerisci `stacked` quando i lavori sono
 sequenziali sullo stesso componente e non hanno valore di consegna autonomo: `items` contiene almeno due layer
 `L0`, `L1`, … con obiettivo, perimetro, criteri e test previsti nel `body`, dipendenze dai layer precedenti e,
@@ -40,7 +43,7 @@ Piano JSON approvato con mode single oppure epic e sub-issue ordinate. Restituir
 
 ## Constraints
 
-Non creare issue né applicare label durante la progettazione.
+Non creare issue né applicare label durante la progettazione. Non restituire un modo escluso da `allowed_modes`.
 
 Per leggere file locali usare uno strumento di sola lettura, preferibilmente il reader nativo dell'executor.
 Non usare opzioni di modifica in-place, inclusi `sed -i`, `perl -i` ed equivalenti: anche in una fase di

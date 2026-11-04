@@ -23,7 +23,8 @@ ripubblicazione tramite la recipe di ripresa prima di rieseguire la review.
 
 Un checkpoint `verify_review` non conclusivo resta immutabile; al rilancio il report apre
 `05-review-attempt-02` e collega la review precedente come evidenza, senza sovrascrivere l'artefatto della prima
-sessione.
+sessione. Quando `previous_review` deriva da una correzione successiva alla 05, la nuova review verifica
+esplicitamente la chiusura di ciascun finding richiamato oltre al resto del branch.
 
 Pianificare con `.ai-evo/bin/ai-evo-skills recipe plan acme-recipe-05-review-github-issue --adapter <adapter-corrente>` e gli input ricevuti. Seguire il protocollo di `.ai-evo/docs/recipe-runtime.md`: avanzare con `recipe advance`, eseguire soltanto lo step risolto e conservare integralmente ogni risultato. Fermarsi al primo errore; al completamento restituire l’output invariato.
 

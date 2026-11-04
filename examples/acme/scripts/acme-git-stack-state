@@ -21,6 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-base", default="")
     parser.add_argument("--expected-top", default="")
+    parser.add_argument("--expected-branch", default="")
+    parser.add_argument("--expected-current", default="")
     parser.add_argument("--expected-parent", default="")
     parser.add_argument("--expected-sequence", type=int)
     parser.add_argument("--require-clean", action="store_true")
@@ -78,32 +80,37 @@ def main() -> int:
         errors.append(f"expected base {args.expected_base}, found {trunk}")
     if args.expected_top and top != args.expected_top:
         errors.append(f"expected top {args.expected_top}, found {top}")
+    expected_name = args.expected_branch or args.expected_top
     expected_entry = None
-    if args.expected_top:
-        expected_entry = next((item for item in branches if item["name"] == args.expected_top), None)
+    if expected_name:
+        expected_entry = next((item for item in branches if item["name"] == expected_name), None)
+        if expected_entry is None:
+            errors.append(f"expected branch {expected_name} is not in the active stack")
+    if args.expected_current and current != args.expected_current:
+        errors.append(f"expected current branch {args.expected_current}, found {current}")
     if args.expected_parent:
         if expected_entry is None:
-            errors.append("cannot verify expected parent without a matching expected top")
+            errors.append("cannot verify expected parent without a matching expected branch")
         elif expected_entry["parent"] != args.expected_parent:
             errors.append(
-                f"expected parent {args.expected_parent} for {args.expected_top}, found {expected_entry['parent']}"
+                f"expected parent {args.expected_parent} for {expected_name}, found {expected_entry['parent']}"
             )
     if args.expected_sequence is not None:
         if args.expected_sequence < 0:
             errors.append("expected sequence must be zero or greater")
         elif expected_entry is None:
-            errors.append("cannot verify expected sequence without a matching expected top")
+            errors.append("cannot verify expected sequence without a matching expected branch")
         elif branches.index(expected_entry) != args.expected_sequence:
             errors.append(
-                f"expected sequence {args.expected_sequence} for {args.expected_top}, "
+                f"expected sequence {args.expected_sequence} for {expected_name}, "
                 f"found {branches.index(expected_entry)}"
             )
     if args.require_single_commit:
         if expected_entry is None:
-            errors.append("cannot require a single commit without a matching expected top")
+            errors.append("cannot require a single commit without a matching expected branch")
         elif expected_entry.get("commits_since_parent") != 1:
             errors.append(
-                f"expected one commit for {args.expected_top}, "
+                f"expected one commit for {expected_name}, "
                 f"found {expected_entry.get('commits_since_parent')}"
             )
     if args.require_current_top and current != top:

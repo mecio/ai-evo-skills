@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "description", "start", "target", "effects", "remote_authorization", "recipes"],
+  "properties": {
+    "version": {"const": "1.0"},
+    "name": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "description": {"type": "string", "minLength": 1},
+    "start": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_recipe", "workspace_mode"],
+      "properties": {
+        "requested_recipe": {"type": "string", "pattern": "^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "workspace_mode": {"enum": ["current", "isolated"]}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "require"],
+      "properties": {
+        "outcome": {"type": "string", "minLength": 1},
+        "require": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_write", "local_git_commit", "remote_write"],
+      "properties": {
+        "workspace_write": {"enum": ["allow", "deny"]},
+        "local_git_commit": {"enum": ["allow", "deny"]},
+        "remote_write": {"enum": ["allow", "deny"]}
+      }
+    },
+    "remote_authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "inputs"],
+      "properties": {
+        "mode": {"enum": ["disabled", "explicit-profile-selection"]},
+        "inputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["publication_authorized", "submit_authorized"]}
+        }
+      }
+    },
+    "recipes": {
+      "type": "object",
+      "required": ["default"],
+      "additionalProperties": {"$ref": "#/$defs/recipePolicy"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"effects": {"properties": {"remote_write": {"const": "allow"}}}}},
+      "then": {"properties": {"remote_authorization": {"properties": {
+        "mode": {"const": "explicit-profile-selection"},
+        "inputs": {"minItems": 1}
+      }}}}
+    },
+    {
+      "if": {"properties": {"effects": {"properties": {"remote_write": {"const": "deny"}}}}},
+      "then": {"properties": {"remote_authorization": {"properties": {
+        "mode": {"const": "disabled"},
+        "inputs": {"maxItems": 0}
+      }}}}
+    }
+  ],
+  "$defs": {
+    "recipePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {"enum": ["execute-recommended-recipe", "substitute-recipe", "finalize", "handoff", "stop"]},
+        "recipe": {"type": "string", "pattern": "^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "reason": {"type": "string", "minLength": 1},
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "result_handling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evaluator", "checkpoint_step", "accepted_when", "on_actionable_findings", "on_ambiguous_result"],
+          "properties": {
+            "evaluator": {"const": "ai"},
+            "checkpoint_step": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "accepted_when": {"const": "no-actionable-findings"},
+            "on_actionable_findings": {"const": "request-correction"},
+            "on_ambiguous_result": {"const": "handoff"}
+          }
+        },
+        "outcomes": {
+          "type": "object",
+          "additionalProperties": {"enum": ["reread-report", "finalize", "diagnose-and-replan", "evaluate-review", "request-input", "stop-and-preserve-state", "handoff"]}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "substitute-recipe"}}},
+          "then": {"required": ["recipe"]}
+        }
+      ]
+    }
+  }
+}

@@ -6,17 +6,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+from acme_worklog_paths import session_path_parts
 from lib.acme_script_common import fail, git, git_text, load_simple_yaml, write_json
 from lib.acme_worklog_recovery import order_layers, published_layers
 
 
 ROOT = Path(__file__).resolve().parent.parent
-BRANCH_CONFIG = ROOT / "skills/config/acme-git-branches.yaml"
+BRANCH_CONFIG = (
+    ROOT / "skills/config/acme-git-branches.yaml"
+    if (ROOT / "skills/config/acme-git-branches.yaml").is_file()
+    else ROOT / "config/acme-git-branches.yaml"
+)
 LOGGER = Path(__file__).with_name("acme-operation-output-worklog")
 ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
 
@@ -65,13 +71,25 @@ def parse_request(raw: str) -> int:
     return issue
 
 
-def session_name(issue: int, layer: dict[str, str]) -> str:
+def session_name(root: Path, issue: int, layer: dict[str, str]) -> str:
     source = layer.get("session_name", "")
     if "/layers/" in source:
         prefix = source.rsplit("/", 1)[0]
     else:
         prefix = f"issue-{issue}/attempt-01"
-    return f"{prefix}/04r-republish-attempt-01"
+    try:
+        prefix = "/".join(session_path_parts(prefix))
+    except ValueError as exc:
+        fail(f"invalid publication session path: {exc}")
+    directory = root / ".ai-evo-work" / prefix
+    attempts: set[int] = set()
+    if directory.is_dir():
+        for candidate in directory.iterdir():
+            match = re.fullmatch(r"04r-republish-attempt-([0-9]+)", candidate.name)
+            if match:
+                attempts.add(int(match.group(1)))
+    attempt = next(number for number in range(1, len(attempts) + 2) if number not in attempts)
+    return f"{prefix}/04r-republish-attempt-{attempt:02d}"
 
 
 def record(session: str, output: dict[str, object]) -> None:
@@ -83,7 +101,7 @@ def record(session: str, output: dict[str, object]) -> None:
         output_path.write_text(payload, encoding="utf-8")
         error_path.write_text("null", encoding="utf-8")
         run(str(LOGGER), "record", "--session-name", session,
-            "--recipe-name", "acme-recipe-republish-rebased-github-stack",
+            "--recipe-name", "acme-recipe-rebase-and-republish-github-stack",
             "--session-input", str(input_path), "--step-name", "publish_branch",
             "--source-name", "acme-cmd-republish-rebased-git-stack", "--outcome", "succeeded",
             "--output", str(output_path), "--expected-output-sha256", hashlib.sha256(payload.encode()).hexdigest(),
@@ -138,7 +156,7 @@ def main() -> int:
         new_tip = git_text("rev-parse", branch)
         if patch_ids(old_base, old_tip) != patch_ids(new_parent, new_tip):
             fail(f"rebased commits are not patch-equivalent for {branch}")
-        prepared.append((session_name(issue, layer), {
+        prepared.append((session_name(root, issue, layer), {
             "status": "published", "issue": issue, "branch": branch, "parent_branch": parent,
             "remote": remote, "remote_oid": new_tip, "local_oid": new_tip,
             "base_oid": git_text("merge-base", trunk, branch) if index == 0 else git_text("rev-parse", new_parent),

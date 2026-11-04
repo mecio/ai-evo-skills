@@ -1,0 +1,113 @@
+version: "1.0"
+name: supervised-draft-prs
+description: Porta una issue fino alla pubblicazione dei branch e alla creazione delle stacked PR in draft.
+
+start:
+  requested_recipe: acme-recipe-02-analyze-github-issue-code
+  workspace_mode: current
+
+target:
+  outcome: completed-draft-prs
+  require:
+    - implementation-checkpoint
+    - review-checkpoint
+    - local-commit
+    - clean-worktree
+    - stack-published
+    - draft-prs
+
+effects:
+  workspace_write: allow
+  local_git_commit: allow
+  remote_write: allow
+
+remote_authorization:
+  mode: explicit-profile-selection
+  inputs:
+    - publication_authorized
+    - submit_authorized
+
+recipes:
+  default:
+    action: handoff
+    reason: La recipe non è inclusa nell'elenco consentito dal profilo draft PR.
+
+  acme-recipe-01-refine-github-issue:
+    action: execute-recommended-recipe
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-02-analyze-github-issue-code:
+    action: execute-recommended-recipe
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-03-breakdown-github-issue:
+    action: substitute-recipe
+    recipe: acme-recipe-03-breakdown-github-issue-local
+    inputs:
+      allowed_modes: '["single","stacked"]'
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: handoff
+
+  acme-recipe-04-implement-github-issue:
+    action: execute-recommended-recipe
+    inputs:
+      publish_branch: "true"
+    max_attempts: 2
+    outcomes:
+      succeeded: reread-report
+      failed: diagnose-and-replan
+      input-required: request-input
+
+  acme-recipe-04-implement-github-issue-correction:
+    action: execute-recommended-recipe
+    inputs:
+      publish_branch: "true"
+    max_attempts: 2
+    outcomes:
+      succeeded: reread-report
+      failed: diagnose-and-replan
+      input-required: request-input
+
+  acme-recipe-05-review-github-issue:
+    action: execute-recommended-recipe
+    max_attempts: 3
+    result_handling:
+      evaluator: ai
+      checkpoint_step: verify_review
+      accepted_when: no-actionable-findings
+      on_actionable_findings: request-correction
+      on_ambiguous_result: handoff
+    outcomes:
+      succeeded: evaluate-review
+      failed: stop-and-preserve-state
+      input-required: request-input
+
+  acme-recipe-07-push-github-stack:
+    action: execute-recommended-recipe
+    inputs:
+      publication_authorized: "true"
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-08-submit-github-stack:
+    action: execute-recommended-recipe
+    inputs:
+      submit_authorized: "true"
+    max_attempts: 1
+    outcomes:
+      succeeded: reread-report
+      failed: stop-and-preserve-state
+
+  acme-recipe-rebase-and-republish-github-stack:
+    action: handoff
+    reason: Il profilo non autorizza force push o riscritture remote dello stack.

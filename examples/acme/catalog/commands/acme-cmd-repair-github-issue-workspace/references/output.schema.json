@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "status",
+    "workspace_mode",
+    "coordinator_root",
+    "working_directory",
+    "issue",
+    "workflow_attempt",
+    "base_branch",
+    "base_oid",
+    "provision"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "const": "ready" },
+    "workspace_mode": { "enum": ["current", "isolated"] },
+    "coordinator_root": { "type": "string", "minLength": 1 },
+    "working_directory": { "type": "string", "minLength": 1 },
+    "issue": { "type": "integer", "minimum": 1 },
+    "workflow_attempt": { "type": "integer", "minimum": 1 },
+    "base_branch": { "type": "string", "minLength": 1 },
+    "base_oid": { "type": "string", "pattern": "^[a-f0-9]{40,64}$" },
+    "provision": { "type": "object", "required": ["linked_resources"] },
+    "repaired_at": { "type": "string", "format": "date-time" },
+    "repair": { "const": "not-required" }
+  }
+}

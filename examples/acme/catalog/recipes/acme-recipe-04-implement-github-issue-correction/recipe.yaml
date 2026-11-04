@@ -10,10 +10,11 @@ inputs:
   parent_branch: { required: true, description: "Parent registrato dalla implementazione." }
   layer: { default: "", description: "JSON opzionale del layer stacked." }
   correction_instructions: { required: true, description: "Correzioni esplicite dello sviluppatore." }
-  implementation_report: { required: true, description: "Output registrato della recipe 04." }
+  implementation_report: { required: true, description: "Report della recipe 04 aggiornato alla storia corrente del branch." }
   developer_instructions: { default: "", description: "Vincoli originali." }
+  publish_branch: { default: "true", description: "true pubblica il branch corretto; false conclude senza effetti remoti." }
   worklog_session_name: { required: true, description: "Percorso canonico della sessione di correzione." }
-  worklog_session_input: { required: true, description: "JSON immutabile con source implementation e correzioni." }
+  worklog_session_input: { required: true, description: "JSON immutabile con implementazione sorgente, eventuale source_review e correzioni." }
 steps:
   - id: correct_implementation
     uses: acme-cmd-implement-github-issue-correction
@@ -26,10 +27,12 @@ steps:
   - id: publish_branch
     uses: acme-cmd-push-git-stacked-branch
     executor: "${{ inputs.command_executor }}"
+    when: { value: "${{ inputs.publish_branch }}", equals: "true" }
     with: { implementation_report: "${{ steps.correct_implementation.output }}" }
   - id: checkpoint_publication
     uses: acme-cmd-save-worklog-output
     executor: claude
+    when: { value: "${{ inputs.publish_branch }}", equals: "true" }
     with: { session_name: "${{ inputs.worklog_session_name }}", recipe_name: acme-recipe-04-implement-github-issue-correction, session_input: "${{ inputs.worklog_session_input }}", step_name: publish_branch, source_name: acme-cmd-push-git-stacked-branch, outcome: succeeded, output: "${{ steps.publish_branch.output }}", expected_output_sha256: "${{ steps.publish_branch.output_sha256 }}", error: "null", complete: "false" }
   - id: save_result
     uses: acme-cmd-save-worklog-output

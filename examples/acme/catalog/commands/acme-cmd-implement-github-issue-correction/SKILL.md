@@ -1,6 +1,6 @@
 ---
 name: acme-cmd-implement-github-issue-correction
-description: Applica correzioni esplicite a un'implementazione GitHub locale già committata e non pubblicata.
+description: Applica correzioni esplicite con commit aggiuntivi a un'implementazione GitHub già committata.
 metadata:
   ai-evo-kind: command
   ai-evo-version: "1.0"

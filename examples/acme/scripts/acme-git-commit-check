@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 from pathlib import Path
 
 from lib.acme_script_common import write_json
@@ -20,6 +21,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--message-file", type=Path, required=True)
     parser.add_argument("--issue-number", required=True)
     return parser.parse_args()
+
+
+def comment_char() -> str | None:
+    """Return the fixed comment character Git strips from commit messages."""
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "core.commentChar"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value not in ("", "#", "auto") else None
 
 
 def validate_message(message: str, issue_number: str) -> dict:
@@ -39,6 +55,9 @@ def validate_message(message: str, issue_number: str) -> dict:
         errors.append("message must contain a blank line followed by a non-empty body")
     if FORBIDDEN.search(message):
         errors.append("message contains a forbidden attribution or trailer")
+    char = comment_char()
+    if char and any(line.startswith(char) for line in lines):
+        errors.append(f"message lines must not start with the Git comment character {char!r}")
     return {
         "schema_version": 1,
         "valid": not errors,

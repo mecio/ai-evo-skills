@@ -1,0 +1,40 @@
+version: "1.0"
+name: acme-github-issue-workflow-supervisor
+default_profile: supervised-local
+
+runtime:
+  mode: run-to-pause
+  max_transitions: 20
+  reread_report_after_action: true
+  rerun_report_before_effects: true
+  stop_on_unknown_status: true
+
+effects:
+  remote_write: profile-controlled
+  infer_authorization: deny
+
+statuses:
+  ready: apply-recipe-policy
+  input-required: request-input
+  branch-recovery-required: apply-recipe-policy
+  stack-rebase-required: handoff
+  stack-republish-required: handoff
+  manual-assessment-required: handoff
+  workflow-completed: finalize
+
+sensitive_inputs:
+  publication_authorized:
+    source: human-only
+    default: false
+    never_infer: true
+    invalidate_when_state_changes: true
+  submit_authorized:
+    source: human-only
+    default: false
+    never_infer: true
+    invalidate_when_state_changes: true
+
+handoff:
+  require_issue_assignment: true
+  preserve_report: true
+  preserve_worklog: true

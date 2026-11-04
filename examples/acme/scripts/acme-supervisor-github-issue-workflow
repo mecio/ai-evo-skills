@@ -1,0 +1,827 @@
+#!/usr/bin/env python3
+"""Coordinate durable policy decisions and summaries for an issue supervisor."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, NoReturn
+
+import yaml
+
+from lib.acme_worklog_root import WorklogRootError, locked_worklog_root
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SUPERVISOR_ROOT = (
+    ROOT / "skills" / "supervisors"
+    if (ROOT / "skills" / "supervisors").is_dir()
+    else ROOT / "supervisors"
+)
+PROFILE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
+RECIPE_RE = re.compile(r"^[a-z]{3,6}-recipe-[a-z0-9]+(?:-[a-z0-9]+)*$")
+RUN_RE = re.compile(r"^run-([0-9]{3})$")
+REMOTE_SOURCES = {
+    "acme-cmd-push-git-stacked-branch",
+    "acme-cmd-push-git-stacked-stack",
+    "acme-cmd-submit-github-stack-prs",
+    "acme-cmd-republish-rebased-git-stack",
+    "acme-cmd-rebase-and-republish-github-stack",
+}
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def timestamp(value: datetime | None = None) -> str:
+    return (value or utc_now()).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def render_json(value: Any) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def atomic_write(path: Path, content: bytes) -> None:
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def read_json(path: Path, label: str) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read {label}: {exc}")
+
+
+def read_yaml(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        fail(f"cannot read {label}: {exc}")
+    if not isinstance(value, dict):
+        fail(f"{label} must contain an object")
+    return value
+
+
+def parse_issue(value: str) -> int:
+    match = re.fullmatch(r"#?([1-9][0-9]*)", value.strip())
+    if not match:
+        fail("issue must be a positive number, with an optional # prefix")
+    return int(match.group(1))
+
+
+def find_workspace(start: Path) -> Path:
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        marker = candidate / ".ai-evo"
+        if marker.is_dir() or marker.is_symlink():
+            return candidate
+    fail("cannot find a .ai-evo directory or symlink in the current path or its parents")
+
+
+def worklog_root(workspace: Path) -> Path:
+    root = workspace / ".ai-evo-work"
+    if root.is_symlink():
+        try:
+            root = root.resolve(strict=True)
+        except OSError as exc:
+            fail(f"cannot resolve worklog root: {exc}")
+    root.mkdir(mode=0o755, exist_ok=True)
+    if not root.is_dir():
+        fail("worklog root is not a directory")
+    return root
+
+
+def supervisor_directory(workspace: Path, issue: int) -> Path:
+    root = worklog_root(workspace)
+    archived = root / "archive" / f"issue-{issue}"
+    if archived.exists() or archived.is_symlink():
+        fail(f"issue {issue} worklog is archived")
+    issue_root = root / f"issue-{issue}"
+    if issue_root.is_symlink():
+        fail("issue worklog directory must not be a symbolic link")
+    issue_root.mkdir(mode=0o755, exist_ok=True)
+    directory = issue_root / "supervisor"
+    if directory.is_symlink():
+        fail("supervisor directory must not be a symbolic link")
+    directory.mkdir(mode=0o755, exist_ok=True)
+    return directory
+
+
+def load_policy(profile_name: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not PROFILE_RE.fullmatch(profile_name):
+        fail("profile name is invalid")
+    config = read_yaml(SUPERVISOR_ROOT / "config.yaml", "supervisor config")
+    profile = read_yaml(SUPERVISOR_ROOT / "profiles" / f"{profile_name}.yaml", "supervisor profile")
+    if config.get("version") != "1.0" or profile.get("version") != "1.0":
+        fail("unsupported supervisor configuration version")
+    if profile.get("name") != profile_name:
+        fail("profile name does not match its filename")
+    runtime = config.get("runtime")
+    effects = config.get("effects")
+    profile_effects = profile.get("effects")
+    if not isinstance(runtime, dict) or runtime.get("mode") != "run-to-pause":
+        fail("supervisor runtime must use run-to-pause mode")
+    if not isinstance(effects, dict) or effects.get("remote_write") != "profile-controlled":
+        fail("supervisor config must delegate remote writes to the selected profile")
+    if not isinstance(profile_effects, dict) or profile_effects.get("remote_write") not in {"allow", "deny"}:
+        fail("supervisor profile must declare its remote-write policy")
+    recipes = profile.get("recipes")
+    if not isinstance(recipes, dict) or not isinstance(recipes.get("default"), dict):
+        fail("supervisor profile must define a default recipe policy")
+    sensitive = config.get("sensitive_inputs")
+    if not isinstance(sensitive, dict):
+        fail("supervisor config must define sensitive inputs")
+    remote_authorization = profile.get("remote_authorization")
+    if not isinstance(remote_authorization, dict):
+        fail("supervisor profile must define remote authorization")
+    authorization_mode = remote_authorization.get("mode")
+    authorized_inputs = remote_authorization.get("inputs")
+    if not isinstance(authorized_inputs, list) or not all(isinstance(item, str) for item in authorized_inputs):
+        fail("supervisor profile remote authorization inputs are invalid")
+    if profile_effects["remote_write"] == "deny" and (authorization_mode != "disabled" or authorized_inputs):
+        fail("a local-only profile cannot authorize remote inputs")
+    if (profile_effects["remote_write"] == "allow"
+            and (authorization_mode != "explicit-profile-selection" or not authorized_inputs)):
+        fail("a remote-write profile requires explicit profile-selection authorization")
+    for recipe, policy in recipes.items():
+        if recipe != "default" and not RECIPE_RE.fullmatch(recipe):
+            fail(f"invalid recipe policy name: {recipe}")
+        if not isinstance(policy, dict) or not isinstance(policy.get("action"), str):
+            fail(f"invalid policy for recipe: {recipe}")
+        overrides = policy.get("inputs", {})
+        if not isinstance(overrides, dict) or not all(isinstance(key, str) and isinstance(value, str)
+                                                      for key, value in overrides.items()):
+            fail(f"invalid input overrides for recipe: {recipe}")
+        for name in sensitive:
+            if (overrides.get(name) == "true"
+                    and (profile_effects["remote_write"] != "allow" or name not in authorized_inputs)):
+                fail(f"profile cannot authorize sensitive input {name}")
+    return config, profile
+
+
+def policy_fingerprint(config: dict[str, Any], profile: dict[str, Any]) -> str:
+    payload = json.dumps({"config": config, "profile": profile}, ensure_ascii=False,
+                         sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def lock_directory(directory: Path) -> int:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    return descriptor
+
+
+def next_run_id(directory: Path) -> str:
+    numbers = [int(match.group(1)) for path in (directory / "runs").glob("run-*")
+               if (match := RUN_RE.fullmatch(path.name))]
+    return f"run-{max(numbers, default=0) + 1:03d}"
+
+
+def validate_owner(owner: str) -> None:
+    if not OWNER_RE.fullmatch(owner):
+        fail("owner must be a portable identifier of at most 128 characters")
+
+
+def assignment_path(directory: Path, assignment_id: str) -> Path:
+    if not RUN_RE.fullmatch(assignment_id):
+        fail("assignment id is invalid")
+    return directory / "runs" / assignment_id / "assignment.json"
+
+
+def write_assignment_state(directory: Path, assignment: dict[str, Any]) -> None:
+    assignment_id = str(assignment["assignment_id"])
+    updated_at = assignment.get("completed_at", assignment.get(
+        "interrupted_at", assignment.get("released_at", assignment["assigned_at"])))
+    atomic_write(assignment_path(directory, assignment_id), render_json(assignment))
+    run_path = directory / "runs" / assignment_id / "run.json"
+    if run_path.is_file():
+        run = read_json(run_path, "supervisor run")
+        if not isinstance(run, dict) or run.get("assignment_id") != assignment_id:
+            fail("supervisor run is invalid")
+        run["status"] = assignment["status"]
+        run["updated_at"] = updated_at
+        atomic_write(run_path, render_json(run))
+    atomic_write(directory / "state.json", render_json({
+        "schema_version": 1,
+        "issue": assignment["issue"],
+        "current_assignment": assignment_id,
+        "status": assignment["status"],
+        "supervisor": assignment["supervisor"],
+        "profile": assignment["profile"],
+        "updated_at": updated_at,
+    }))
+
+
+def claim(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    validate_owner(args.owner)
+    config, profile = load_policy(args.profile)
+    directory = supervisor_directory(find_workspace(Path.cwd()), issue)
+    descriptor = lock_directory(directory)
+    try:
+        state_path = directory / "state.json"
+        previous_assignment: str | None = None
+        if state_path.is_file():
+            state = read_json(state_path, "supervisor state")
+            if not isinstance(state, dict) or state.get("schema_version") != 1 or state.get("issue") != issue:
+                fail("supervisor state is invalid")
+            previous = state.get("current_assignment")
+            previous_assignment = previous if isinstance(previous, str) else None
+            if state.get("status") == "active":
+                fail(f"issue {issue} is already supervised by {state.get('supervisor')} "
+                     f"in assignment {previous_assignment}")
+            if state.get("status") not in {"released", "completed", "interrupted"}:
+                fail("supervisor state has an invalid terminal status")
+            if previous_assignment is None or not assignment_path(directory, previous_assignment).is_file():
+                fail("supervisor state does not reference a valid previous assignment")
+        assignment_id = next_run_id(directory)
+        assigned_at = timestamp()
+        assignment = {
+            "schema_version": 1,
+            "issue": issue,
+            "profile": args.profile,
+            "supervisor": args.owner,
+            "assignment_id": assignment_id,
+            "previous_assignment": previous_assignment,
+            "status": "active",
+            "assigned_at": assigned_at,
+            "policy_fingerprint": policy_fingerprint(config, profile),
+        }
+        run = directory / "runs" / assignment_id
+        run.mkdir(mode=0o755, parents=True, exist_ok=False)
+        atomic_write(run / "run.json", render_json({
+            "schema_version": 1, "assignment_id": assignment_id, "events": 0,
+            "status": "active", "created_at": assigned_at,
+        }))
+        write_assignment_state(directory, assignment)
+        return assignment
+    finally:
+        os.close(descriptor)
+
+
+def active_assignment(directory: Path, issue: int, owner: str, assignment_id: str) -> dict[str, Any]:
+    state_path = directory / "state.json"
+    if not state_path.is_file():
+        fail(f"issue {issue} has no supervisor assignment")
+    state = read_json(state_path, "supervisor state")
+    if (not isinstance(state, dict) or state.get("schema_version") != 1 or state.get("issue") != issue
+            or state.get("status") != "active" or state.get("current_assignment") != assignment_id):
+        fail("supervisor assignment is not the active assignment for this issue")
+    assignment = read_json(assignment_path(directory, assignment_id), "supervisor assignment")
+    if (not isinstance(assignment, dict) or assignment.get("schema_version") != 1
+            or assignment.get("issue") != issue or assignment.get("assignment_id") != assignment_id
+            or assignment.get("status") != "active" or assignment.get("supervisor") != owner):
+        fail("supervisor assignment is not active for this supervisor")
+    config, profile = load_policy(str(assignment["profile"]))
+    if assignment.get("policy_fingerprint") != policy_fingerprint(config, profile):
+        fail("supervisor policy changed; interrupt the assignment manually before starting a new run")
+    return assignment
+
+
+def release(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    validate_owner(args.owner)
+    directory = supervisor_directory(find_workspace(Path.cwd()), issue)
+    descriptor = lock_directory(directory)
+    try:
+        assignment = active_assignment(directory, issue, args.owner, args.assignment_id)
+        assignment["status"] = "released"
+        assignment["released_at"] = timestamp()
+        assignment["release_reason"] = args.reason
+        write_assignment_state(directory, assignment)
+        return assignment
+    finally:
+        os.close(descriptor)
+
+
+def interrupt(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    validate_owner(args.interrupted_by)
+    directory = supervisor_directory(find_workspace(Path.cwd()), issue)
+    descriptor = lock_directory(directory)
+    try:
+        state = read_json(directory / "state.json", "supervisor state")
+        if (not isinstance(state, dict) or state.get("schema_version") != 1 or state.get("issue") != issue
+                or state.get("status") != "active" or state.get("current_assignment") != args.assignment_id):
+            fail("the requested assignment is not currently active")
+        assignment = read_json(assignment_path(directory, args.assignment_id), "supervisor assignment")
+        if (not isinstance(assignment, dict) or assignment.get("schema_version") != 1
+                or assignment.get("issue") != issue or assignment.get("assignment_id") != args.assignment_id):
+            fail("the requested assignment is invalid")
+        assignment["status"] = "interrupted"
+        assignment["interrupted_at"] = timestamp()
+        assignment["interrupted_by"] = args.interrupted_by
+        assignment["interruption_reason"] = args.reason
+        write_assignment_state(directory, assignment)
+        return assignment
+    finally:
+        os.close(descriptor)
+
+
+def report_from_path(path: str) -> dict[str, Any]:
+    if path == "-":
+        try:
+            value = json.loads(os.sys.stdin.read())
+        except json.JSONDecodeError as exc:
+            fail(f"report is not valid JSON: {exc}")
+    else:
+        value = read_json(Path(path), "workflow report")
+    if not isinstance(value, dict):
+        fail("workflow report must contain an object")
+    required = {"status", "issue", "recommended_recipe", "resolved_inputs", "missing_inputs", "reason"}
+    if not required <= set(value):
+        fail("workflow report is missing required fields")
+    if not isinstance(value["resolved_inputs"], dict) or not isinstance(value["missing_inputs"], list):
+        fail("workflow report inputs are invalid")
+    return value
+
+
+def report_fingerprint(report: dict[str, Any]) -> str:
+    payload = json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def decide(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    config, profile = load_policy(args.profile)
+    report = report_from_path(args.report)
+    if report.get("issue") != issue:
+        fail("workflow report belongs to a different issue")
+    status = report.get("status")
+    recipe = report.get("recommended_recipe")
+    statuses = config.get("statuses", {})
+    known_status = status in statuses
+    recipe_policy = profile["recipes"].get(recipe, profile["recipes"]["default"])
+    action = recipe_policy["action"] if isinstance(recipe, str) else statuses.get(status, "stop")
+    selected_recipe: str | None = recipe if isinstance(recipe, str) else None
+    inputs: dict[str, str] = dict(report["resolved_inputs"])
+    inputs.setdefault("issue", str(issue))
+    reason = str(recipe_policy.get("reason", report["reason"]))
+
+    if not known_status:
+        action = "stop"
+        selected_recipe = None
+        reason = f"Stato non riconosciuto dalla configurazione: {status}."
+    elif action == "execute-recommended-recipe":
+        if not isinstance(recipe, str):
+            action = "stop"
+            reason = "Il report non indica una recipe eseguibile."
+        else:
+            inputs.update(recipe_policy.get("inputs", {}))
+            unresolved = [name for name in report["missing_inputs"] if not inputs.get(name)]
+            if status == "input-required" and unresolved:
+                action = "request-input"
+                selected_recipe = recipe
+            else:
+                action = "execute-recipe"
+    elif action == "substitute-recipe":
+        selected_recipe = recipe_policy.get("recipe")
+        action = "execute-recipe"
+        inputs.update(recipe_policy.get("inputs", {}))
+    elif action not in {"finalize", "handoff", "stop"}:
+        action = {
+            "apply-recipe-policy": "stop",
+            "request-input": "request-input",
+            "workflow-completed": "finalize",
+        }.get(action, action)
+        selected_recipe = None if action in {"finalize", "handoff", "stop"} else selected_recipe
+
+    if action == "request-input":
+        inputs = {name: "" for name in report["missing_inputs"] if not inputs.get(name)}
+    if action == "execute-recipe" and selected_recipe in {
+            "acme-recipe-07-push-github-stack",
+            "acme-recipe-08-submit-github-stack",
+            "acme-recipe-rebase-and-republish-github-stack"}:
+        if profile["effects"]["remote_write"] != "allow":
+            fail("profile attempted to execute a remote-write recipe")
+    for name in config["sensitive_inputs"]:
+        if (inputs.get(name) == "true"
+                and (profile["effects"]["remote_write"] != "allow"
+                     or name not in profile["remote_authorization"]["inputs"])):
+            fail(f"supervisor cannot infer or inject {name}=true")
+    return {
+        "schema_version": 1,
+        "status": "ready",
+        "issue": issue,
+        "profile": args.profile,
+        "workflow_status": status,
+        "action": action,
+        "recipe": selected_recipe,
+        "inputs": inputs,
+        "missing_inputs": list(inputs) if action == "request-input" else [],
+        "max_attempts": recipe_policy.get("max_attempts", 0),
+        "outcomes": recipe_policy.get("outcomes", {}),
+        "result_handling": recipe_policy.get("result_handling"),
+        "report_fingerprint": report_fingerprint(report),
+        "policy_fingerprint": policy_fingerprint(config, profile),
+        "reason": reason,
+    }
+
+
+def record(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    validate_owner(args.owner)
+    event = read_json(Path(args.event), "supervisor event")
+    if not isinstance(event, dict):
+        fail("supervisor event must contain an object")
+    directory = supervisor_directory(find_workspace(Path.cwd()), issue)
+    descriptor = lock_directory(directory)
+    try:
+        assignment = active_assignment(directory, issue, args.owner, args.assignment_id)
+        run_dir = directory / "runs" / str(assignment["assignment_id"])
+        run = read_json(run_dir / "run.json", "supervisor run")
+        sequence = int(run.get("events", 0)) + 1
+        stored = {"schema_version": 1, "sequence": sequence, "recorded_at": timestamp(), "event": event}
+        atomic_write(run_dir / f"{sequence:03d}-event.json", render_json(stored))
+        run["events"] = sequence
+        run["updated_at"] = stored["recorded_at"]
+        atomic_write(run_dir / "run.json", render_json(run))
+        return stored
+    finally:
+        os.close(descriptor)
+
+
+def git(workspace: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(workspace), *arguments], capture_output=True, text=True, check=False)
+
+
+def record_output(session_dir: Path, entry: dict[str, Any]) -> Any:
+    filename = entry.get("file")
+    if not isinstance(filename, str) or Path(filename).name != filename:
+        return None
+    path = session_dir / filename
+    expected_file = entry.get("sha256")
+    if not isinstance(expected_file, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_file):
+        fail(f"worklog record has no valid sha256: {path}")
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        fail(f"cannot read worklog record {path}: {exc}")
+    if hashlib.sha256(content).hexdigest() != expected_file:
+        fail(f"worklog record hash mismatch: {path}")
+    value = read_json(path, f"worklog record {filename}")
+    if not isinstance(value, dict) or value.get("outcome") != "succeeded":
+        return None
+    output = value.get("output")
+    if not isinstance(output, str):
+        return None
+    expected = entry.get("output_sha256")
+    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        fail(f"worklog record has no valid output_sha256: {path}")
+    if hashlib.sha256(output.encode("utf-8")).hexdigest() != expected:
+        fail(f"worklog output hash mismatch: {path}")
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return output
+
+
+def load_attempt_sessions(workspace: Path, issue: int) -> tuple[int, list[tuple[Path, dict[str, Any]]]]:
+    root = worklog_root(workspace) / f"issue-{issue}"
+    attempts: list[tuple[int, Path]] = []
+    for path in root.glob("attempt-*") if root.is_dir() else []:
+        match = re.fullmatch(r"attempt-([0-9]+)", path.name)
+        if match and path.is_dir() and not path.is_symlink():
+            attempts.append((int(match.group(1)), path))
+    if not attempts:
+        fail(f"issue {issue} has no workflow attempt")
+    attempt, attempt_root = max(attempts)
+    sessions: list[tuple[Path, dict[str, Any]]] = []
+    for path in attempt_root.rglob("session.json"):
+        if path.is_symlink() or "supervisor" in path.parts:
+            continue
+        value = read_json(path, f"session {path}")
+        if isinstance(value, dict) and value.get("schema_version") == 1:
+            sessions.append((path.parent, value))
+    sessions.sort(key=lambda item: str(item[1].get("session_name", "")))
+    return attempt, sessions
+
+
+def summary_data(workspace: Path, issue: int, profile_name: str) -> dict[str, Any]:
+    _, profile = load_policy(profile_name)
+    attempt, sessions = load_attempt_sessions(workspace, issue)
+    implementations: list[dict[str, Any]] = []
+    implementation_reports: list[str] = []
+    review_reports: list[str] = []
+    tests: list[str] = []
+    open_decisions: list[str] = []
+    limits: list[str] = []
+    commits: list[dict[str, str]] = []
+    remote_effects: list[dict[str, str]] = []
+    pull_requests: list[dict[str, Any]] = []
+    review_checkpoints = 0
+    publication_checkpoints = 0
+    draft_pr_checkpoints = 0
+    working_directory: Path | None = None
+    session_rows: list[dict[str, Any]] = []
+
+    for session_dir, session in sessions:
+        entries = session.get("entries") if isinstance(session.get("entries"), list) else []
+        session_rows.append({
+            "session": session.get("session_name"),
+            "recipe": session.get("recipe_name"),
+            "status": session.get("status"),
+            "entries": len(entries),
+        })
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("outcome") != "succeeded":
+                continue
+            source = entry.get("source_name")
+            if source in REMOTE_SOURCES:
+                remote_effects.append({"session": str(session.get("session_name")), "source": str(source)})
+            if (session.get("recipe_name") == "acme-recipe-07-push-github-stack"
+                    and source == "acme-cmd-configure-git-stack-upstreams"):
+                publication_output = record_output(session_dir, entry)
+                if isinstance(publication_output, dict):
+                    publication_checkpoints += 1
+                    remote_effects.append({
+                        "session": str(session.get("session_name")),
+                        "source": "acme-cmd-push-git-stacked-stack",
+                    })
+            if source == "acme-cmd-submit-github-stack-prs":
+                submit_output = record_output(session_dir, entry)
+                submitted = submit_output.get("pull_requests") if isinstance(submit_output, dict) else None
+                if (isinstance(submit_output, dict) and submit_output.get("status") == "submitted"
+                        and isinstance(submitted, list) and submitted
+                        and all(isinstance(item, dict) and item.get("draft") is True
+                                and item.get("verified") is True
+                                and type(item.get("number")) is int
+                                and all(isinstance(item.get(name), str) and item[name]
+                                        for name in ("url", "branch", "base", "title"))
+                                for item in submitted)):
+                    draft_pr_checkpoints += 1
+                    for item in submitted:
+                        pull_requests.append({
+                            "number": item.get("number"),
+                            "url": item.get("url"),
+                            "branch": item.get("branch"),
+                            "base": item.get("base"),
+                            "draft": True,
+                            "title": item.get("title"),
+                        })
+            if entry.get("step_name") == "verify_layer":
+                verification = record_output(session_dir, entry)
+                commit = verification.get("commit") if isinstance(verification, dict) else None
+                if (isinstance(verification, dict) and verification.get("status") == "verified"
+                        and isinstance(commit, dict) and isinstance(commit.get("oid"), str)
+                        and commit["oid"]):
+                    review_checkpoints += 1
+            if source == "acme-cmd-verify-review":
+                review_output = record_output(session_dir, entry)
+                if isinstance(review_output, str):
+                    review_reports.append(review_output)
+                elif isinstance(review_output, dict) and isinstance(review_output.get("report"), str):
+                    review_reports.append(review_output["report"])
+            if source not in {"acme-cmd-implement-github-issue",
+                              "acme-cmd-implement-github-issue-correction"}:
+                continue
+            output = record_output(session_dir, entry)
+            if not isinstance(output, dict):
+                continue
+            implementations.append(output)
+            if isinstance(output.get("report"), str):
+                implementation_reports.append(output["report"])
+            if isinstance(output.get("working_directory"), str):
+                working_directory = Path(output["working_directory"])
+            for commit in output.get("commits", []):
+                if isinstance(commit, dict) and isinstance(commit.get("sha"), str):
+                    commits.append({"sha": commit["sha"], "subject": str(commit.get("subject", ""))})
+            tests.extend(str(item) for item in output.get("tests", []) if isinstance(item, str))
+            open_decisions.extend(str(item) for item in output.get("open_decisions", []) if isinstance(item, str))
+            limits.extend(str(item) for item in output.get("limits", []) if isinstance(item, str))
+
+    target_workspace = working_directory.resolve() if working_directory else workspace
+    top = git(target_workspace, "rev-parse", "--show-toplevel")
+    branch = git(target_workspace, "branch", "--show-current")
+    head = git(target_workspace, "rev-parse", "HEAD")
+    status = git(target_workspace, "status", "--porcelain=v1", "--untracked-files=all")
+    git_valid = top.returncode == branch.returncode == head.returncode == status.returncode == 0
+    clean = git_valid and not status.stdout
+    commit_reachable = False
+    if git_valid and commits:
+        commit_reachable = git(target_workspace, "merge-base", "--is-ancestor", commits[-1]["sha"], "HEAD").returncode == 0
+
+    evidence = {
+        "implementation-checkpoint": bool(implementations),
+        "review-checkpoint": review_checkpoints > 0,
+        "local-commit": bool(commits) and commit_reachable,
+        "clean-worktree": clean,
+        "stack-published": publication_checkpoints > 0,
+        "draft-prs": draft_pr_checkpoints > 0,
+    }
+    required = profile["target"]["require"]
+    missing = [item for item in required if not evidence.get(item, False)]
+    violations = (["remote-write-observed"]
+                  if remote_effects and profile["effects"]["remote_write"] != "allow" else [])
+    if violations:
+        outcome = "policy-violation"
+    elif open_decisions:
+        outcome = "handoff-required"
+    elif missing:
+        outcome = "incomplete"
+    else:
+        outcome = str(profile["target"]["outcome"])
+
+    return {
+        "schema_version": 1,
+        "status": outcome,
+        "issue": issue,
+        "attempt": attempt,
+        "profile": profile_name,
+        "sessions": session_rows,
+        "git": {
+            "working_directory": str(target_workspace),
+            "branch": branch.stdout.strip() if git_valid else None,
+            "head": head.stdout.strip() if git_valid else None,
+            "clean": clean,
+        },
+        "commits": commits,
+        "implementation_reports": implementation_reports,
+        "review_reports": review_reports,
+        "tests": list(dict.fromkeys(tests)),
+        "open_decisions": list(dict.fromkeys(open_decisions)),
+        "limits": list(dict.fromkeys(limits)),
+        "remote_effects": remote_effects,
+        "pull_requests": pull_requests,
+        "evidence": evidence,
+        "missing_requirements": missing,
+        "policy_violations": violations,
+    }
+
+
+def summary_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        f"# Conclusione supervisor issue #{summary['issue']}",
+        "",
+        f"- Esito: `{summary['status']}`",
+        f"- Profilo: `{summary['profile']}`",
+        f"- Attempt: `{summary['attempt']}`",
+        f"- Branch: `{summary['git']['branch'] or 'non disponibile'}`",
+        f"- HEAD: `{summary['git']['head'] or 'non disponibile'}`",
+        f"- Worktree pulita: `{'sì' if summary['git']['clean'] else 'no'}`",
+        f"- Effetti remoti osservati: `{len(summary['remote_effects'])}`",
+        "",
+        "## Commit locali",
+        "",
+    ]
+    lines.extend([f"- `{item['sha']}` {item['subject']}" for item in summary["commits"]] or ["- Nessuno."])
+    if summary["implementation_reports"]:
+        lines.extend(["", "## Lavoro svolto", ""])
+        lines.extend(summary["implementation_reports"])
+    if summary["review_reports"]:
+        lines.extend(["", "## Review", ""])
+        lines.extend(summary["review_reports"])
+    if summary["pull_requests"]:
+        lines.extend(["", "## Pull request draft", ""])
+        lines.extend(
+            f"- [#{item['number']}]({item['url']}) `{item['branch']}` → `{item['base']}` — {item['title']}"
+            for item in summary["pull_requests"]
+        )
+    lines.extend(["", "## Verifiche", ""])
+    lines.extend([f"- {item}" for item in summary["tests"]] or ["- Nessuna evidenza registrata."])
+    if summary["missing_requirements"]:
+        lines.extend(["", "## Requisiti mancanti", ""])
+        lines.extend(f"- `{item}`" for item in summary["missing_requirements"])
+    if summary["open_decisions"]:
+        lines.extend(["", "## Decisioni aperte", ""])
+        lines.extend(f"- {item}" for item in summary["open_decisions"])
+    if summary["limits"]:
+        lines.extend(["", "## Limiti", ""])
+        lines.extend(f"- {item}" for item in summary["limits"])
+    return "\n".join(lines) + "\n"
+
+
+def summarize(args: argparse.Namespace) -> dict[str, Any]:
+    issue = parse_issue(args.issue)
+    workspace = find_workspace(Path.cwd())
+    summary = summary_data(workspace, issue, args.profile)
+    summary["report"] = summary_markdown(summary)
+    if not args.record:
+        return summary
+    validate_owner(args.owner)
+    directory = supervisor_directory(workspace, issue)
+    descriptor = lock_directory(directory)
+    try:
+        assignment = active_assignment(directory, issue, args.owner, args.assignment_id)
+        if assignment.get("profile") != args.profile:
+            fail("summary profile differs from the active assignment")
+        run_dir = directory / "runs" / str(assignment["assignment_id"])
+        atomic_write(run_dir / "final-summary.json", render_json(summary))
+        atomic_write(run_dir / "final-summary.md", summary["report"].encode("utf-8"))
+        run = read_json(run_dir / "run.json", "supervisor run")
+        run["status"] = summary["status"]
+        run["completed_at"] = timestamp()
+        run["final_summary"] = "final-summary.json"
+        atomic_write(run_dir / "run.json", render_json(run))
+        assignment["status"] = "completed"
+        assignment["completed_at"] = run["completed_at"]
+        assignment["outcome"] = summary["status"]
+        write_assignment_state(directory, assignment)
+    finally:
+        os.close(descriptor)
+    return summary
+
+
+def validate(args: argparse.Namespace) -> dict[str, Any]:
+    config, profile = load_policy(args.profile)
+    return {
+        "schema_version": 1,
+        "status": "valid",
+        "profile": args.profile,
+        "policy_fingerprint": policy_fingerprint(config, profile),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="operation", required=True)
+
+    validation = subparsers.add_parser("validate")
+    validation.add_argument("--profile", default="supervised-local")
+    validation.set_defaults(run=validate)
+
+    assignment_claim = subparsers.add_parser("claim")
+    assignment_claim.add_argument("--issue", required=True)
+    assignment_claim.add_argument("--profile", default="supervised-local")
+    assignment_claim.add_argument("--owner", required=True)
+    assignment_claim.set_defaults(run=claim)
+
+    assignment_release = subparsers.add_parser("release")
+    assignment_release.add_argument("--issue", required=True)
+    assignment_release.add_argument("--owner", required=True)
+    assignment_release.add_argument("--assignment-id", required=True)
+    assignment_release.add_argument("--reason", required=True)
+    assignment_release.set_defaults(run=release)
+
+    assignment_interrupt = subparsers.add_parser("interrupt")
+    assignment_interrupt.add_argument("--issue", required=True)
+    assignment_interrupt.add_argument("--assignment-id", required=True)
+    assignment_interrupt.add_argument("--interrupted-by", required=True)
+    assignment_interrupt.add_argument("--reason", required=True)
+    assignment_interrupt.set_defaults(run=interrupt)
+
+    decision = subparsers.add_parser("decide")
+    decision.add_argument("--issue", required=True)
+    decision.add_argument("--profile", default="supervised-local")
+    decision.add_argument("--report", required=True, help="JSON file, or - for stdin")
+    decision.set_defaults(run=decide)
+
+    event_record = subparsers.add_parser("record")
+    event_record.add_argument("--issue", required=True)
+    event_record.add_argument("--owner", required=True)
+    event_record.add_argument("--assignment-id", required=True)
+    event_record.add_argument("--event", required=True)
+    event_record.set_defaults(run=record)
+
+    summary = subparsers.add_parser("summarize")
+    summary.add_argument("--issue", required=True)
+    summary.add_argument("--profile", default="supervised-local")
+    summary.add_argument("--record", action="store_true")
+    summary.add_argument("--owner", default="")
+    summary.add_argument("--assignment-id", default="")
+    summary.set_defaults(run=summarize)
+
+    args = parser.parse_args()
+    mutates_worklog = args.operation in {"claim", "release", "interrupt", "record"} or (
+        args.operation == "summarize" and args.record
+    )
+    if mutates_worklog:
+        workspace = find_workspace(Path.cwd())
+        try:
+            with locked_worklog_root(workspace / ".ai-evo-work", create=True):
+                result = args.run(args)
+        except WorklogRootError as exc:
+            fail(str(exc))
+    else:
+        result = args.run(args)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
