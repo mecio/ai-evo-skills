@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.1.0-beta.7
+
+Changes since `0.1.0-beta.6`.
+On-disk project protocol remains `1.0`.
+
+- Extend the copyable Acme workflow with correction lineage, atomic stack rebase and republication, isolated issue
+  workspaces, safe archival of closed worklogs and optional policy-driven supervision. Add matching capabilities,
+  schemas, documentation and regression coverage.
+
 - Harden the Acme GitHub workflow example with recoverable single-branch publication, verified worktree recovery,
   direct recording of ready runtime transitions, explicit adapter selection and REST-based issue/PR metadata writes.
   Support local worktree overrides and partial planned commits, and validate the complete copyable catalog.
