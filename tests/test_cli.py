@@ -150,6 +150,21 @@ class CliIntegrationTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("missing project entrypoint", result.stderr)
 
+    def test_claude_entrypoint_does_not_need_to_reference_project_entrypoint(self):
+        temporary, root = self.repository()
+        with temporary:
+            (root / "CLAUDE.md").write_text("# Existing Claude instructions\n")
+            self.initialize(root, "claude")
+            self.assertEqual(0, self.run_cli(root, "validate").returncode)
+
+    def test_codex_entrypoint_still_needs_to_reference_project_entrypoint(self):
+        temporary, root = self.repository()
+        with temporary:
+            (root / "AGENTS.md").write_text("# Existing Codex instructions\n")
+            result = self.run_cli(root, "init", "--namespace", "abc", "--adapter", "codex")
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("existing file must reference .ai-evo-prj/entrypoint.md", result.stderr)
+
     def test_disabling_target_removes_managed_links(self):
         temporary, root = self.repository()
         with temporary:

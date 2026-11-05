@@ -576,8 +576,9 @@ def load_context(require_config: bool = True, *, for_creation: bool = False) -> 
         entry = repo / adapter["project-entrypoint"]["path"]
         if not entry.is_file():
             errors.append(f"{entry}: required by enabled adapter {adapter['id']}")
-        elif adapter["project-entrypoint"]["must-reference"] not in entry.read_text(encoding="utf-8"):
-            errors.append(f"{entry}: must reference {adapter['project-entrypoint']['must-reference']}")
+        elif required_reference := adapter["project-entrypoint"].get("must-reference"):
+            if required_reference not in entry.read_text(encoding="utf-8"):
+                errors.append(f"{entry}: must reference {required_reference}")
 
     errors += target_path_errors(repo, skills, config["targets"], config_path)
 
@@ -1251,8 +1252,9 @@ def cmd_init(args: argparse.Namespace) -> None:
         if os.path.lexists(entry):
             if not entry.is_file():
                 raise EvoError(f"{entry}: existing adapter entrypoint is not a file")
-            if adapter["project-entrypoint"]["must-reference"] not in entry.read_text(encoding="utf-8"):
-                raise EvoError(f"{entry}: existing file must reference {adapter['project-entrypoint']['must-reference']}")
+            required_reference = adapter["project-entrypoint"].get("must-reference")
+            if required_reference and required_reference not in entry.read_text(encoding="utf-8"):
+                raise EvoError(f"{entry}: existing file must reference {required_reference}")
         else:
             template = engine / adapter["project-entrypoint"]["template"]
             if not template.is_file():

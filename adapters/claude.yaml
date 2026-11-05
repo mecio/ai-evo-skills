@@ -6,7 +6,6 @@ project-skill-path: .claude/skills
 project-entrypoint:
   path: CLAUDE.md
   template: templates/adapters/claude/CLAUDE.tpl.md
-  must-reference: .ai-evo-prj/entrypoint.md
 
 invocation:
   example: "/<skill-name> key=value"

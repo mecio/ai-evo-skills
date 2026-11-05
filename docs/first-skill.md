@@ -25,9 +25,9 @@ uv sync --frozen --project .ai-evo
 ```
 
 Enable only the adapters you use. The namespace must contain 3–6 lowercase ASCII letters; all examples below
-use `acme`. `init` creates `.ai-evo-prj`, project configuration and missing client entrypoints. Existing
-`AGENTS.md` or `CLAUDE.md` files must already reference `.ai-evo-prj/entrypoint.md`; initialization checks them
-and preserves their contents.
+use `acme`. `init` creates `.ai-evo-prj`, project configuration and missing client entrypoints. An existing
+`AGENTS.md` must already reference `.ai-evo-prj/entrypoint.md`; initialization checks it. Existing
+`CLAUDE.md` files are accepted without that reference, and both files preserve their contents.
 
 The generated catalog separates public entrypoints from recipe internals. Commands live under
 `skills/catalog/commands`, shared recipes directly under `skills/catalog/recipes`, recipe-only steps under
