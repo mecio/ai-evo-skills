@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Close one local-only active workflow session without touching Git or GitHub."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, NoReturn
+
+from acme_worklog_paths import session_slug
+from lib.acme_worklog_root import WorklogRootError, locked_worklog_root, resolve_worklog_root
+
+
+def fail(message: str) -> NoReturn:
+    raise SystemExit(f"error: {message}")
+
+
+def atomic_write(path: Path, content: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def parse_request(raw: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    if not isinstance(value, dict) or set(value) != {"issue", "session_name", "reason"}:
+        fail("request fields must be issue, session_name and reason")
+    issue = value["issue"]
+    if isinstance(issue, str) and issue.isdigit():
+        issue = int(issue)
+    if type(issue) is not int or issue < 1:
+        fail("issue must be a positive integer")
+    session_name, reason = value["session_name"], value["reason"]
+    if not isinstance(session_name, str) or not session_name:
+        fail("session_name is required")
+    if not isinstance(reason, str) or not reason.strip():
+        fail("reason is required")
+    try:
+        normalized = session_slug(session_name)
+    except ValueError as exc:
+        fail(str(exc))
+    if normalized != session_name or not normalized.startswith(f"issue-{issue}/"):
+        fail("session_name must be the canonical path of the requested issue")
+    return {"issue": issue, "session_name": normalized, "reason": reason.strip()}
+
+
+def successful_remote_step(session_dir: Path, session: dict[str, Any]) -> str | None:
+    """Inspect both the session index and immutable records, including crash-orphaned records."""
+    remote_steps = {"publish_branch", "configure_upstreams", "submit_stack"}
+    entries = session.get("entries")
+    if not isinstance(entries, list):
+        fail("session entries are invalid")
+    indexed = next((
+        entry.get("step_name") for entry in entries if isinstance(entry, dict)
+        and entry.get("outcome") == "succeeded" and entry.get("step_name") in remote_steps
+    ), None)
+    if isinstance(indexed, str):
+        return indexed
+    session_slug = session.get("session_slug")
+    recipe_name = session.get("recipe_name")
+    if not isinstance(session_slug, str) or not isinstance(recipe_name, str):
+        fail("session metadata is incomplete")
+    for path in session_dir.glob("*.json"):
+        if not re.fullmatch(r"[0-9]+-.+-attempt-[0-9]+\.json", path.name):
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            fail(f"cannot read immutable record {path.name}: {exc}")
+        if (not isinstance(record, dict) or record.get("schema_version") != 1
+                or record.get("session_slug") != session_slug or record.get("recipe_name") != recipe_name):
+            fail(f"immutable record does not belong to the session: {path.name}")
+        step_name = record.get("step_name")
+        if record.get("outcome") == "succeeded" and step_name in remote_steps:
+            return step_name
+    return None
+
+
+def abandon(request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        work_root = resolve_worklog_root(Path.cwd())
+        with locked_worklog_root(work_root):
+            session_dir = work_root.resolve(strict=True) / request["session_name"]
+            current = work_root.resolve(strict=True)
+            for component in Path(request["session_name"]).parts:
+                current /= component
+                if current.is_symlink():
+                    fail("session path must not contain symbolic links")
+            session_path = session_dir / "session.json"
+            try:
+                session = json.loads(session_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                fail(f"cannot read session metadata: {exc}")
+            if not isinstance(session, dict) or session.get("session_name") != request["session_name"]:
+                fail("session metadata does not match session_name")
+            if session.get("status") != "active":
+                fail("only an active session can be abandoned")
+            completed_remote = successful_remote_step(session_dir, session)
+            if completed_remote:
+                fail(f"cannot abandon the session: remote step {completed_remote} succeeded")
+            abandoned_at = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+            context_path = session_dir / "context.md"
+            context: str | None = None
+            if context_path.is_file():
+                try:
+                    context = context_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as exc:
+                    fail(f"cannot read session context: {exc}")
+                context, status_changes = re.subn(
+                    r"(?m)^- Status: `active`$", "- Status: `abandoned`", context,
+                )
+                context, time_changes = re.subn(
+                    r"(?m)^- Updated: `[^`]*`$", f"- Updated: `{abandoned_at}`", context,
+                )
+                if status_changes != 1 or time_changes != 1:
+                    fail("session context does not contain canonical active metadata")
+            session["status"] = "abandoned"
+            session["abandoned_reason"] = request["reason"]
+            session["abandoned_at"] = abandoned_at
+            session["updated_at"] = abandoned_at
+            atomic_write(session_path, (json.dumps(session, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode())
+            if context is not None:
+                atomic_write(context_path, context.encode())
+    except WorklogRootError as exc:
+        fail(str(exc))
+    return {"schema_version": 1, "status": "abandoned", "issue": request["issue"],
+            "session_name": request["session_name"], "reason": request["reason"],
+            "abandoned_at": abandoned_at}
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "abandon":
+        fail("expected: acme-abandon-github-issue-session abandon '<JSON>'")
+    print(json.dumps(abandon(parse_request(sys.argv[2])), ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "issue", "session_name", "reason", "abandoned_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"const": "abandoned"},
+    "issue": {"type": "integer", "minimum": 1},
+    "session_name": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "abandoned_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "observed_facts", "matches", "excluded"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["matched", "no-match"]},
+    "observed_facts": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scenario", "affinity", "matched_symptoms", "distinguishing_checks", "runbook", "section", "first_step", "expected_result"],
+        "properties": {
+          "scenario": {"type": "string", "minLength": 1},
+          "affinity": {"enum": ["high", "medium", "low"]},
+          "matched_symptoms": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "distinguishing_checks": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+          "runbook": {"type": "string", "minLength": 1},
+          "section": {"type": "string", "minLength": 1},
+          "first_step": {"type": "string", "minLength": 1},
+          "expected_result": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scenario", "reason"],
+        "properties": {
+          "scenario": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "matched"}}}, "then": {"properties": {"matches": {"contains": {"properties": {"affinity": {"enum": ["high", "medium"]}}, "required": ["affinity"]}}}}},
+    {"if": {"properties": {"status": {"const": "no-match"}}}, "then": {"properties": {"matches": {"not": {"contains": {"properties": {"affinity": {"enum": ["high", "medium"]}}, "required": ["affinity"]}}}}}}
+  ]
+}

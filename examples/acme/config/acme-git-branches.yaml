@@ -5,6 +5,10 @@ stack_tool: "<stack-tool>"
 stack_remote: origin
 ensure_upstream_after_publish: true
 
+stack_trunks:
+  legacy: main
+  current: main
+
 branch_paths:
   legacy: feature
   current: feature

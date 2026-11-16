@@ -33,7 +33,7 @@ values that differ locally. `acme-worktree-context` merges this ignored file ove
 
 ## Workflow
 
-The catalog contains 42 direct commands and 14 recipes. Recipe steps call specific operations and record immutable
+The catalog contains 44 direct commands and 14 recipes. Recipe steps call specific operations and record immutable
 worklog checkpoints; there is no generic workflow-phase command.
 
 | Phase | Recipe | Outcome |
@@ -57,8 +57,9 @@ Start with phase 00. Each later recipe receives its issue, worklog session and i
 checkpoint through `acme-cmd-report-github-issue-workflow`. Review the resolved input and invoke only the next
 appropriate phase. Phases 07 and 08 require explicit publication authorization.
 When the resolver reports `branch-recovery-required`, run the bridge recipe. If the trunk advanced after the
-recorded publication, it returns `stack-rebase-required` and leaves rebase and push to the project's documented
-recovery recipe. First run it in simulation mode; only an explicitly authorized execution may atomically update
+recorded publication, it returns `stack-rebase-required` and recommends the rebase bridge, including when a
+corrected intermediate layer requires only its descendants to be rewritten. First run it in simulation mode;
+only an explicitly authorized execution may atomically update
 the remote stack. The recipe verifies patch equivalence, records the new remote OIDs and allows the workflow to
 resume.
 
@@ -66,6 +67,9 @@ The example also includes optional operational helpers: isolated issue workspace
 worklogs and policy-driven supervision up to a local result or draft PRs. They remain separate from the core
 recipes so projects can adopt them independently. See [post-workflow publishers](post-workflow-publishers.md) for
 the contract of optional reports, indexes or deployment triggers that run after a verified outcome.
+`acme-cmd-squash-git-stack-preview` creates a temporary, local one-commit view for review without checking it out
+or changing the workflow. `acme-cmd-abandon-github-issue-session` terminally closes a local-only active session;
+it refuses sessions that already produced remote effects.
 
 `acme-recipes.md` describes the worklog layout and recovery rules. The [authoring guide](../../docs/authoring.md)
 describes command and recipe contracts, while [command scripts](../../docs/command-scripts.md) covers helper

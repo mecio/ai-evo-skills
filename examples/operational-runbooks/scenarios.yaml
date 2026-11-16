@@ -1,0 +1,16 @@
+version: "1.0"
+scenarios:
+  - id: delayed-background-job
+    title: Background job remains pending
+    runbook: runbooks/example-delayed-job.md
+    section: First safe check
+    symptoms:
+      - a queued operation remains pending beyond its expected window
+      - no completion event is visible to the reporting application
+    indicators:
+      - a stable job identifier is available
+      - enqueue and observation timestamps are known
+    discriminants:
+      - distinguish a never-enqueued job from a queued job awaiting a worker
+    verified_cases:
+      - EXAMPLE-001

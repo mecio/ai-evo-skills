@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend the Acme workflow recovery example with chronological supersession, explicit replacement of published
+  attempts, submit-time branch OID guards, selective child-stack rebase/republication, a non-destructive squash
+  preview and a separate command for abandoning local sessions. Add schemas, documentation and regression tests.
+- Add a generic operational-runbooks example with scenario matching, a sample delayed-job runbook and a validated
+  structured output contract, without project-specific Enabu content.
+
 ## 0.1.0-beta.7
 
 Changes since `0.1.0-beta.6`.

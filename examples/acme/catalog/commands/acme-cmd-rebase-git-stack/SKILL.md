@@ -8,7 +8,8 @@ metadata: { ai-evo-kind: command, ai-evo-version: "1.0", ai-evo-recipe-only: fal
 
 ## Purpose
 
-Gestire in modo verificabile il caso `stack-rebase-required` causato dall'avanzamento del trunk. Il comando
+Gestire in modo verificabile il caso `stack-rebase-required` causato dall'avanzamento del trunk o dalla
+correzione pubblicata di un layer intermedio. Il comando
 supporta il rebase solo se non produce conflitti e conserva esattamente la sequenza dei `git patch-id --stable`.
 
 ## Interface
@@ -31,8 +32,8 @@ Esegui `.ai-evo-prj/scripts/acme-rebase-git-stack rebase '<JSON>'` con `issue` e
 `publication_authorized`. Il valore può essere booleano oppure la stringa letterale `"true"` o `"false"`.
 
 Il comando aggiorna prima i remote-tracking ref dello stack e rilancia il report. Se il report non richiede il
-rebase, restituisce il report invariato. Se la causa è un layer intermedio corretto, restituisce
-`unsupported-rebase-case`: questo caso resta fuori perimetro.
+rebase, restituisce il report invariato. Per un layer intermedio corretto ribasa soltanto il figlio indicato e i
+suoi discendenti, usando come vecchia base l'OID remoto del parent registrato dal figlio.
 
 Con `publication_authorized=false` crea una worktree temporanea staccata, simula il rebase a cascata e verifica
 linearità, titoli e patch-id. Rimuove poi la worktree e restituisce `stack-rebase-simulated`; non sposta branch,
@@ -40,8 +41,8 @@ non modifica le worktree dello sviluppatore e non scrive ref remoti. Il fetch in
 remote-tracking ref e la simulazione può creare oggetti Git non referenziati.
 
 Con `publication_authorized=true`, dopo gli stessi controlli ricontrolla stato locale e ref remoti, quindi
-esegue un unico `git push --atomic` con un lease per ogni layer. Solo dopo il push verificato porta avanti il
-trunk locale con fast-forward e allinea i branch locali e le loro worktree. Il comando non crea merge commit,
+esegue un unico `git push --atomic` con un lease per ogni layer interessato. Solo dopo il push verificato porta
+avanti il trunk locale, quando necessario, e allinea i branch locali e le loro worktree. Il comando non crea merge commit,
 non modifica pull request e non scrive nel worklog; la registrazione resta a
 `acme-cmd-republish-rebased-git-stack`.
 
@@ -60,8 +61,9 @@ In caso di conflitto, patch-id differente, divergenza locale o lease fallito il 
 già stato accettato e l'allineamento locale fallisce, non tenta un rollback remoto: l'output riporta OID e
 comandi di recupero da usare soltanto dopo una nuova verifica dello stato.
 
-Il caso dei figli di un layer intermedio corretto resta manuale. Un'interruzione dopo il push e prima
-dell'allineamento può lasciare ref locali sui vecchi OID. Gli OID previsti da una simulazione successiva possono
+Se il rebase dei figli incontra conflitti, restituisce `stack-rebase-conflict` con layer, commit e file; la
+risoluzione resta manuale e può essere registrata dal comando di ripubblicazione con il flag esplicito previsto.
+Un'interruzione dopo il push e prima dell'allineamento può lasciare ref locali sui vecchi OID. Gli OID previsti da una simulazione successiva possono
 differire per la data del committer, pur conservando gli stessi patch-id. Il fast-forward del trunk può aggiornare
 una worktree pulita distinta da quelle dello stack, soltanto dopo il push autorizzato.
 

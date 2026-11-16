@@ -30,12 +30,13 @@ inputs:
   workspace_mode: { default: "", description: "Modalità workspace dichiarata dal coordinatore; current è il default dei profili supervisor Acme." }
   correction_instructions: { default: "", description: "Correzioni esplicite per una sessione 04 non ancora pubblicata." }
   new_workflow_attempt: { default: "", description: "\"true\" permette alle recipe 01, 02 o 03 di aprire un nuovo attempt." }
+  supersede_published: { default: "", description: "\"true\" autorizza un nuovo attempt 01 o 02 anche se quello corrente ha branch o pull request pubblicati." }
   reason: { default: "", description: "Motivo obbligatorio quando new_workflow_attempt è true." }
 ```
 
 ## Procedure
 
-Esegui `.ai-evo-prj/scripts/acme-report-github-issue-workflow report --issue '<issue>' --issue-number '<issue_number>' --requested-recipe '<requested_recipe>' --developer-instructions '<developer_instructions>' --workspace-mode '<workspace_mode>' --correction-instructions '<correction_instructions>' --new-workflow-attempt '<new_workflow_attempt>' --reason '<reason>'` dalla root della worktree.
+Esegui `.ai-evo-prj/scripts/acme-report-github-issue-workflow report --issue '<issue>' --issue-number '<issue_number>' --requested-recipe '<requested_recipe>' --developer-instructions '<developer_instructions>' --workspace-mode '<workspace_mode>' --correction-instructions '<correction_instructions>' --new-workflow-attempt '<new_workflow_attempt>' --supersede-published '<supersede_published>' --reason '<reason>'` dalla root della worktree.
 Restituisci invariato il JSON prodotto dallo script. Il comando seleziona il tentativo di workflow più recente,
 legge soltanto i relativi checkpoint e artefatti e restituisce una recipe consigliata, la sessione da aprire,
 gli input già determinabili e `suggested_invocation`, pronta da copiare.
@@ -63,13 +64,21 @@ propone la 02 nello stesso attempt; altrimenti apre `attempt-<max+1>/02-analyze-
 Entrambi i ritorni sono rifiutati se l'attempt corrente contiene sessioni incomplete, sub-issue create, branch
 pubblicati o pull request create.
 
+Con `supersede_published: "true"`, oltre a `new_workflow_attempt: "true"` e a un motivo non vuoto, le recipe 01
+e 02 possono superare anche un attempt con effetti remoti. L'indice conserva nomi e OID dei branch e coordinate
+delle pull request rilevate; il comando non chiude pull request e non elimina branch remoti. Una sessione locale
+`active` da non riprendere deve prima essere chiusa esplicitamente con
+`acme-cmd-abandon-github-issue-session`.
+
 Con `new_workflow_attempt: "true"` e recipe richiesta 03, richiede `reason`, riusa l'ultima analisi 02 conclusa
 dell'attempt corrente e propone `attempt-<max+1>/03-breakdown-attempt-01`. Blocca l'operazione se esistono
 sessioni da recuperare o se una scomposizione epic ha già creato sub-issue; non invalida effetti remoti.
 
-Quando è richiesta la recipe di correzione 04, riconosce solo un checkpoint locale riuscito senza
-`publish_branch`; restituisce una sessione `04-correction`, coordinate e output immutabile della 04. Le
-`correction_instructions` esplicite restano l'unico input non deducibile.
+Quando è richiesta la recipe di correzione 04, riconosce un checkpoint locale riuscito oppure una review
+conclusa sull'OID corrente. Dopo una correzione pubblicata riapre la review; per un layer intermedio richiede
+prima il rebase e la ripubblicazione dei soli figli. Una pubblicazione 07 o un submit 08 non nascondono sessioni
+di correzione successive, e la 08 viene bloccata se il report verificato non coincide con l'OID remoto corrente.
+Le `correction_instructions` esplicite restano l'unico input non deducibile.
 
 Se `status` è `input-required`, chiedi soltanto i campi elencati in `missing_inputs`. Se è
 `branch-recovery-required`, avvia `acme-recipe-resume-github-issue-workflow`: la recipe esegue il recupero e

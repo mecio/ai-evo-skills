@@ -7,6 +7,7 @@ you need. Native AI execution requires authenticated clients; the recovery demo 
 |---|---|
 | [Acme](acme/README.md) | Complete GitHub issue and stacked-delivery workflow with configurable helper scripts. |
 | [Runtime tests](runtime-tests/README.md) | Scripted context detection and conditional test runners; requires your actual wrappers. |
+| [Operational runbooks](operational-runbooks/README.md) | Read-only matching of incident facts to verified project runbooks and safe first checks. |
 | [Recovery](recovery/README.md) | A new runtime from a verified consecutive prefix, with a runnable synthetic demonstration. |
 
 A **command** is directly invocable, a **step** under `catalog/recipes/_steps` is a recipe-only service, and a

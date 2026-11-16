@@ -45,6 +45,11 @@ capabilities:
     operation: run
     arguments: true
     workspaces: [read-write]
+  acme.git-squash-stack-preview:
+    script: acme-squash-git-stack-preview
+    operation: create
+    arguments: true
+    workspaces: [read-write]
   acme.worklog-record:
     script: acme-operation-output-worklog
     operation: record
@@ -65,6 +70,11 @@ capabilities:
     operation: report
     arguments: true
     workspaces: [read-only, read-write]
+  acme.workflow-session-abandon:
+    script: acme-abandon-github-issue-session
+    operation: abandon
+    arguments: true
+    workspaces: [read-write]
   acme.workflow-resume:
     script: acme-resume-github-issue-workflow
     operation: resume

@@ -21,6 +21,7 @@ execution-policy:
 inputs:
   issue: { required: true, description: "Issue proprietaria dello stack pubblicato." }
   publication_authorized: { required: true, description: "Deve essere letteralmente true; attesta il push manuale già autorizzato." }
+  allow_resolved_conflicts: { default: "false", description: "Consente patch-id diversi dopo conflitti risolti manualmente, conservando range-diff ed evidenza dei commit differenti." }
 ```
 
 ## Procedure
@@ -30,9 +31,13 @@ Esegui `.ai-evo-prj/scripts/acme-republish-rebased-git-stack republish '<JSON>'`
 branch locale coincida con il suo upstream. Verifica la linearità della catena e l'uguaglianza della sequenza di
 `git patch-id --stable` fra i commit pubblicati in precedenza e quelli ribasati. Non esegue push.
 
+Se un rebase con conflitti è già stato risolto e pubblicato manualmente, `allow_resolved_conflicts: true` ammette
+patch-id diversi soltanto quando numero, ordine e messaggi dei commit sono invariati. Il checkpoint registra
+`patch_ids_equivalent: false`, i commit con patch-id differente e l'output completo di `git range-diff`.
+
 Solo dopo tutte le verifiche registra per ogni layer una nuova sessione nel primo `04r-republish-attempt-<nn>` libero con un checkpoint
-`publish_branch`; conserva `previous_remote_oid`, `previous_base_oid` e `patch_ids_equivalent: true` senza toccare
-i checkpoint originali.
+`publish_branch`; conserva `previous_remote_oid`, `previous_base_oid` e l'esito `patch_ids_equivalent` senza
+toccare i checkpoint originali. Registra soltanto i layer il cui OID è stato riscritto.
 
 ## Expected output
 
@@ -40,8 +45,8 @@ JSON con i layer ripubblicati e i nuovi OID remoti.
 
 ## Constraints
 
-Non esegue `gh stack push`, `gh stack sync`, rebase, merge o push. Se patch-id, upstream o linearità non coincidono,
-non scrive checkpoint.
+Non esegue `gh stack push`, `gh stack sync`, rebase, merge o push. Senza il flag esplicito, oppure se sequenza,
+messaggi, upstream o linearità non coincidono, non scrive checkpoint.
 
 ## Success criteria
 
@@ -51,4 +56,5 @@ non scrive checkpoint.
 
 ```text
 $acme-cmd-republish-rebased-git-stack issue="12603" publication_authorized="true"
+$acme-cmd-republish-rebased-git-stack issue="12603" publication_authorized="true" allow_resolved_conflicts="true"
 ```

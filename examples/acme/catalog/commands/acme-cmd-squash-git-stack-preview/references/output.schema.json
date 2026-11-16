@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status", "preview_branch", "commit", "base_branch", "base_oid", "source_branch", "source_oid",
+    "tree_identical", "files_changed", "insertions", "deletions", "review_commands", "cleanup_command"
+  ],
+  "properties": {
+    "status": {"const": "created"},
+    "preview_branch": {"type": "string", "minLength": 1},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "base_branch": {"type": "string", "minLength": 1},
+    "base_oid": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "source_branch": {"type": "string", "minLength": 1},
+    "source_oid": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "tree_identical": {"const": true},
+    "files_changed": {"type": "integer", "minimum": 0},
+    "insertions": {"type": "integer", "minimum": 0},
+    "deletions": {"type": "integer", "minimum": 0},
+    "review_commands": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "cleanup_command": {"type": "string", "minLength": 1}
+  }
+}

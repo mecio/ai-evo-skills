@@ -1,6 +1,6 @@
 ---
 name: acme-recipe-rebase-and-republish-github-stack
-description: Simula oppure completa rebase, push atomico e registrazione 04r di uno stack quando il trunk è avanzato.
+description: Simula oppure completa rebase, push atomico e registrazione 04r quando il trunk o un layer parent è avanzato.
 metadata: { ai-evo-kind: recipe, ai-evo-version: "1.0" }
 ---
 
@@ -8,8 +8,8 @@ metadata: { ai-evo-kind: recipe, ai-evo-version: "1.0" }
 
 ## Purpose
 
-Gestire il raccordo 04r causato dall'avanzamento del trunk remoto, mantenendo nello stesso flusso la simulazione,
-il push esplicitamente autorizzato e la registrazione dei nuovi OID nel worklog.
+Gestire il raccordo 04r causato dall'avanzamento del trunk remoto o dalla correzione di un layer intermedio,
+mantenendo nello stesso flusso la simulazione, il push esplicitamente autorizzato e la registrazione dei nuovi OID.
 
 ## Interface
 
@@ -18,8 +18,8 @@ richiede la sola simulazione, mentre solo true autorizza il push atomico e la su
 
 ## Procedure
 
-Usare la recipe soltanto per lo stato `stack-rebase-required` causato dall'avanzamento del trunk. Il comando
-interno valida il report e rifiuta il caso dei figli di un layer intermedio corretto.
+Usare la recipe per lo stato `stack-rebase-required`. Quando il report indica `parent_branch`, il comando ribasa
+e ripubblica soltanto il figlio indicato e i suoi discendenti.
 
 Con `publication_authorized=false`, restituisce `stack-rebase-simulated` senza modificare branch, worktree o ref
 remoti. Con `publication_authorized=true`, esegue rebase e push atomico verificati, allinea trunk e layer locali,
@@ -36,7 +36,7 @@ Il valore `outputs.result`: simulazione, conflitto, blocco oppure report aggiorn
 ## Constraints
 
 Non dedurre l'autorizzazione da richieste precedenti. Non eseguire il push se `publication_authorized` non è
-letteralmente true. Non usare la recipe per `parent_branch`, non creare o modificare pull request e non eseguire
+letteralmente true. Non creare o modificare pull request e non eseguire
 submit, sync o merge remoto.
 
 ## Success criteria

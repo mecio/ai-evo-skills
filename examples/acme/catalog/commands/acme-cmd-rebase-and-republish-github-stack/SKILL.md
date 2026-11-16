@@ -9,7 +9,8 @@ metadata: { ai-evo-kind: command, ai-evo-version: "1.0", ai-evo-recipe-only: fal
 ## Purpose
 
 Fornire alla recipe un'unica operazione condizionale: conservare invariati simulazioni e blocchi del comando di
-rebase, oppure registrare nel worklog la ripubblicazione soltanto dopo un push verificato.
+rebase, oppure registrare nel worklog la ripubblicazione soltanto dopo un push verificato, anche per i soli figli
+di un layer intermedio corretto.
 
 ## Interface
 

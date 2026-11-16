@@ -16,7 +16,7 @@ Ogni recipe svolge una fase circoscritta e salva il risultato nel percorso relat
 | 06 | `acme-recipe-06-verify-github-epic-stack` | Solo epic: verificare l’insieme delle sub-issue completate. |
 | 07 | `acme-recipe-07-push-github-stack` | Su richiesta esplicita: ripubblicare e verificare lo stack completo dopo la review. |
 | 08 | `acme-recipe-08-submit-github-stack` | Su richiesta esplicita: creare o aggiornare in draft le pull request dello stack. |
-| raccordo | `acme-recipe-rebase-and-republish-github-stack` | Quando il trunk remoto è avanzato: simulare oppure, con autorizzazione esplicita, ribasare, ripubblicare e registrare lo stack. |
+| raccordo | `acme-recipe-rebase-and-republish-github-stack` | Quando il trunk remoto o un layer parent è avanzato: simulare oppure, con autorizzazione esplicita, ribasare, ripubblicare e registrare i layer interessati. |
 | raccordo | `acme-recipe-resume-github-issue-workflow` | Quando il report richiede il recupero del branch pubblicato; non è una fase del flusso. |
 
 Un’issue non scomposta segue `00 → 02 → 03 → 04 → 05`; dopo il checkpoint `implement_issue` e prima del push può inserire una o più sessioni `04-correction`, poi prosegue con `05`. Una epic segue `00 → 02 → 03`, quindi `04 → 05` per ogni sub-issue nell’ordine delle dipendenze, e infine `06`; con autorizzazione esplicita può concludersi con `07 → 08`. Una issue `stacked` segue `00 → 02 → 03`, poi per ogni layer ordinato `adopt | (04 → 05, review persistita)` e può inserire `04-correction` nello stesso layer prima della pubblicazione.
@@ -126,6 +126,16 @@ Le recipe che producono effetti persistenti registrano prima un checkpoint non c
 Eccezione esplicita per la fase 04: se la sessione `04-implement` è `active`, l'ultimo checkpoint riuscito è `implement_issue` e non esiste `publish_branch`, lo sviluppatore può invocare la recipe di correzione con `correction_instructions` non vuote. Il resolver apre una sessione sorella `04-correction-attempt-<nn>`, conserva `implementation_session`, branch, parent e output 04 nel suo input immutabile. La 04 originale resta `active` come evidenza del commit non pubblicato; il resolver considera la correzione conclusa l'ultima fase valida. Una correzione ancora `active` dopo `correct_implementation` può generare un'altra sessione di correzione. Il percorso non è disponibile dopo la pubblicazione o la review.
 
 Il runtime AI Evo può inoltre recuperare un prefisso di step già verificato soltanto se conserva il piano e il journal runtime originali. Usare `recipe recover` con nuove evidenze di dipendenze immutate; il recupero non ricrea automaticamente issue, branch, commit o file di worklog. Per un errore di un comando Codex, l’eventuale sessione nativa può essere ripresa solo se il piano dichiara il riuso della sessione; Claude non supporta al momento questa ripresa tramite `command execute`.
+
+### Preview squash locale facoltativa
+
+Quando esiste almeno un commit sul branch della issue, `acme-cmd-squash-git-stack-preview` può creare un branch
+temporaneo con un solo commit sopra il merge-base e lo stesso albero della punta selezionata. Non esegue checkout,
+non modifica stack o worklog e non pubblica nulla. Usare il `cleanup_command` restituito al termine della review.
+
+Una sessione locale rimasta `active` può essere chiusa con `acme-cmd-abandon-github-issue-session` soltanto se
+non ha completato step remoti. Per aprire un nuovo attempt nonostante branch o pull request già pubblicati, le
+recipe 01 e 02 richiedono insieme `new_workflow_attempt="true"`, `supersede_published="true"` e un motivo.
 
 ## Attributi per issue
 

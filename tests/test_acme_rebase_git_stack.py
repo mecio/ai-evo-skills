@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -44,7 +45,7 @@ class RebaseGitStackTest(unittest.TestCase):
         return line.split()[0] if line else ""
 
     def write_publication(self, repo: Path, sequence: int, branch: str, parent: str,
-                          remote_oid: str, base_oid: str) -> None:
+                          remote_oid: str, base_oid: str, parent_oid: str) -> None:
         name = f"issue-{ISSUE}/attempt-01/layers/L{sequence}/04-implement-attempt-01"
         directory = repo / ".ai-evo-work" / name
         directory.mkdir(parents=True)
@@ -58,8 +59,70 @@ class RebaseGitStackTest(unittest.TestCase):
         }), encoding="utf-8")
         (directory / "001-publish.json").write_text(json.dumps({"output": json.dumps({
             "branch": branch, "parent_branch": parent, "remote": "origin", "remote_oid": remote_oid,
-            "base_oid": base_oid, "parent_oid": base_oid,
+            "base_oid": base_oid, "parent_oid": parent_oid,
         })}), encoding="utf-8")
+
+    def publish_parent_correction(self, state: dict[str, object]) -> str:
+        repo, branches, old_oids = state["repo"], state["branches"], state["old_oids"]
+        assert isinstance(repo, Path) and isinstance(branches, list) and isinstance(old_oids, dict)
+        parent = branches[0]
+        run("git", "switch", parent, cwd=repo)
+        (repo / "parent-correction.txt").write_text("corrected parent\n", encoding="utf-8")
+        run("git", "add", "parent-correction.txt", cwd=repo)
+        run("git", "commit", "-qm", f"#{ISSUE} correct parent", cwd=repo)
+        new_oid = self.oid(repo, parent)
+        run("git", "push", "-q", "origin", parent, cwd=repo)
+        name = f"issue-{ISSUE}/attempt-01/layers/L0/04-correction-attempt-01"
+        directory = repo / ".ai-evo-work" / name
+        directory.mkdir(parents=True)
+        (directory / "session.json").write_text(json.dumps({
+            "session_name": name, "session_slug": name,
+            "recipe_name": "acme-recipe-04-implement-github-issue-correction",
+            "status": "completed",
+            "entries": [{"step_name": "publish_branch", "outcome": "succeeded", "file": "001-publish.json"}],
+        }), encoding="utf-8")
+        (directory / "001-publish.json").write_text(json.dumps({"output": json.dumps({
+            "branch": parent, "parent_branch": "main", "remote": "origin", "remote_oid": new_oid,
+            "base_oid": state["initial"], "parent_oid": state["initial"],
+            "previous_remote_oid": old_oids[parent],
+        })}), encoding="utf-8")
+        run("git", "switch", branches[-1], cwd=repo)
+        return new_oid
+
+    def invoke_child_rebase(self, repo: Path, branches: list[str], authorized: bool) -> dict[str, object]:
+        loader = SourceFileLoader("rebase_git_stack_child_test", str(SCRIPT))
+        spec = spec_from_loader(loader.name, loader)
+        assert spec is not None
+        module = module_from_spec(spec)
+        sys.path.insert(0, str(SCRIPT.parent))
+        try:
+            loader.exec_module(module)
+        finally:
+            sys.path.pop(0)
+        requested = {
+            "status": "stack-rebase-required",
+            "resolved_inputs": {"issue": str(ISSUE), "branch": branches[1], "parent_branch": branches[0]},
+        }
+        completed = {"status": "stack-republish-required"}
+        output: list[dict[str, object]] = []
+        previous = Path.cwd()
+        os.chdir(repo)
+        try:
+            with (mock.patch.object(sys, "argv", [str(SCRIPT), "rebase", json.dumps({
+                      "issue": ISSUE, "publication_authorized": authorized,
+                  })]),
+                  mock.patch.object(module, "report", side_effect=[requested, completed]),
+                  mock.patch.object(module, "write_json", side_effect=output.append)):
+                self.assertEqual(0, module.main())
+        finally:
+            os.chdir(previous)
+        self.assertEqual(1, len(output))
+        return output[0]
+
+    def invoke_republish(self, repo: Path) -> subprocess.CompletedProcess[str]:
+        return run(str(REPUBLISH), "republish", json.dumps({
+            "issue": ISSUE, "publication_authorized": True,
+        }), cwd=repo)
 
     def repository(self, layers: int = 2, advance_trunk: bool = True,
                    conflict_on_second: bool = False, separate_worktrees: bool = False) -> dict[str, object]:
@@ -96,7 +159,7 @@ class RebaseGitStackTest(unittest.TestCase):
             run("git", "commit", "-qm", f"#{ISSUE} layer {index}", cwd=repo)
             layer_oid = self.oid(repo, "HEAD")
             run("git", "push", "-qu", "origin", branch, cwd=repo)
-            self.write_publication(repo, index, branch, parent, layer_oid, parent_oid)
+            self.write_publication(repo, index, branch, parent, layer_oid, initial, parent_oid)
             branches.append(branch)
             old_oids[branch] = layer_oid
             parent, parent_oid = branch, layer_oid
@@ -204,34 +267,25 @@ class RebaseGitStackTest(unittest.TestCase):
 
         self.assertEqual(expected, self.invoke(repo, False))
 
-    def test_intermediate_parent_case_is_rejected_without_git_mutations(self) -> None:
-        loader = SourceFileLoader("rebase_git_stack_for_test", str(SCRIPT))
-        spec = spec_from_loader(loader.name, loader)
-        assert spec is not None
-        module = module_from_spec(spec)
-        sys.path.insert(0, str(SCRIPT.parent))
-        try:
-            loader.exec_module(module)
-        finally:
-            sys.path.pop(0)
-        layer = {"branch": "child", "parent_branch": "parent", "remote": "origin", "remote_oid": "a" * 40}
-        report = {
-            "status": "stack-rebase-required",
-            "resolved_inputs": {"issue": str(ISSUE), "branch": "child", "parent_branch": "parent"},
-        }
-        output: list[dict[str, object]] = []
-        with (mock.patch.object(sys, "argv", [str(SCRIPT), "rebase", json.dumps({
-                  "issue": ISSUE, "publication_authorized": False,
-              })]),
-              mock.patch.object(module, "published_layers", return_value=[layer]),
-              mock.patch.object(module, "order_layers", return_value=("main", [layer])),
-              mock.patch.object(module, "fetch_stack", return_value=""),
-              mock.patch.object(module, "report", return_value=report),
-              mock.patch.object(module, "write_json", side_effect=output.append)):
-            self.assertEqual(0, module.main())
-        self.assertEqual("stack-rebase-blocked", output[0]["status"])
-        self.assertEqual("unsupported-rebase-case", output[0]["code"])
-        self.assertEqual([], output[0]["details"]["modified_refs"])
+    def test_rebases_and_records_only_children_after_parent_correction(self) -> None:
+        state = self.repository(layers=3, advance_trunk=False)
+        repo, branches = state["repo"], state["branches"]
+        assert isinstance(repo, Path) and isinstance(branches, list)
+        self.publish_parent_correction(state)
+        before = {branch: self.oid(repo, branch) for branch in branches}
+
+        simulated = self.invoke_child_rebase(repo, branches, False)
+        self.assertEqual("stack-rebase-simulated", simulated["status"], simulated)
+        self.assertEqual(branches[1:], [layer["branch"] for layer in simulated["layers"]])
+        self.assertEqual(before, {branch: self.oid(repo, branch) for branch in branches})
+
+        completed = self.invoke_child_rebase(repo, branches, True)
+        self.assertEqual("stack-republish-required", completed["status"], completed)
+        self.assertEqual(before[branches[0]], self.oid(repo, branches[0]))
+        recorded = json.loads(self.invoke_republish(repo).stdout)
+        self.assertEqual("republished", recorded["status"])
+        self.assertEqual(branches[1:], [layer["branch"] for layer in recorded["layers"]])
+        self.assertTrue(all(layer["patch_ids_equivalent"] for layer in recorded["layers"]))
 
     def test_returns_report_unchanged_when_trunk_has_not_advanced(self) -> None:
         state = self.repository(layers=1, advance_trunk=False)

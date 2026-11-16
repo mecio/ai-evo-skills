@@ -13,13 +13,25 @@
     "resolved_inputs": {"type": "object", "additionalProperties": {"type": "string"}},
     "missing_inputs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "suggested_invocation": {"type": ["string", "null"]},
-    "reason": {"type": "string", "minLength": 1}
+    "reason": {"type": "string", "minLength": 1},
+    "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
   },
   "allOf": [
     {"if": {"properties": {"status": {"const": "ready"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"const": "input-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"minItems": 1}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"const": "branch-recovery-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
-    {"if": {"properties": {"status": {"const": "stack-rebase-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "missing_inputs": {"maxItems": 0}, "suggested_invocation": {"type": "null"}}}},
+    {"if": {"properties": {"status": {"const": "stack-rebase-required"}}}, "then": {
+      "properties": {
+        "recommended_recipe": {"const": "acme-recipe-rebase-and-republish-github-stack"},
+        "worklog_session_name": {"type": "null"},
+        "missing_inputs": {"const": ["publication_authorized"]},
+        "suggested_invocation": {"type": "string", "minLength": 1}
+      },
+      "oneOf": [
+        {"properties": {"resolved_inputs": {"required": ["trunk"], "not": {"required": ["parent_branch"]}}}},
+        {"properties": {"resolved_inputs": {"required": ["parent_branch"], "not": {"required": ["trunk"]}}}}
+      ]
+    }},
     {"if": {"properties": {"status": {"const": "stack-republish-required"}}}, "then": {"properties": {"recommended_recipe": {"type": "string", "minLength": 1}, "worklog_session_name": {"type": "string", "minLength": 1}, "missing_inputs": {"minItems": 1}, "suggested_invocation": {"type": "string", "minLength": 1}}}},
     {"if": {"properties": {"status": {"enum": ["manual-assessment-required", "workflow-completed"]}}}, "then": {"properties": {"recommended_recipe": {"type": "null"}, "worklog_session_name": {"type": "null"}, "suggested_invocation": {"type": "null"}}}}
   ]

@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""Create one local temporary squash commit for reviewing an issue branch or stack."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, NoReturn
+
+from lib.acme_script_common import load_simple_yaml
+from lib.acme_worklog_recovery import registered_branch
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BRANCH_CONFIG = (
+    ROOT / "skills/config/acme-git-branches.yaml"
+    if (ROOT / "skills/config/acme-git-branches.yaml").is_file()
+    else ROOT / "config/acme-git-branches.yaml"
+)
+WORKTREE_CONTEXT = ROOT / "scripts/acme-worktree-context"
+ENV = {
+    **os.environ,
+    "GIT_NO_LAZY_FETCH": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_PAGER": "cat",
+    "LC_ALL": "C",
+}
+
+
+def fail(message: str) -> NoReturn:
+    raise ValueError(message)
+
+
+def run(*arguments: str, cwd: Path, check: bool = True,
+        input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        arguments, cwd=cwd, env=ENV, input=input_text,
+        capture_output=True, text=True, check=False,
+    )
+    if check and completed.returncode:
+        fail(completed.stderr.strip() or completed.stdout.strip() or f"command failed: {arguments[0]}")
+    return completed
+
+
+def git(workspace: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run("git", "--no-pager", *arguments, cwd=workspace, check=check)
+
+
+def git_text(workspace: Path, *arguments: str) -> str:
+    return git(workspace, *arguments).stdout.strip()
+
+
+def parse_request(raw: str) -> dict[str, Any]:
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        fail(f"request is not valid JSON: {exc}")
+    allowed = {"issue", "working_directory", "branch", "preview_branch", "replace_existing"}
+    if not isinstance(request, dict) or "issue" not in request or set(request) - allowed:
+        fail("request fields do not match the operation contract")
+    issue = request["issue"]
+    if isinstance(issue, str) and issue.isdigit():
+        issue = int(issue)
+    if type(issue) is not int or issue < 1:
+        fail("issue must be a positive integer")
+    result: dict[str, Any] = {"issue": issue}
+    for field in ("working_directory", "branch", "preview_branch"):
+        value = request.get(field, "")
+        if not isinstance(value, str):
+            fail(f"{field} must be text")
+        result[field] = value
+    replace = request.get("replace_existing", False)
+    if replace in ("true", "false"):
+        replace = replace == "true"
+    if type(replace) is not bool:
+        fail("replace_existing must be a boolean")
+    result["replace_existing"] = replace
+    return result
+
+
+def checked_branch(workspace: Path, value: str, field: str) -> str:
+    if not value or value.startswith("-"):
+        fail(f"{field} is invalid")
+    git(workspace, "check-ref-format", "--branch", value)
+    return value
+
+
+def find_workspace(start: Path) -> Path:
+    for candidate in (start.resolve(), *start.resolve().parents):
+        marker = candidate / ".ai-evo"
+        if marker.is_dir() or marker.is_symlink():
+            return candidate
+    fail("cannot find a .ai-evo directory or symlink")
+
+
+def latest_attempt(workspace: Path, issue: int) -> int | None:
+    root = workspace / ".ai-evo-work" / f"issue-{issue}"
+    attempts = [
+        int(match.group(1)) for path in root.glob("attempt-*")
+        if (match := re.fullmatch(r"attempt-([0-9]+)", path.name)) and path.is_dir()
+    ] if root.is_dir() else []
+    return max(attempts) if attempts else None
+
+
+def registered_workspace(coordinator: Path, issue: int) -> Path:
+    attempt = latest_attempt(coordinator, issue)
+    if attempt is None:
+        return coordinator
+    common = git_text(coordinator, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    manifest = Path(common) / "acme-issues" / f"issue-{issue}" / f"attempt-{attempt:02d}" / "workspace.json"
+    if not manifest.is_file():
+        return coordinator
+    try:
+        value = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"cannot read issue workspace manifest: {exc}")
+    directory = value.get("working_directory") if isinstance(value, dict) else None
+    if isinstance(value, dict) and value.get("status") == "cleaned":
+        return coordinator
+    if (not isinstance(value, dict) or value.get("schema_version") != 1
+            or value.get("issue") != issue or value.get("workflow_attempt") != attempt
+            or value.get("status") != "ready" or value.get("workspace_mode") not in {"current", "isolated"}
+            or value.get("coordinator_root") != str(coordinator)
+            or not isinstance(directory, str) or not directory):
+        fail("issue workspace manifest is invalid")
+    return Path(directory).resolve()
+
+
+def repository_root(path: Path) -> Path:
+    top = run("git", "-C", str(path), "rev-parse", "--show-toplevel", cwd=path, check=False)
+    if top.returncode:
+        fail(f"working_directory is not a Git worktree: {path}")
+    root = Path(top.stdout.strip()).resolve()
+    if root != path.resolve():
+        fail("working_directory must identify the Git worktree root")
+    return root
+
+
+def configured_git(workspace: Path) -> tuple[str, str]:
+    config = load_simple_yaml(BRANCH_CONFIG)
+    remote = config.get("stack_remote")
+    trunks = config.get("stack_trunks")
+    if not isinstance(remote, str) or not remote or remote.startswith("-"):
+        fail("stack_remote is missing from branch configuration")
+    if not isinstance(trunks, dict):
+        fail("stack_trunks is missing from branch configuration")
+    context_result = run(str(WORKTREE_CONTEXT), "--root", str(workspace), cwd=workspace, check=False)
+    context = ""
+    if context_result.returncode == 0:
+        try:
+            context_value = json.loads(context_result.stdout)
+        except json.JSONDecodeError:
+            context_value = None
+        if isinstance(context_value, dict) and isinstance(context_value.get("context"), str):
+            context = context_value["context"]
+    trunk = trunks.get(context) if context else None
+    if not isinstance(trunk, str) or not trunk:
+        existing = [
+            candidate for candidate in trunks.values()
+            if isinstance(candidate, str) and candidate
+            and git(workspace, "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}", check=False).returncode == 0
+        ]
+        if len(set(existing)) != 1:
+            fail("cannot resolve one configured trunk for the working directory")
+        trunk = existing[0]
+    checked_branch(workspace, trunk, "configured trunk")
+    if git(workspace, "show-ref", "--verify", "--quiet", f"refs/heads/{trunk}", check=False).returncode:
+        fail(f"configured local trunk branch does not exist: {trunk}")
+    git(workspace, "remote", "get-url", remote)
+    return trunk, remote
+
+
+def resolve_source_branch(coordinator: Path, workspace: Path, issue: int, explicit: str) -> str:
+    if explicit:
+        return checked_branch(workspace, explicit, "branch")
+    source = registered_branch(workspace, issue) or (
+        registered_branch(coordinator, issue) if coordinator != workspace else None
+    )
+    if not source:
+        fail("worklog does not identify a branch for the issue; provide branch explicitly")
+    return checked_branch(workspace, source, "worklog branch")
+
+
+def shortstat(workspace: Path, trunk: str, preview: str) -> tuple[int, int, int]:
+    value = git_text(workspace, "diff", "--shortstat", trunk, preview)
+    def count(pattern: str) -> int:
+        match = re.search(pattern, value)
+        return int(match.group(1)) if match else 0
+    return (
+        count(r"([0-9]+) files? changed"),
+        count(r"([0-9]+) insertions?\(\+\)"),
+        count(r"([0-9]+) deletions?\(-\)"),
+    )
+
+
+def create_preview(coordinator: Path, request: dict[str, Any]) -> dict[str, Any]:
+    issue = request["issue"]
+    requested_directory = request["working_directory"]
+    workspace = repository_root(
+        (coordinator / requested_directory).resolve() if requested_directory and not Path(requested_directory).is_absolute()
+        else (Path(requested_directory).resolve() if requested_directory else registered_workspace(coordinator, issue))
+    )
+    coordinator_common = git_text(coordinator, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    workspace_common = git_text(workspace, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if Path(coordinator_common).resolve() != Path(workspace_common).resolve():
+        fail("working_directory belongs to a different Git repository")
+    trunk, _remote = configured_git(workspace)
+    source = resolve_source_branch(coordinator, workspace, issue, request["branch"])
+    preview = checked_branch(workspace, request["preview_branch"] or f"tmp/{issue}-squash", "preview_branch")
+    if git(workspace, "status", "--porcelain=v1", "-z").stdout:
+        fail("worktree must be clean")
+    source_ref = f"refs/heads/{source}"
+    if git(workspace, "show-ref", "--verify", "--quiet", source_ref, check=False).returncode:
+        fail(f"source branch does not exist locally: {source}")
+    source_oid = git_text(workspace, "rev-parse", f"{source_ref}^{{commit}}")
+    trunk_oid = git_text(workspace, "rev-parse", f"refs/heads/{trunk}^{{commit}}")
+    base_oid_result = git(workspace, "merge-base", f"refs/heads/{trunk}", source_ref, check=False)
+    if base_oid_result.returncode or not base_oid_result.stdout.strip():
+        fail(f"configured trunk {trunk} and source branch {source} have no merge-base")
+    base_oid = base_oid_result.stdout.strip()
+    if git_text(workspace, "rev-list", "--count", f"{base_oid}..{source_oid}") == "0":
+        fail("source branch contains no commit above its merge-base with the trunk")
+
+    current = git(workspace, "symbolic-ref", "--quiet", "--short", "HEAD", check=False).stdout.strip()
+    head_oid = git_text(workspace, "rev-parse", "HEAD")
+    before_status = git(workspace, "status", "--porcelain=v1", "-z").stdout
+    preview_ref = f"refs/heads/{preview}"
+    existing = git(workspace, "show-ref", "--verify", "--quiet", preview_ref, check=False).returncode == 0
+    old_oid = git_text(workspace, "rev-parse", f"{preview_ref}^{{commit}}") if existing else ""
+    prefix = f"#{issue} squash temporaneo dello stack (solo per revisione locale)"
+    if existing:
+        if not request["replace_existing"]:
+            fail(f"preview branch already exists: {preview}")
+        old_message = git_text(workspace, "log", "-1", "--format=%B", preview_ref)
+        if old_message.splitlines()[0] != prefix:
+            fail(f"existing branch is not a squash preview for issue #{issue}: {preview}")
+        if current == preview:
+            fail("cannot replace the currently checked out preview branch")
+        upstream = git_text(workspace, "for-each-ref", "--format=%(upstream:short)", preview_ref)
+        if upstream:
+            fail("existing preview branch has an upstream and cannot be replaced")
+
+    short_source = source_oid[:10]
+    short_base = base_oid[:10]
+    message_detail = (
+        f"Contenuto di {short_source} sopra {trunk} {short_base}. "
+        "Branch locale da eliminare dopo la revisione."
+    )
+    commit = git_text(
+        workspace, "commit-tree", f"{source_oid}^{{tree}}", "-p", base_oid,
+        "-m", prefix, "-m", message_detail,
+    )
+    mutated = False
+    try:
+        if existing:
+            git(workspace, "branch", "-f", preview, commit)
+        else:
+            git(workspace, "branch", preview, commit)
+        mutated = True
+        if (git_text(workspace, "rev-parse", f"{source_ref}^{{commit}}") != source_oid
+                or git_text(workspace, "rev-parse", f"refs/heads/{trunk}^{{commit}}") != trunk_oid):
+            fail("configured trunk or source branch changed while creating the preview")
+        if git(workspace, "diff", "--quiet", source, preview, check=False).returncode != 0:
+            fail("preview tree differs from the source branch tree")
+        if git_text(workspace, "rev-list", "--count", f"{base_oid}..{preview}") != "1":
+            fail("preview branch does not contain exactly one commit above the merge-base")
+        upstream = git_text(workspace, "for-each-ref", "--format=%(upstream:short)", preview_ref)
+        if upstream:
+            fail("preview branch unexpectedly has an upstream")
+        after_current = git(workspace, "symbolic-ref", "--quiet", "--short", "HEAD", check=False).stdout.strip()
+        after_head = git_text(workspace, "rev-parse", "HEAD")
+        after_status = git(workspace, "status", "--porcelain=v1", "-z").stdout
+        if after_current != current or after_head != head_oid or after_status != before_status:
+            fail("current branch, HEAD or worktree changed while creating the preview")
+        files_changed, insertions, deletions = shortstat(workspace, trunk, preview)
+    except (ValueError, OSError) as exc:
+        if mutated:
+            rollback = (git(workspace, "update-ref", preview_ref, old_oid, commit, check=False) if existing
+                        else git(workspace, "branch", "-D", preview, check=False))
+            if rollback.returncode:
+                detail = rollback.stderr.strip() or rollback.stdout.strip()
+                fail(f"{exc}; rollback failed: {detail}")
+        raise
+
+    return {
+        "status": "created",
+        "preview_branch": preview,
+        "commit": commit,
+        "base_branch": trunk,
+        "base_oid": base_oid,
+        "source_branch": source,
+        "source_oid": source_oid,
+        "tree_identical": True,
+        "files_changed": files_changed,
+        "insertions": insertions,
+        "deletions": deletions,
+        "review_commands": [
+            f"git diff {shlex.quote(trunk)} {shlex.quote(preview)}",
+            f"git diff --stat {shlex.quote(trunk)} {shlex.quote(preview)}",
+        ],
+        "cleanup_command": f"git branch -D {shlex.quote(preview)}",
+    }
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "create":
+        fail("expected: acme-squash-git-stack-preview create '<JSON>'")
+    request = parse_request(sys.argv[2])
+    coordinator = find_workspace(Path.cwd())
+    result = create_preview(coordinator, request)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise SystemExit(f"error: {exc}") from exc

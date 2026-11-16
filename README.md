@@ -174,12 +174,14 @@ See the [execution reference](docs/execution.md) for delegation, native restrict
 ## Documentation
 
 - [Examples index](examples/README.md): commands, internal steps, recipes and recovery.
-- [Acme workflow catalog](examples/acme/README.md): 42 commands, project helper scripts and 14 GitHub delivery
+- [Acme workflow catalog](examples/acme/README.md): 44 commands, project helper scripts and 14 GitHub delivery
   recipes, including correction lineage, atomic stack rebase and republication, isolated issue workspaces,
   safe worklog archival and optional policy-driven supervision.
 - [Recovery example](examples/recovery/README.md): verified-prefix recovery with an isolated demo and real-run instructions.
 - [Runtime-tests example](examples/runtime-tests/README.md): scripted PHP context detection, conditional suites
   and reporting; supply your application's test wrappers and worktree mapping.
+- [Operational-runbooks example](examples/operational-runbooks/README.md): read-only classification of incident
+  facts against verified project scenarios, with safe first investigation steps.
 - [Commands that use scripts](docs/command-scripts.md): placement, output contracts, adapter permissions and
   an inventory of Enabu workflows and script callers.
 - [First skill walkthrough](docs/first-skill.md): installation, a complete review prompt, publication,

@@ -279,26 +279,44 @@ def main() -> int:
     if not isinstance(resolved, dict):
         write_json(blocked(issue, "non-linear-stack", "Il report non contiene coordinate di rebase valide."))
         return 0
-    if "parent_branch" in resolved:
-        write_json(blocked(
-            issue, "unsupported-rebase-case",
-            "Il comando supporta soltanto il rebase causato dall'avanzamento del trunk; il figlio di un layer corretto resta fuori perimetro.",
-            {"branch": resolved.get("branch"), "parent_branch": resolved.get("parent_branch"), "modified_refs": []},
-        ))
-        return 0
-    if resolved.get("trunk") != trunk or resolved.get("branch") != ordered[0]["branch"]:
-        write_json(blocked(issue, "non-linear-stack", "Il report e il worklog descrivono stack differenti.",
-                           {"report": resolved, "trunk": trunk, "first_layer": ordered[0]["branch"]}))
-        return 0
-    old_base = resolved.get("layer_base_oid")
-    trunk_oid = resolved.get("trunk_oid")
-    if not isinstance(old_base, str) or not old_base or not isinstance(trunk_oid, str) or not trunk_oid:
-        write_json(blocked(issue, "non-linear-stack", "Il report non contiene gli OID richiesti per il rebase."))
-        return 0
     remote_trunk = f"refs/remotes/{remote}/{trunk}"
-    if ref_oid(root, remote_trunk) != trunk_oid:
-        write_json(blocked(issue, "local-state-changed", "Il trunk remoto non coincide con il report aggiornato.",
-                           {"expected_oid": trunk_oid, "actual_oid": ref_oid(root, remote_trunk)}))
+    trunk_oid = ref_oid(root, remote_trunk)
+    child_rebase = "parent_branch" in resolved
+    if child_rebase:
+        branch = resolved.get("branch")
+        parent_branch = resolved.get("parent_branch")
+        start = next((index for index, layer in enumerate(ordered) if layer["branch"] == branch), -1)
+        if (start < 1 or parent_branch != ordered[start - 1]["branch"]
+                or not isinstance(branch, str) or not isinstance(parent_branch, str)):
+            write_json(blocked(issue, "non-linear-stack", "Il report e il worklog descrivono figli differenti.",
+                               {"report": resolved, "branches": [layer["branch"] for layer in ordered]}))
+            return 0
+        rebase_layers = ordered[start:]
+        old_base = rebase_layers[0].get("parent_oid")
+        new_parent_oid = ordered[start - 1]["remote_oid"]
+        if not old_base:
+            merge = git(root, "merge-base", new_parent_oid, rebase_layers[0]["remote_oid"])
+            common = merge.stdout.strip() if merge.returncode == 0 else ""
+            recorded_base = rebase_layers[0].get("base_oid", "")
+            old_base = (recorded_base if common and recorded_base
+                        and ancestor(root, common, recorded_base)
+                        and ancestor(root, recorded_base, rebase_layers[0]["remote_oid"])
+                        else common)
+    else:
+        if resolved.get("trunk") != trunk or resolved.get("branch") != ordered[0]["branch"]:
+            write_json(blocked(issue, "non-linear-stack", "Il report e il worklog descrivono stack differenti.",
+                               {"report": resolved, "trunk": trunk, "first_layer": ordered[0]["branch"]}))
+            return 0
+        old_base = resolved.get("layer_base_oid")
+        reported_trunk_oid = resolved.get("trunk_oid")
+        if reported_trunk_oid != trunk_oid:
+            write_json(blocked(issue, "local-state-changed", "Il trunk remoto non coincide con il report aggiornato.",
+                               {"expected_oid": reported_trunk_oid, "actual_oid": trunk_oid}))
+            return 0
+        rebase_layers = ordered
+        new_parent_oid = trunk_oid
+    if not isinstance(old_base, str) or not old_base or not trunk_oid:
+        write_json(blocked(issue, "non-linear-stack", "Il report non contiene gli OID richiesti per il rebase."))
         return 0
 
     expected_heads: dict[str, str] = {trunk: ref_oid(root, f"refs/heads/{trunk}")}
@@ -312,7 +330,11 @@ def main() -> int:
                                {"branch": layer["branch"], "local_oid": expected_heads[layer["branch"]],
                                 "published_oid": layer["remote_oid"]}))
             return 0
-    if expected_heads[trunk] != trunk_oid and not ancestor(root, expected_heads[trunk], trunk_oid):
+    if child_rebase and expected_heads[trunk] != trunk_oid:
+        write_json(blocked(issue, "local-state-changed", "Il trunk locale non è allineato durante il rebase dei figli.",
+                           {"trunk": trunk, "local_oid": expected_heads[trunk], "remote_oid": trunk_oid}))
+        return 0
+    if not child_rebase and expected_heads[trunk] != trunk_oid and not ancestor(root, expected_heads[trunk], trunk_oid):
         own = git(root, "log", "--format=%H %s", f"{trunk_oid}..{expected_heads[trunk]}").stdout.splitlines()
         write_json(blocked(issue, "trunk-not-fast-forward", "Il trunk locale non può avanzare con fast-forward.",
                            {"trunk": trunk, "local_oid": expected_heads[trunk], "remote_oid": trunk_oid,
@@ -328,14 +350,14 @@ def main() -> int:
         code, details = initial_state
         write_json(blocked(issue, code, "Le precondizioni locali dello stack non sono soddisfatte.", details))
         return 0
-    if not ancestor(root, old_base, ordered[0]["remote_oid"]):
+    if not ancestor(root, old_base, rebase_layers[0]["remote_oid"]):
         write_json(blocked(issue, "non-linear-stack", "La vecchia base non è antenata del primo layer.",
-                           {"base": old_base, "branch": ordered[0]["branch"]}))
+                           {"base": old_base, "branch": rebase_layers[0]["branch"]}))
         return 0
-    for index in range(1, len(ordered)):
-        if not ancestor(root, ordered[index - 1]["remote_oid"], ordered[index]["remote_oid"]):
+    for index in range(1, len(rebase_layers)):
+        if not ancestor(root, rebase_layers[index - 1]["remote_oid"], rebase_layers[index]["remote_oid"]):
             write_json(blocked(issue, "non-linear-stack", "Lo stack pubblicato non è lineare.",
-                               {"parent": ordered[index - 1]["branch"], "child": ordered[index]["branch"]}))
+                               {"parent": rebase_layers[index - 1]["branch"], "child": rebase_layers[index]["branch"]}))
             return 0
 
     warnings: list[str] = []
@@ -349,13 +371,13 @@ def main() -> int:
     new_layers: list[dict[str, Any]] = []
     pushed = False
     try:
-        added = git(root, "worktree", "add", "--detach", str(temporary_worktree), ordered[0]["remote_oid"])
+        added = git(root, "worktree", "add", "--detach", str(temporary_worktree), rebase_layers[0]["remote_oid"])
         if added.returncode:
             outcome = blocked(issue, "rebase-failed", "Impossibile creare la worktree temporanea.",
                               {"error": added.stderr.strip() or added.stdout.strip()}, warnings)
-        new_parent = trunk_oid
+        new_parent = new_parent_oid
         old_parent = old_base
-        for layer in ordered if outcome is None else []:
+        for layer in rebase_layers if outcome is None else []:
             old_tip = layer["remote_oid"]
             checked = git(temporary_worktree, "checkout", "--detach", "--force", old_tip)
             if checked.returncode:
@@ -367,13 +389,14 @@ def main() -> int:
             if rebased.returncode:
                 unresolved = git(temporary_worktree, "diff", "--name-only", "--diff-filter=U", "-z")
                 files = [name for name in unresolved.stdout.split("\0") if name] if unresolved.returncode == 0 else []
+                conflicting_commit = ref_oid(temporary_worktree, "REBASE_HEAD")
                 abort = git(temporary_worktree, "rebase", "--abort")
                 error = rebased.stderr.strip() or rebased.stdout.strip() or "git rebase failed"
                 if files:
                     outcome = {
                         "schema_version": 1, "status": "stack-rebase-conflict", "issue": issue,
                         "layer": layer["branch"], "old_base": old_parent, "new_base": new_parent,
-                        "files": sorted(files), "reason": error, "warnings": warnings,
+                        "files": sorted(files), "commit": conflicting_commit, "reason": error, "warnings": warnings,
                         "details": {"abort_error": "" if abort.returncode == 0 else abort.stderr.strip()},
                     }
                 else:
@@ -409,7 +432,7 @@ def main() -> int:
             outcome = {
                 "schema_version": 1, "status": "stack-rebase-simulated", "issue": issue,
                 "trunk": {"branch": trunk, "old_oid": expected_heads[trunk], "new_oid": trunk_oid,
-                          "fast_forward": expected_heads[trunk] != trunk_oid},
+                          "fast_forward": not child_rebase and expected_heads[trunk] != trunk_oid},
                 "layers": new_layers, "warnings": warnings,
                 "reason": "Il rebase è applicabile senza conflitti e conserva tutti i patch-id; nessun branch o ref remoto è stato modificato.",
             }
@@ -428,7 +451,7 @@ def main() -> int:
                                   {"expected": expected_remote, "observed": observed, "error": remote_error}, warnings)
         if outcome is None:
             arguments = ["push", "--atomic"]
-            for layer in ordered:
+            for layer in rebase_layers:
                 arguments.append(f"--force-with-lease=refs/heads/{layer['branch']}:{layer['remote_oid']}")
             arguments.append(remote)
             arguments.extend(f"{new['new_oid']}:refs/heads/{new['branch']}" for new in new_layers)
@@ -447,7 +470,10 @@ def main() -> int:
                 pushed = True
         if outcome is None:
             observed, remote_error = remote_oids(root, remote, [trunk, *(layer["branch"] for layer in ordered)])
-            expected_remote = {trunk: trunk_oid, **{layer["branch"]: layer["new_oid"] for layer in new_layers}}
+            new_by_branch = {layer["branch"]: layer["new_oid"] for layer in new_layers}
+            expected_remote = {trunk: trunk_oid, **{
+                layer["branch"]: new_by_branch.get(layer["branch"], layer["remote_oid"]) for layer in ordered
+            }}
             if remote_error or observed != expected_remote:
                 outcome = blocked(issue, "post-push-verification-failed", "Il push è stato accettato ma i ref remoti non sono verificabili.",
                                   {"expected": expected_remote, "observed": observed, "error": remote_error}, warnings)
@@ -462,7 +488,7 @@ def main() -> int:
                                          "actual": {k: str(v) for k, v in current_relevant.items()}})
             else:
                 # Make remote-tracking refs reflect the push before the final workflow report.
-                for layer, new in zip(ordered, new_layers):
+                for layer, new in zip(rebase_layers, new_layers):
                     tracking = f"refs/remotes/{remote}/{layer['branch']}"
                     current = ref_oid(root, tracking)
                     if current == layer["remote_oid"]:
@@ -473,7 +499,7 @@ def main() -> int:
                     elif current != new["new_oid"]:
                         alignment_errors.append({"branch": layer["branch"], "kind": "remote-tracking",
                                                  "expected_old": layer["remote_oid"], "actual": current})
-                if expected_heads[trunk] != trunk_oid and not alignment_errors:
+                if not child_rebase and expected_heads[trunk] != trunk_oid and not alignment_errors:
                     trunk_path = current_worktrees.get(trunk)
                     if trunk_path:
                         if status(trunk_path) or ref_oid(root, f"refs/heads/{trunk}") != expected_heads[trunk]:
@@ -488,7 +514,7 @@ def main() -> int:
                         if moved.returncode:
                             alignment_errors.append({"branch": trunk, "kind": "fast-forward",
                                                      "error": moved.stderr.strip()})
-                for layer, new in zip(ordered, new_layers):
+                for layer, new in zip(rebase_layers, new_layers):
                     branch = layer["branch"]
                     path = current_worktrees.get(branch)
                     if path:
@@ -515,7 +541,7 @@ def main() -> int:
                     recovery.append({"branch": trunk, "expected_oid": trunk_oid,
                                      "command": (f"git -C {path} merge --ff-only {trunk_oid}" if path else
                                                  f"git update-ref refs/heads/{trunk} {trunk_oid} {expected_heads[trunk]}")})
-                for layer, new in zip(ordered, new_layers):
+                for layer, new in zip(rebase_layers, new_layers):
                     path = initial_worktrees.get(layer["branch"])
                     recovery.append({"branch": layer["branch"], "expected_oid": new["new_oid"],
                                      "command": (f"git -C {path} reset --keep {new['new_oid']}" if path else

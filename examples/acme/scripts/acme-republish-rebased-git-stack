@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record an already-pushed, patch-equivalent rebase of a published stack."""
+"""Record an already-pushed rebase of a published stack."""
 
 from __future__ import annotations
 
@@ -54,12 +54,14 @@ def patch_ids(base: str, tip: str) -> list[str]:
     return result
 
 
-def parse_request(raw: str) -> int:
+def parse_request(raw: str) -> tuple[int, bool]:
     try:
         request = json.loads(raw)
     except json.JSONDecodeError as exc:
         fail(f"request is not valid JSON: {exc}")
-    if not isinstance(request, dict) or set(request) != {"issue", "publication_authorized"}:
+    if (not isinstance(request, dict)
+            or not {"issue", "publication_authorized"}.issubset(request)
+            or set(request) - {"issue", "publication_authorized", "allow_resolved_conflicts"}):
         fail("request fields do not match the operation contract")
     issue = request["issue"]
     if isinstance(issue, str) and issue.isdigit():
@@ -68,7 +70,12 @@ def parse_request(raw: str) -> int:
         fail("issue must be a positive integer")
     if request["publication_authorized"] is not True:
         fail("publication_authorized must be true")
-    return issue
+    allowed = request.get("allow_resolved_conflicts", False)
+    if isinstance(allowed, str) and allowed in {"true", "false"}:
+        allowed = allowed == "true"
+    if type(allowed) is not bool:
+        fail("allow_resolved_conflicts must be a boolean")
+    return issue, allowed
 
 
 def session_name(root: Path, issue: int, layer: dict[str, str]) -> str:
@@ -97,7 +104,10 @@ def record(session: str, output: dict[str, object]) -> None:
     with tempfile.TemporaryDirectory(prefix="ai-evo-worklog-") as temporary:
         directory = Path(temporary)
         input_path, output_path, error_path = directory / "input.json", directory / "output.txt", directory / "error.json"
-        input_path.write_text(json.dumps({"issue": str(output["issue"]), "republished_after_rebase": True}), encoding="utf-8")
+        session_input = {"issue": str(output["issue"]), "republished_after_rebase": True}
+        if output.get("patch_ids_equivalent") is False:
+            session_input["allow_resolved_conflicts"] = True
+        input_path.write_text(json.dumps(session_input), encoding="utf-8")
         output_path.write_text(payload, encoding="utf-8")
         error_path.write_text("null", encoding="utf-8")
         run(str(LOGGER), "record", "--session-name", session,
@@ -116,7 +126,7 @@ def main() -> int:
         fail("run from the application Git root")
     if git("status", "--porcelain=v1", "-z").stdout:
         fail("worktree must be clean")
-    issue = parse_request(sys.argv[2])
+    issue, allow_resolved_conflicts = parse_request(sys.argv[2])
     remote = load_simple_yaml(BRANCH_CONFIG).get("stack_remote")
     if not isinstance(remote, str) or not remote:
         fail("stack_remote is missing from branch configuration")
@@ -130,7 +140,6 @@ def main() -> int:
         fail("trunk is not available locally and on the configured remote")
     if git_text("rev-parse", trunk) != git_text("rev-parse", trunk_remote):
         fail("local trunk is not aligned with the configured remote")
-    old_by_branch = {layer["branch"]: layer for layer in ordered}
     prepared: list[tuple[str, dict[str, object]]] = []
     for index, layer in enumerate(ordered):
         branch, parent, old_tip = layer["branch"], layer["parent_branch"], layer["remote_oid"]
@@ -147,22 +156,63 @@ def main() -> int:
             fail(f"rebased stack is not linear: {new_parent} is not an ancestor of {branch}")
         if not exists(old_tip):
             fail(f"previous published OID is not reachable locally: {old_tip}")
-        old_base = layer.get("base_oid") if index == 0 else old_by_branch[parent]["remote_oid"]
+        if index == 0 and layer.get("parent_branch") != layer.get("base_branch"):
+            # primo layer pubblicato sopra un layer non registrato (per esempio adottato): la base vecchia è il parent
+            old_base = layer.get("parent_oid")
+        else:
+            old_base = (layer.get("base_oid") or layer.get("parent_oid") if index == 0 else layer.get("parent_oid"))
         if not old_base:
-            old_base_result = git("merge-base", trunk, old_tip, check=False)
-            old_base = old_base_result.stdout.strip() if old_base_result.returncode == 0 else ""
+            previous_tip = ordered[index - 1]["remote_oid"] if index > 0 else ""
+            if previous_tip and ancestor(previous_tip, old_tip):
+                old_base = previous_tip
+            else:
+                old_base_result = git("merge-base", new_parent, old_tip, check=False)
+                common = old_base_result.stdout.strip() if old_base_result.returncode == 0 else ""
+                recorded_base = layer.get("base_oid", "")
+                old_base = (recorded_base if common and recorded_base
+                            and ancestor(common, recorded_base) and ancestor(recorded_base, old_tip)
+                            else common)
         if not old_base or not exists(old_base):
             fail(f"previous base is not reachable locally for {branch}")
         new_tip = git_text("rev-parse", branch)
-        if patch_ids(old_base, old_tip) != patch_ids(new_parent, new_tip):
+        if new_tip == old_tip:
+            continue
+        old_commits = git_text("rev-list", "--reverse", f"{old_base}..{old_tip}").splitlines()
+        new_commits = git_text("rev-list", "--reverse", f"{new_parent}..{new_tip}").splitlines()
+        old_messages = [git_text("show", "-s", "--format=%B", commit) for commit in old_commits]
+        new_messages = [git_text("show", "-s", "--format=%B", commit) for commit in new_commits]
+        if len(old_commits) != len(new_commits) or old_messages != new_messages:
+            fail(f"rebased commit sequence or messages changed for {branch}")
+        old_patch_ids = patch_ids(old_base, old_tip)
+        new_patch_ids = patch_ids(new_parent, new_tip)
+        equivalent = old_patch_ids == new_patch_ids
+        if not equivalent and not allow_resolved_conflicts:
             fail(f"rebased commits are not patch-equivalent for {branch}")
-        prepared.append((session_name(root, issue, layer), {
+        differing = [
+            {"old_oid": old_oid, "new_oid": new_oid, "subject": message.splitlines()[0] if message else "",
+             "old_patch_id": old_patch, "new_patch_id": new_patch}
+            for old_oid, new_oid, message, old_patch, new_patch in zip(
+                old_commits, new_commits, old_messages, old_patch_ids, new_patch_ids,
+            ) if old_patch != new_patch
+        ]
+        range_diff = ""
+        if not equivalent:
+            compared = run("git", "range-diff", f"{old_base}..{old_tip}", f"{new_parent}..{new_tip}", check=False)
+            if compared.returncode:
+                fail(compared.stderr.strip() or compared.stdout.strip() or f"cannot calculate range-diff for {branch}")
+            range_diff = compared.stdout
+        output: dict[str, object] = {
             "status": "published", "issue": issue, "branch": branch, "parent_branch": parent,
             "remote": remote, "remote_oid": new_tip, "local_oid": new_tip,
             "base_oid": git_text("merge-base", trunk, branch) if index == 0 else git_text("rev-parse", new_parent),
             "parent_oid": git_text("rev-parse", new_parent), "republished_after_rebase": True,
-            "previous_remote_oid": old_tip, "previous_base_oid": old_base, "patch_ids_equivalent": True,
-        }))
+            "previous_remote_oid": old_tip, "previous_base_oid": old_base,
+            "patch_ids_equivalent": equivalent,
+        }
+        if not equivalent:
+            output["differing_commits"] = differing
+            output["range_diff"] = range_diff
+        prepared.append((session_name(root, issue, layer), output))
     for name, output in prepared:
         record(name, output)
     write_json({"status": "republished", "issue": issue, "layers": [output for _, output in prepared]})
